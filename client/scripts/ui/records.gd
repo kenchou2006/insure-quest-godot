@@ -1,0 +1,753 @@
+extends Control
+## 培訓紀錄：學習檔案（成長總覽、趨勢折線圖、客戶圖鑑、歷次面談重播）與講師學員管理。
+
+var main: Node
+var target_user_id: String = ""
+var target_user_name: String = ""
+
+# UI 參照
+var _outer_v: VBoxContainer
+var _tabs_bar: HBoxContainer
+var _tab_buttons: Array = []
+var _body_area: Control
+var _current_tab: int = 0  # 0: 總覽, 1: 客戶圖鑑, 2: 歷次紀錄, 3: 全部學員
+
+# 歷次紀錄 UI 參照
+var _history_list: VBoxContainer
+var _history_detail: VBoxContainer
+var _history_filter: LineEdit
+
+# 全部學員 UI 參照
+var _trainer_list: VBoxContainer
+var _trainer_filter: LineEdit
+
+# 資料快取
+var _profile: Dictionary = {}
+var _records: Array = []
+var _all_records: Array = []
+var _selected_record: Dictionary = {}
+## 伺服器提供的弱點標籤中文名稱（tag → label）
+var _tag_labels: Dictionary = {}
+
+
+## 分數成長趨勢折線圖元件（自繪 Control）
+class TrendChart extends Control:
+	var trend_data: Array = []
+
+	func _init() -> void:
+		# 讓滾輪事件穿過圖表，交給外層 ScrollContainer
+		mouse_filter = Control.MOUSE_FILTER_PASS
+
+	func set_data(data: Array) -> void:
+		trend_data = data
+		queue_redraw()
+
+	func _draw() -> void:
+		if size.x <= 0 or size.y <= 0:
+			return
+		var font: Font = get_theme_default_font()
+		var pad_left: float = 38.0
+		var pad_right: float = 24.0
+		var pad_top: float = 24.0
+		var pad_bottom: float = 28.0
+		var plot_w: float = size.x - pad_left - pad_right
+		var plot_h: float = size.y - pad_top - pad_bottom
+
+		# 底色與邊框
+		draw_rect(Rect2(0, 0, size.x, size.y), Color("#0d2432"), true)
+		draw_rect(Rect2(0, 0, size.x, size.y), Color("#1b4052"), false, 1.0)
+
+		# 水平刻度線（0, 50, 100 分）
+		for val: int in [0, 50, 100]:
+			var y: float = pad_top + plot_h * (1.0 - float(val) / 100.0)
+			draw_line(Vector2(pad_left, y), Vector2(size.x - pad_right, y), Color("#1b4052", 0.6), 1.0)
+			draw_string(font, Vector2(4, y + 4), str(val), HORIZONTAL_ALIGNMENT_RIGHT, int(pad_left - 8), 10, UI.MUTED)
+
+		if trend_data.is_empty():
+			draw_string(font, Vector2(0, size.y * 0.5 + 4), "尚未有足夠場次繪製趨勢圖", HORIZONTAL_ALIGNMENT_CENTER, int(size.x), 13, UI.MUTED)
+			return
+
+		var count: int = trend_data.size()
+		var points: PackedVector2Array = PackedVector2Array()
+
+		for i: int in count:
+			var item: Dictionary = trend_data[i]
+			var score: float = clampf(float(item.get("score", 0)), 0.0, 100.0)
+			var x: float = pad_left if count == 1 else (pad_left + plot_w * (float(i) / float(count - 1)))
+			var y: float = pad_top + plot_h * (1.0 - score / 100.0)
+			points.append(Vector2(x, y))
+
+		# 繪製折線
+		if points.size() > 1:
+			draw_polyline(points, UI.ACCENT_2, 2.5, true)
+		elif points.size() == 1:
+			draw_circle(points[0], 5.0, UI.ACCENT_2)
+
+		# 繪製節點、評級標籤與場次
+		for i: int in points.size():
+			var pt: Vector2 = points[i]
+			var item: Dictionary = trend_data[i]
+			var grade: String = str(item.get("grade", ""))
+
+			draw_circle(pt, 4.0, UI.GOLD)
+			draw_circle(pt, 2.0, UI.BG)
+
+			var grade_color: Color = UI.GOLD if grade == "S" else (UI.GOOD if grade == "A" else (UI.OK if grade == "B" else UI.MUTED))
+			draw_string(font, Vector2(pt.x - 16, pt.y - 8), grade, HORIZONTAL_ALIGNMENT_CENTER, 32, 11, grade_color)
+			draw_string(font, Vector2(pt.x - 16, size.y - 8), "#%d" % (i + 1), HORIZONTAL_ALIGNMENT_CENTER, 32, 10, UI.MUTED)
+
+
+func _ready() -> void:
+	_build_ui()
+
+
+func on_layout_changed(_is_portrait: bool) -> void:
+	_build_ui()
+
+
+func _build_ui() -> void:
+	UI.clear(self)
+	var portrait: bool = UI.is_portrait()
+
+	var m := MarginContainer.new()
+	m.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var pad: int = 12 if UI.is_phone_portrait() else (16 if portrait else 28)
+	for s: String in ["left", "right", "top", "bottom"]:
+		m.add_theme_constant_override("margin_" + s, pad)
+	add_child(m)
+
+	_outer_v = UI.vbox(10)
+	m.add_child(_outer_v)
+
+	# 頂部列
+	var head := UI.hbox(10)
+	var title_text: String = "培訓紀錄"
+	if target_user_name != "":
+		title_text = "學員成長檔案：%s" % target_user_name
+	head.add_child(UI.label(title_text, 20 if UI.is_phone_portrait() else (24 if portrait else 28), UI.ACCENT_2))
+
+	if target_user_id != "" and target_user_id != Net.get_user().get("id", ""):
+		head.add_child(UI.button("← 返回學員清單", func():
+			target_user_id = ""
+			target_user_name = ""
+			_current_tab = 3
+			_build_ui()
+		, 14, UI.PANEL_2))
+
+	head.add_child(UI.spacer())
+	head.add_child(UI.button("回主選單", func(): main.show_menu(), 15))
+	_outer_v.add_child(head)
+
+	# 未登入且無指定學員：顯示登入引導卡
+	if not Net.is_logged_in() and target_user_id == "":
+		_build_unauth_view()
+		return
+
+	# 分頁標籤列
+	_tabs_bar = UI.hbox(8)
+	_tab_buttons.clear()
+	var tabs: Array = ["成長總覽", "客戶圖鑑", "歷次紀錄"]
+	if Net.is_trainer() and target_user_id == "":
+		tabs.append("全部學員（講師）")
+
+	for i: int in tabs.size():
+		var idx: int = i
+		var t_name: String = tabs[idx]
+		var b: Button = UI.button(t_name, func(): _switch_tab(idx), 14, UI.ACCENT if _current_tab == idx else UI.PANEL_2)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_tab_buttons.append(b)
+		_tabs_bar.add_child(b)
+	_outer_v.add_child(_tabs_bar)
+
+	# 必須是 Container，子節點（ScrollContainer）才會填滿；一般 Control 會讓內容尺寸為 0
+	_body_area = MarginContainer.new()
+	_body_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_body_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_outer_v.add_child(_body_area)
+
+	_switch_tab(_current_tab)
+
+
+func _build_unauth_view() -> void:
+	var center := CenterContainer.new()
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var p := UI.panel(UI.PANEL, 16, 24)
+	p.custom_minimum_size = Vector2(400 if UI.is_phone_portrait() else 480, 0)
+	var v := UI.vbox(14)
+	p.add_child(v)
+
+	v.add_child(UI.label("登入後可查看培訓紀錄", 20, UI.ACCENT_2))
+	v.add_child(UI.label("登入個人帳號即可享有：\n・歷次面談決策與五力成長趨勢折線圖\n・專屬客戶圖鑑解鎖與最佳評級進度\n・常見決策盲點與改進建議\n・8 項專業顧問成就徽章", 14, UI.TEXT, true))
+
+	var btns := UI.vbox(10)
+	if bool(Net.auth_config.get("google", true)):
+		btns.add_child(UI.button("使用 Google 帳號登入", func():
+			var login_url: String = Net.base_url + "/api/auth/google/start?return=/"
+			if OS.has_feature("web"):
+				JavaScriptBridge.eval("window.location.href='%s'" % login_url)
+			else:
+				OS.shell_open(login_url)
+		, 16, UI.ACCENT))
+
+	if bool(Net.auth_config.get("dev", false)):
+		btns.add_child(UI.button("測試登入（本機開發）", func():
+			var name_encoded: String = Net.player_name.uri_encode()
+			if name_encoded == "":
+				name_encoded = "測試顧問".uri_encode()
+			var dev_url: String = Net.base_url + "/api/auth/dev-login?name=%s&return=/" % name_encoded
+			if OS.has_feature("web"):
+				JavaScriptBridge.eval("window.location.href='%s'" % dev_url)
+			else:
+				OS.shell_open(dev_url)
+		, 15, UI.PANEL_2))
+
+	v.add_child(btns)
+	v.add_child(UI.label("訪客模式下遊玩可體驗遊戲，但紀錄不會被保存。", 12, UI.MUTED, true))
+	center.add_child(p)
+	_outer_v.add_child(center)
+
+
+func _switch_tab(tab_idx: int) -> void:
+	_current_tab = tab_idx
+	for i: int in _tab_buttons.size():
+		var b: Button = _tab_buttons[i]
+		if i == _current_tab:
+			b.add_theme_stylebox_override("normal", UI.box(UI.ACCENT, 10, Color(0, 0, 0, 0), 12))
+		else:
+			b.add_theme_stylebox_override("normal", UI.box(UI.PANEL_2, 10, Color(0, 0, 0, 0), 12))
+
+	UI.clear(_body_area)
+
+	match _current_tab:
+		0:
+			_render_overview_tab()
+		1:
+			_render_codex_tab()
+		2:
+			_render_history_tab()
+		3:
+			_render_trainer_tab()
+
+
+# ──────────────────────────────────────────────────────────────────
+# 分頁 0：成長總覽
+# ──────────────────────────────────────────────────────────────────
+
+func _render_overview_tab() -> void:
+	var scroll: ScrollContainer = UI.scroll(UI.vbox(14))
+	_body_area.add_child(scroll)
+	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
+
+	content.add_child(UI.label("載入個人學習檔案中……", 15, UI.MUTED))
+
+	var res: Array = await Net.fetch_profile(target_user_id)
+	UI.clear(content)
+
+	if not bool(res[0]):
+		content.add_child(UI.label("無法載入學習檔案：%s" % str(res[1]), 15, UI.BAD, true))
+		return
+
+	_profile = res[1] if res[1] is Dictionary else {}
+
+	# 1. 關鍵數字 KPI 列
+	var kpi_flow: BoxContainer
+	if UI.is_phone_portrait():
+		kpi_flow = UI.vbox(8)
+	else:
+		kpi_flow = UI.hbox(10)
+
+	var games_cnt: int = int(_profile.get("games", 0))
+	var avg_score: float = float(_profile.get("avgScore", 0))
+	var best_grade: String = str(_profile.get("bestGrade", "無"))
+	if best_grade == "":
+		best_grade = "無"
+
+	var quiz: Dictionary = _profile.get("quiz", {})
+	var q_corr: int = int(quiz.get("correct", 0))
+	var q_tot: int = int(quiz.get("total", 0))
+	var quiz_str: String = "尚無測驗" if q_tot == 0 else ("%d / %d（%.0f%%）" % [q_corr, q_tot, (float(q_corr) * 100.0 / float(q_tot))])
+
+	kpi_flow.add_child(_make_kpi_card("培訓場次", "%d 場" % games_cnt, UI.ACCENT_2))
+	kpi_flow.add_child(_make_kpi_card("平均分數", "%.1f 分" % avg_score, UI.TEXT))
+	kpi_flow.add_child(_make_kpi_card("最佳評級", best_grade, UI.GOLD if best_grade == "S" else UI.GOOD))
+	kpi_flow.add_child(_make_kpi_card("合規測驗答對率", quiz_str, UI.INFO))
+	content.add_child(kpi_flow)
+
+	# 2. 分數趨勢折線圖卡片
+	var trend_card := UI.panel(UI.PANEL, 14, 14)
+	var trend_v := UI.vbox(8)
+	trend_card.add_child(trend_v)
+
+	var trend_arr: Array = _profile.get("trend", [])
+	trend_v.add_child(UI.label("分數成長趨勢（最近 %d 場）" % trend_arr.size(), 16, UI.ACCENT_2))
+
+	var chart := TrendChart.new()
+	chart.custom_minimum_size = Vector2(0, 160 if UI.is_phone_portrait() else 190)
+	chart.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chart.set_data(trend_arr)
+	trend_v.add_child(chart)
+	content.add_child(trend_card)
+
+	# 3. 最新五力分析能力指標卡片
+	var skill_card := UI.panel(UI.PANEL, 14, 14)
+	var skill_v := UI.vbox(8)
+	skill_card.add_child(skill_v)
+	skill_v.add_child(UI.label("最新五力維度指標", 16, UI.ACCENT_2))
+
+	var latest_skill: Dictionary = {}
+	if not trend_arr.is_empty():
+		var last_item: Dictionary = trend_arr[trend_arr.size() - 1]
+		if last_item.get("skill") is Dictionary:
+			latest_skill = last_item["skill"]
+
+	for k: String in ["trust", "insight", "fit", "risk", "compliance"]:
+		skill_v.add_child(UI.metric_row(k, float(latest_skill.get(k, 0))))
+	content.add_child(skill_card)
+
+	# 4. 常見盲點與改進建議
+	var mistakes_card := UI.panel(UI.PANEL, 14, 14)
+	var mistakes_v := UI.vbox(10)
+	mistakes_card.add_child(mistakes_v)
+	mistakes_v.add_child(UI.label("常見決策盲點與改進建議", 16, UI.ACCENT_2))
+
+	var mistakes: Array = _profile.get("mistakes", [])
+	if mistakes.is_empty():
+		mistakes_v.add_child(UI.label("✓ 目前無明顯失誤或合規盲點，表現優異！", 14, UI.GOOD, true))
+	else:
+		for m_item: Dictionary in mistakes:
+			var m_box := UI.panel(UI.PANEL_2, 10, 10)
+			var m_v := UI.vbox(4)
+			m_box.add_child(m_v)
+			m_v.add_child(UI.label("▲ %s（累計 %d 次）" % [str(m_item.get("label", "")), int(m_item.get("count", 0))], 14, UI.BAD))
+			m_v.add_child(UI.label(str(m_item.get("advice", "")), 13, UI.TEXT, true))
+			mistakes_v.add_child(m_box)
+	content.add_child(mistakes_card)
+
+	# 5. 顧問成就徽章牆
+	var badges_card := UI.panel(UI.PANEL, 14, 14)
+	var badges_v := UI.vbox(10)
+	badges_card.add_child(badges_v)
+	badges_v.add_child(UI.label("顧問專業成就徽章", 16, UI.ACCENT_2))
+
+	var badges_grid := GridContainer.new()
+	badges_grid.columns = 2 if UI.is_phone_portrait() else (3 if UI.is_portrait() else 4)
+	badges_grid.add_theme_constant_override("h_separation", 10)
+	badges_grid.add_theme_constant_override("v_separation", 10)
+
+	var badges_list: Array = _profile.get("badges", [])
+	for b_item: Dictionary in badges_list:
+		var earned: bool = bool(b_item.get("earned", false))
+		var bg_col: Color = UI.PANEL_2 if earned else Color("#0e2430")
+		var b_box := UI.panel(bg_col, 10, 10)
+		b_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		var b_inner := UI.vbox(4)
+		b_box.add_child(b_inner)
+
+		var title_col: Color = UI.GOLD if earned else UI.MUTED
+		var icon_str: String = "★ " if earned else "○ "
+		var status_str: String = "" if earned else "（未解鎖）"
+		b_inner.add_child(UI.label(icon_str + str(b_item.get("title", "")) + status_str, 13, title_col, true))
+		b_inner.add_child(UI.label(str(b_item.get("desc", "")), 11, UI.TEXT if earned else UI.MUTED, true))
+
+		badges_grid.add_child(b_box)
+	badges_v.add_child(badges_grid)
+	content.add_child(badges_card)
+
+
+func _make_kpi_card(title: String, val: String, val_color: Color) -> PanelContainer:
+	var p := UI.panel(UI.PANEL, 12, 10)
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var v := UI.vbox(2)
+	p.add_child(v)
+	v.add_child(UI.label(title, 12, UI.MUTED))
+	v.add_child(UI.label(val, 18, val_color))
+	return p
+
+
+# ──────────────────────────────────────────────────────────────────
+# 分頁 1：客戶圖鑑（18 格）
+# ──────────────────────────────────────────────────────────────────
+
+func _render_codex_tab() -> void:
+	var scroll: ScrollContainer = UI.scroll(UI.vbox(14))
+	_body_area.add_child(scroll)
+	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
+
+	content.add_child(UI.label("載入客戶圖鑑資料中……", 15, UI.MUTED))
+
+	if _profile.is_empty():
+		var res: Array = await Net.fetch_profile(target_user_id)
+		if bool(res[0]) and res[1] is Dictionary:
+			_profile = res[1]
+
+	UI.clear(content)
+
+	var clients: Array = _profile.get("clients", [])
+	if clients.is_empty():
+		content.add_child(UI.label("尚無客戶圖鑑資料。", 15, UI.MUTED))
+		return
+
+	var served_count: int = 0
+	for c: Dictionary in clients:
+		if int(c.get("served", 0)) > 0:
+			served_count += 1
+
+	content.add_child(UI.label("客戶圖鑑收集進度：%d / %d 位已面談" % [served_count, clients.size()], 16, UI.ACCENT_2))
+
+	var grid := GridContainer.new()
+	grid.columns = 2 if UI.is_phone_portrait() else (3 if UI.is_portrait() else 6)
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	content.add_child(grid)
+
+	for c_item: Dictionary in clients:
+		var served: int = int(c_item.get("served", 0))
+		var card := UI.panel(UI.PANEL if served > 0 else Color("#0d212b"), 12, 8)
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		var v := UI.vbox(4)
+		card.add_child(v)
+
+		if served > 0:
+			var avatar: Control = UI.portrait({"portrait": c_item.get("id", ""), "name": c_item.get("name", "")}, 48)
+			avatar.custom_minimum_size = Vector2(48, 48)
+			v.add_child(avatar)
+
+			v.add_child(UI.label(str(c_item.get("name", "")), 14, UI.ACCENT_2))
+			v.add_child(UI.label(str(c_item.get("job", "")), 11, UI.MUTED, true))
+
+			var best_g: String = str(c_item.get("bestGrade", "C"))
+			var g_col: Color = UI.GOLD if best_g == "S" else (UI.GOOD if best_g == "A" else (UI.OK if best_g == "B" else UI.MUTED))
+			v.add_child(UI.label("最佳：%s 級" % best_g, 12, g_col))
+			v.add_child(UI.label("面談：%d 次" % served, 11, UI.TEXT))
+		else:
+			# 未解鎖客戶剪影
+			var mystery := CenterContainer.new()
+			mystery.custom_minimum_size = Vector2(48, 48)
+			var q_bg := UI.panel(Color("#132a36"), 24, 0)
+			q_bg.custom_minimum_size = Vector2(48, 48)
+			var q_lbl := UI.label("？", 20, UI.MUTED)
+			q_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			q_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			q_bg.add_child(q_lbl)
+			mystery.add_child(q_bg)
+			v.add_child(mystery)
+
+			v.add_child(UI.label("？？？", 14, UI.MUTED))
+			v.add_child(UI.label("尚未面談", 11, UI.MUTED, true))
+			v.add_child(UI.label("未解鎖", 11, UI.MUTED))
+
+		grid.add_child(card)
+
+
+# ──────────────────────────────────────────────────────────────────
+# 分頁 2：歷次紀錄與面談重播
+# ──────────────────────────────────────────────────────────────────
+
+func _render_history_tab() -> void:
+	var portrait: bool = UI.is_portrait()
+
+	var top_filter := UI.hbox(8)
+	_history_filter = LineEdit.new()
+	_history_filter.placeholder_text = "依房間代碼或玩家篩選（空白＝全部）"
+	_history_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_history_filter.custom_minimum_size = Vector2(0, 42)
+	_history_filter.text_submitted.connect(func(_t: String): _load_history())
+	top_filter.add_child(_history_filter)
+	top_filter.add_child(UI.button("查詢", _load_history, 14))
+	_body_area.add_child(top_filter)
+
+	var split_box: BoxContainer
+	if portrait:
+		split_box = UI.vbox(10)
+		top_filter.position = Vector2(0, 0)
+	else:
+		split_box = UI.hbox(12)
+
+	split_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	split_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body_area.add_child(split_box)
+
+	# 左側（或上方）清單
+	var left_p := UI.panel()
+	if not portrait:
+		left_p.custom_minimum_size = Vector2(380, 0)
+	else:
+		left_p.custom_minimum_size = Vector2(0, 180)
+	_history_list = UI.vbox(6)
+	left_p.add_child(UI.scroll(_history_list))
+	split_box.add_child(left_p)
+
+	# 右側（或下方）詳情
+	var right_p := UI.panel()
+	right_p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_history_detail = UI.vbox(8)
+	right_p.add_child(UI.scroll(_history_detail))
+	split_box.add_child(right_p)
+
+	_load_history()
+
+
+func _load_history() -> void:
+	UI.clear(_history_list)
+	UI.clear(_history_detail)
+	_history_list.add_child(UI.label("讀取歷次紀錄中……", 14, UI.MUTED))
+
+	var filter_text: String = _history_filter.text.strip_edges()
+	var res: Array = await Net.fetch_records_scope(target_user_id, filter_text)
+
+	UI.clear(_history_list)
+	if not bool(res[0]):
+		_history_list.add_child(UI.label(str(res[1]), 14, UI.BAD, true))
+		return
+
+	_records = res[1].get("records", []) if res[1] is Dictionary else []
+	if res[1] is Dictionary and res[1].get("tagInfo") is Dictionary:
+		_tag_labels = res[1]["tagInfo"]
+	if _records.is_empty():
+		_history_list.add_child(UI.label("尚無歷次紀錄。完成一場遊戲後將自動保存。", 14, UI.MUTED, true))
+		return
+
+	for rec_item: Dictionary in _records:
+		var rr: Dictionary = rec_item
+		var local_ts: int = int(rr.get("ts", 0)) / 1000 + int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+		var dt: String = Time.get_datetime_string_from_unix_time(local_ts).replace("T", " ").substr(0, 16)
+		var label_str: String = "%s　%d 分　%s　（%s）" % [str(rr.get("grade", "C")), int(rr.get("score", 0)), dt, str(rr.get("room", ""))]
+
+		var b: Button = UI.option_button(label_str, func(): _show_history_detail(rr))
+		_history_list.add_child(b)
+
+	if not _records.is_empty():
+		_show_history_detail(_records[0])
+
+
+func _show_history_detail(rec: Dictionary) -> void:
+	UI.clear(_history_detail)
+	var d: Dictionary = rec.get("data", {})
+
+	# 1. 頂部總結
+	var head_box := UI.panel(UI.PANEL_2, 12, 10)
+	var head_v := UI.vbox(4)
+	head_box.add_child(head_v)
+
+	head_v.add_child(UI.label("%s｜評級 %s・總分 %d 分" % [str(rec.get("name", "")), str(rec.get("grade", "")), int(rec.get("score", 0))], 18, UI.ACCENT_2, true))
+	head_v.add_child(UI.label("服務客戶 %d 位・滿意度 %d・顧問聲望 %d・累積業績 %d" % [
+		int(d.get("clients", 0)), int(d.get("service", 0)), int(d.get("reputation", 0)), int(d.get("commission", 0))
+	], 12, UI.MUTED, true))
+
+	var skill: Dictionary = d.get("skill", {})
+	for k: String in ["trust", "insight", "fit", "risk", "compliance"]:
+		head_v.add_child(UI.metric_row(k, float(skill.get(k, 0))))
+
+	if str(d.get("coach", "")) != "":
+		head_v.add_child(UI.label("綜合教練回饋：", 13, UI.GOLD))
+		head_v.add_child(UI.label(str(d.get("coach", "")), 13, UI.TEXT, true))
+	_history_detail.add_child(head_box)
+
+	# 2. 各場面談重播（sessions）
+	var sessions: Array = d.get("sessions", [])
+	if not sessions.is_empty():
+		_history_detail.add_child(UI.label("各場面談實戰軌跡（共 %d 場）" % sessions.size(), 16, UI.ACCENT_2))
+
+		for s_item: Dictionary in sessions:
+			var s_panel := UI.panel(UI.PANEL_2, 12, 12)
+			var s_v := UI.vbox(6)
+			s_panel.add_child(s_v)
+
+			# 標題行
+			var r_title := UI.hbox(8)
+			r_title.add_child(UI.label("R%d｜%s（%s）" % [int(s_item.get("round", 1)), str(s_item.get("clientName", "")), str(s_item.get("job", ""))], 15, UI.ACCENT_2))
+
+			var s_grade: String = str(s_item.get("grade", ""))
+			var g_col: Color = UI.GOLD if s_grade == "S" else (UI.GOOD if s_grade == "A" else (UI.OK if s_grade == "B" else UI.MUTED))
+			r_title.add_child(UI.label("評級 %s（%d分）" % [s_grade, int(s_item.get("score", 0))], 14, g_col))
+
+			if bool(s_item.get("signed", false)):
+				r_title.add_child(UI.label("✓ 已簽約", 13, UI.GOOD))
+			else:
+				r_title.add_child(UI.label("× 未簽約", 13, UI.BAD))
+
+			if bool(s_item.get("referral", false)):
+				r_title.add_child(UI.label("★ 成功轉介", 13, UI.GOLD))
+
+			var hint_text: String = "（提示）" if bool(s_item.get("hintUsed", false)) else "（自主）"
+			r_title.add_child(UI.label(hint_text, 12, UI.MUTED))
+			s_v.add_child(r_title)
+
+			# 線索探索
+			var clues_dict: Dictionary = s_item.get("clues", {})
+			var clue_txt: String = "・發現線索 %d 項" % int(clues_dict.get("found", 0))
+			if bool(clues_dict.get("decoy", false)):
+				clue_txt += "（包含誤導資訊）"
+			s_v.add_child(UI.label(clue_txt, 13, UI.MUTED))
+
+			# 提問軌跡
+			var qs: Array = s_item.get("questions", [])
+			if not qs.is_empty():
+				var q_str: String = "・面談提問："
+				var q_items: Array = []
+				for q: Dictionary in qs:
+					var k_mark: String = "★" if q.get("key") != null else ""
+					q_items.append("%s%s" % [k_mark, str(q.get("text", ""))])
+				s_v.add_child(UI.label(q_str + "、".join(q_items), 13, UI.TEXT, true))
+
+			var free_q = s_item.get("freeQuestion")
+			if free_q != null and free_q is Dictionary:
+				s_v.add_child(UI.label("・自由提問：%s → %s" % [str(free_q.get("text", "")), str(free_q.get("note", ""))], 13, UI.INFO, true))
+
+			# 方案配置
+			var plan: Dictionary = s_item.get("plan", {})
+			var alloc: Dictionary = plan.get("alloc", {})
+			var alloc_txt: String = "・方案配置：現金預備 %d%% / 風險保障 %d%% / 目標成長 %d%%（品質：%s）" % [
+				int(alloc.get("cash", 0)), int(alloc.get("protect", 0)), int(alloc.get("growth", 0)), str(plan.get("quality", ""))
+			]
+			s_v.add_child(UI.label(alloc_txt, 13, UI.ACCENT_2, true))
+
+			var plan_notes: Array = plan.get("notes", [])
+			if not plan_notes.is_empty():
+				for note_text: String in plan_notes:
+					s_v.add_child(UI.label("  → %s" % note_text, 12, UI.MUTED, true))
+
+			# 異議處理
+			var obj: Dictionary = s_item.get("objection", {})
+			if not obj.is_empty():
+				var obj_mode_str: String = "自由回應" if str(obj.get("mode", "")) == "free" else "情境選擇"
+				var obj_q: String = str(obj.get("quality", ""))
+				s_v.add_child(UI.label("・異議回應（%s｜%s）：%s" % [obj_mode_str, obj_q, str(obj.get("title", ""))], 13, UI.tone_color(obj_q)))
+				if str(obj.get("text", "")) != "":
+					s_v.add_child(UI.label("  → %s" % str(obj.get("text", "")), 12, UI.TEXT, true))
+
+			# 壓力預演
+			var stress_list: Array = s_item.get("stress", [])
+			if not stress_list.is_empty():
+				var st_str: String = "・壓力預演："
+				var st_parts: Array = []
+				for st: Dictionary in stress_list:
+					var r_str: String = str(st.get("result", ""))
+					var icon: String = "✓" if r_str == "held" else ("△" if r_str == "partial" else "×")
+					st_parts.append("%s %s" % [icon, str(st.get("title", ""))])
+				s_v.add_child(UI.label(st_str + "　".join(st_parts), 13, UI.TEXT, true))
+
+			# 標籤
+			var tags: Array = s_item.get("tags", [])
+			if not tags.is_empty():
+				var labels: Array = tags.map(func(t): return str(_tag_labels.get(str(t), str(t))))
+				var tag_str: String = "・決策標籤：" + "、".join(labels)
+				s_v.add_child(UI.label(tag_str, 12, UI.GOLD, true))
+
+			_history_detail.add_child(s_panel)
+	else:
+		# 相容舊版決策紀錄
+		var ds: Array = d.get("decisions", [])
+		if not ds.is_empty():
+			_history_detail.add_child(UI.label("決策紀錄", 16, UI.ACCENT_2))
+			for x: Dictionary in ds:
+				var q: String = str(x.get("quality", ""))
+				_history_detail.add_child(UI.label("%s %s｜%s：%s" % [{"good": "✓", "ok": "△", "bad": "×"}.get(q, "・"), str(x.get("clientName", "")), str(x.get("stage", "")), str(x.get("title", ""))], 13, UI.tone_color(q), true))
+
+
+# ──────────────────────────────────────────────────────────────────
+# 分頁 3：全部學員清單（僅講師）
+# ──────────────────────────────────────────────────────────────────
+
+func _render_trainer_tab() -> void:
+	var scroll: ScrollContainer = UI.scroll(UI.vbox(12))
+	_body_area.add_child(scroll)
+	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
+
+	var top_bar := UI.hbox(8)
+	_trainer_filter = LineEdit.new()
+	_trainer_filter.placeholder_text = "依學員姓名篩選（空白＝全部）"
+	_trainer_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_trainer_filter.custom_minimum_size = Vector2(0, 42)
+	_trainer_filter.text_submitted.connect(func(_t: String): _load_trainer_learners(content))
+	top_bar.add_child(_trainer_filter)
+	top_bar.add_child(UI.button("查詢", func(): _load_trainer_learners(content), 14))
+	content.add_child(top_bar)
+
+	_trainer_list = UI.vbox(8)
+	content.add_child(_trainer_list)
+
+	_load_trainer_learners(content)
+
+
+func _load_trainer_learners(_container: VBoxContainer) -> void:
+	UI.clear(_trainer_list)
+	_trainer_list.add_child(UI.label("載入全體學員名單中……", 14, UI.MUTED))
+
+	# 先取得全部紀錄 (scope=all)
+	var filter_text: String = _trainer_filter.text.strip_edges()
+	var res: Array = await Net.fetch_records_scope("all", filter_text)
+
+	UI.clear(_trainer_list)
+	if not bool(res[0]):
+		_trainer_list.add_child(UI.label(str(res[1]), 14, UI.BAD, true))
+		return
+
+	var recs: Array = res[1].get("records", []) if res[1] is Dictionary else []
+	if recs.is_empty():
+		_trainer_list.add_child(UI.label("目前尚無學員紀錄。", 14, UI.MUTED))
+		return
+
+	# 按學員分組統計
+	var user_map: Dictionary = {}
+	for rec_item: Dictionary in recs:
+		var uid: String = str(rec_item.get("userId", ""))
+		if uid == "":
+			uid = "anon_" + str(rec_item.get("name", ""))
+		if not user_map.has(uid):
+			user_map[uid] = {
+				"id": uid,
+				"name": str(rec_item.get("name", "學員")),
+				"games": 0,
+				"totalScore": 0,
+				"bestGrade": "C",
+				"lastTs": 0,
+			}
+		var u: Dictionary = user_map[uid]
+		u["games"] = int(u["games"]) + 1
+		u["totalScore"] = int(u["totalScore"]) + int(rec_item.get("score", 0))
+		var cur_g: String = str(rec_item.get("grade", "C"))
+		var order: Array = ["C", "B", "A", "S"]
+		if order.find(cur_g) >= order.find(str(u["bestGrade"])):
+			u["bestGrade"] = cur_g
+		var r_ts: int = int(rec_item.get("ts", 0))
+		if r_ts > int(u["lastTs"]):
+			u["lastTs"] = r_ts
+
+	var u_list: Array = user_map.values()
+	u_list.sort_custom(func(a: Dictionary, b: Dictionary): return int(a.get("lastTs", 0)) > int(b.get("lastTs", 0)))
+
+	_trainer_list.add_child(UI.label("全體學員清單（共 %d 位）" % u_list.size(), 16, UI.ACCENT_2))
+
+	for learner: Dictionary in u_list:
+		var l_card := UI.panel(UI.PANEL_2, 12, 10)
+		var l_h := UI.hbox(10)
+		l_card.add_child(l_h)
+
+		var l_v := UI.vbox(2)
+		l_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		l_h.add_child(l_v)
+
+		var games_num: int = int(learner.get("games", 1))
+		var avg_num: float = float(learner.get("totalScore", 0)) / float(games_num)
+		var b_grade: String = str(learner.get("bestGrade", "C"))
+
+		var local_ts: int = int(learner.get("lastTs", 0)) / 1000 + int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+		var dt: String = Time.get_datetime_string_from_unix_time(local_ts).replace("T", " ").substr(0, 16)
+
+		l_v.add_child(UI.label(str(learner.get("name", "")), 16, UI.TEXT))
+		l_v.add_child(UI.label("培訓 %d 場・平均 %.1f 分・最佳評級 %s・最近於 %s" % [games_num, avg_num, b_grade, dt], 12, UI.MUTED, true))
+
+		var view_btn: Button = UI.button("查看學習檔案", func():
+			target_user_id = str(learner.get("id", ""))
+			target_user_name = str(learner.get("name", ""))
+			_current_tab = 0
+			_build_ui()
+		, 14, UI.ACCENT)
+		l_h.add_child(view_btn)
+
+		_trainer_list.add_child(l_card)

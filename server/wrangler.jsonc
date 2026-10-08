@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "insure-quest",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Godot 網頁版匯出到 ../web；/api/* 先交給 Worker，其餘為靜態檔
+  "assets": {
+    "directory": "../web",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM", "class_name": "Room" },
+      { "name": "RECORDS", "class_name": "Records" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room", "Records"] }
+  ],
+  // Workers AI（AI_PROVIDER=workers-ai 時使用）；本機 wrangler dev 會呼叫遠端，需要 wrangler login
+  "ai": { "binding": "AI" },
+  "vars": {
+    "AI_PROVIDER": "workers-ai",
+    "WORKERS_AI_MODEL": "@cf/qwen/qwen3.8-27b",
+    "AI_DAILY_LIMIT": "100",
+    "AI_MODEL": "claude-opus-5-5",
+    // 可查看全部學員紀錄的講師 Email（逗號分隔）
+    "TRAINER_EMAILS": ""
+  },
+  // 機密值用 wrangler secret put 設定：GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET、（選用）ANTHROPIC_API_KEY
+  "observability": { "enabled": true },
+  // 本機開發環境（npm run dev = wrangler dev --env local）：不含 Workers AI 繫結，不需要登入 Cloudflare。
+  // 已 wrangler login 時，可改用 npx wrangler dev 連線遠端 Workers AI 測試。
+  // 繫結與 vars 不會被環境繼承，所以這裡重列 Durable Object 與變數。
+  "env": {
+    "local": {
+      "durable_objects": {
+        "bindings": [
+          { "name": "ROOM", "class_name": "Room" },
+          { "name": "RECORDS", "class_name": "Records" }
+        ]
+      },
+      "vars": {
+        "AI_PROVIDER": "mock",
+        "AI_DAILY_LIMIT": "100",
+        "AI_MODEL": "claude-opus-5-5",
+        "TRAINER_EMAILS": ""
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+.godot/
+.web-build/
+web/
+.DS_Store

@@ -1,0 +1,12 @@
+# 複製成 .dev.vars 後填入（只用於本機 wrangler dev）
+# Google 登入：在 Google Cloud Console 建立 OAuth 用戶端（網頁應用程式），
+# 已授權的重新導向 URI 加入 http://localhost:8787/api/auth/google/callback 與正式網域的 /api/auth/google/callback
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# 本機測試登入（不需 Google 憑證，僅限 localhost）：/api/auth/dev-login?name=小陳
+DEV_LOGIN=1
+
+# AI 供應者：workers-ai（需 wrangler login）｜mock（本機模擬，不連外）｜claude（需 ANTHROPIC_API_KEY）｜rules
+AI_PROVIDER=mock
+# ANTHROPIC_API_KEY=
