@@ -1,3 +1,4 @@
+@tool
 class_name UI
 ## 介面工具：配色、主題與常用元件的建構函式。所有畫面都以程式碼建構，方便團隊修改與審閱。
 
@@ -23,8 +24,26 @@ const TILE_COLORS := {
 	"training": Color("#9d7bea"), "referral": Color("#2fd197"), "audit": Color("#ff6b6b"), "seminar": Color("#8ecae6"),
 }
 const TILE_ICONS := {
-	"start": "結", "client": "客", "life": "事", "market": "市", "training": "訓", "referral": "介", "audit": "稽", "seminar": "研",
+	"start": "★", "client": "◎", "life": "✚", "market": "↗", "training": "✓", "referral": "♥", "audit": "⚠", "seminar": "◇",
 }
+const TILE_NAMES := {
+	"start": "結算", "client": "客戶", "life": "人生", "market": "市場", "training": "合規", "referral": "轉介", "audit": "稽核", "seminar": "研討",
+}
+
+
+static func tile_icon(type_key: String) -> String:
+	return TILE_ICONS.get(type_key, "※")
+
+
+static func tile_name(type_key: String) -> String:
+	return TILE_NAMES.get(type_key, "事件")
+
+
+static func tile_badge(type_key: String, compact: bool = false) -> String:
+	var ic: String = tile_icon(type_key)
+	if compact:
+		return ic
+	return "%s %s" % [ic, tile_name(type_key)]
 
 static var layout_profile: String = "desktop"
 static var content_size: Vector2i = Vector2i(1280, 720)
@@ -306,23 +325,126 @@ static func clear(n: Node) -> void:
 		c.queue_free()
 
 
+## 備用場景對照（所有客戶均已有專屬插圖；此對照僅作為極端異常時之最後回退）
+const FALLBACK_SCENES: Dictionary = {
+	"junhao": "zhiming",   # 王俊豪（外送騎手）：交通載具與街頭
+	"meiling": "wanting",  # 張美玲（單親行政助理）：溫馨公寓書桌
+	"jiahao": "boting",    # 劉家豪（軟體工程師・新手爸爸）：居家科技辦公桌
+	"shufen": "shufen",    # 吳淑芬（會計主管）：主管辦公桌
+	"wenjie": "ziyuan",    # 鄭文傑（國中教師）：沉穩書桌與教案
+	"yiting": "wanting",   # 蔡依婷（行銷專員）：年輕小資租屋書桌
+	"zhiwei": "yuqing",    # 林志偉（小吃店老闆）：廚房與餐飲工作台
+	"peishan": "ziyuan",   # 何佩珊（醫院護理師）：醫療值班工作桌
+	"chengen": "boting",   # 李承恩（資深科技工程師）：科技多螢幕辦公桌
+	"jiaming": "wanting",  # 許家銘（設計公司合夥人）：創意設計工作室
+	"guohua": "zhiming",   # 楊國華（計程車司機）：計程車駕駛座
+	"yijun": "shufen",     # 陳怡君（外商業務經理）：主管辦公室與市景
+	"yixiang": "boting",   # 高奕翔（健身教練）：現代專業活動空間
+}
+
+## 尋找客戶場景或插圖路徑：優先使用專屬插圖，若無則回退至主題契合之備用場景
+static func client_scene_path(client_or_id) -> String:
+	var id := ""
+	var scene_name := ""
+	if client_or_id is Dictionary:
+		scene_name = str(client_or_id.get("scene", ""))
+		id = str(client_or_id.get("id", ""))
+		if id == "" or id == "null":
+			id = str(client_or_id.get("portrait", ""))
+		if scene_name == "" or scene_name == "null":
+			scene_name = str(client_or_id.get("portrait", ""))
+		if scene_name == "" or scene_name == "null":
+			scene_name = id
+	elif client_or_id is String:
+		id = client_or_id
+		scene_name = id
+
+	# 1. 優先嘗試專屬名稱（或指定 scene 名稱）
+	if scene_name != "" and scene_name != "null":
+		for ext in ["webp", "png", "jpg"]:
+			var p := "res://assets/clients/%s.%s" % [scene_name, ext]
+			if ResourceLoader.exists(p):
+				return p
+
+	# 2. 次要嘗試以 id 尋找
+	if id != "" and id != "null" and id != scene_name:
+		for ext in ["webp", "png", "jpg"]:
+			var p := "res://assets/clients/%s.%s" % [id, ext]
+			if ResourceLoader.exists(p):
+				return p
+
+	# 3. 若無獨立插圖，依職業情境退回風格契合的備用場景
+	var fb: String = str(FALLBACK_SCENES.get(id, ""))
+	if fb == "" and scene_name != "":
+		fb = str(FALLBACK_SCENES.get(scene_name, ""))
+	if fb != "":
+		for ext in ["webp", "png", "jpg"]:
+			var p := "res://assets/clients/%s.%s" % [fb, ext]
+			if ResourceLoader.exists(p):
+				return p
+
+	return ""
+
+
+const CIRCLE_SHADER := """
+shader_type canvas_item;
+void fragment() {
+	vec4 c = texture(TEXTURE, UV);
+	float d = distance(UV, vec2(0.5));
+	c.a *= 1.0 - smoothstep(0.47, 0.5, d);
+	COLOR = c;
+}
+"""
+static var _circle_mat: ShaderMaterial = null
+
+## 圓形頭像：有圖片就裁成圓形，沒有就顯示名字第一個字
+static func avatar(tex: Texture2D, name_text: String, size := 40) -> Control:
+	if tex != null:
+		if _circle_mat == null:
+			var sh := Shader.new()
+			sh.code = CIRCLE_SHADER
+			_circle_mat = ShaderMaterial.new()
+			_circle_mat.shader = sh
+		var tr := TextureRect.new()
+		tr.texture = tex
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_SCALE
+		tr.custom_minimum_size = Vector2(size, size)
+		tr.material = _circle_mat
+		tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		tr.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		return tr
+	var av := panel(ACCENT, int(size / 2.0), 0)
+	av.custom_minimum_size = Vector2(size, size)
+	var l := label(name_text.substr(0, 1), int(size * 0.45), Color.WHITE)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	av.add_child(l)
+	return av
+
+
 static func portrait(client: Dictionary, size := 96) -> Control:
-	var id: String = str(client.get("portrait", ""))
-	if id == "" or id == "null":
-		id = str(client.get("id", ""))
-	if id != "" and id != "null":
-		for ext: String in ["webp", "png", "jpg"]:
-			var path := "res://assets/clients/%s.%s" % [id, ext]
-			if ResourceLoader.exists(path):
-				var tr := TextureRect.new()
-				tr.texture = load(path)
-				tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-				tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-				tr.custom_minimum_size = Vector2(size * 1.5, size)
-				return tr
+	var path := client_scene_path(client)
+	if path != "":
+		var clip_box := PanelContainer.new()
+		clip_box.clip_contents = true
+		clip_box.custom_minimum_size = Vector2(size * 1.35, size)
+		clip_box.add_theme_stylebox_override("panel", box(Color("#10232e"), 10, Color("#1e475b"), 2))
+		var tr := TextureRect.new()
+		tr.texture = load(path)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tr.set_anchors_preset(Control.PRESET_FULL_RECT)
+		clip_box.add_child(tr)
+		# 放在水平排列裡時預設會被撐滿整列高度（旁邊泡泡越長頭貼越長）：固定尺寸、靠上
+		clip_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		clip_box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		return clip_box
 	# 沒有插圖的客戶：以姓氏頭像代替
 	var p := panel(Color.from_hsv(fmod(str(client.get("name", "?")).hash() / 1000.0, 1.0), 0.45, 0.55), int(size / 2.0), 0)
 	p.custom_minimum_size = Vector2(size, size)
+	p.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	p.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	var l := label(str(client.get("name", "?")).substr(0, 1), int(size * 0.45), Color.WHITE)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -395,3 +517,66 @@ static func text_input(placeholder: String, on_submit: Callable, max_len := 120)
 	le.text_submitted.connect(func(_t): submit.call())
 	h.add_child(button("送出", submit))
 	return h
+
+
+## 十年後的信件卡片（信紙風格：米白底、深色字、手寫感留白）
+static func letter_card(letter: Dictionary, client_name: String) -> PanelContainer:
+	var outcome: String = str(letter.get("outcome", "mixed"))
+	var is_phone := is_phone_portrait()
+
+	# 色調：thanks 暖金、regret 灰藍、mixed 中性
+	var accent_col: Color = Color("#c48b23") if outcome == "thanks" else (Color("#4c6d8c") if outcome == "regret" else Color("#6d6961"))
+	var bg_col: Color = Color("#fbf8ee") if outcome == "thanks" else (Color("#f2f5f8") if outcome == "regret" else Color("#f5f2eb"))
+	var tag_text: String = "★ 暖心感謝" if outcome == "thanks" else ("▲ 遺憾與感慨" if outcome == "regret" else "● 百感交集")
+
+	var p := PanelContainer.new()
+	var pad := 14 if is_phone else 20
+	p.add_theme_stylebox_override("panel", box(bg_col, 12, accent_col, pad, true))
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var v := vbox(8 if is_phone else 10)
+	p.add_child(v)
+
+	# 標題列
+	var head := hbox(8)
+	var title_lbl := label("十年後，%s 寄來的信" % client_name, 16 if is_phone else 18, Color("#2b2219"), true)
+	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title_lbl)
+
+	var tag_p := panel(Color(accent_col.r, accent_col.g, accent_col.b, 0.15), 6, 4)
+	tag_p.add_theme_stylebox_override("panel", box(Color(accent_col.r, accent_col.g, accent_col.b, 0.15), 6, accent_col, 4, false))
+	tag_p.add_child(label(tag_text, 11 if is_phone else 12, accent_col))
+	head.add_child(tag_p)
+	v.add_child(head)
+
+	# 事件與缺口小結
+	var ev_text: String = str(letter.get("event", ""))
+	var gap_val: int = int(letter.get("gap", 0))
+	if ev_text != "" or letter.has("gap") or gap_val > 0:
+		var summary_box := panel(Color(accent_col.r, accent_col.g, accent_col.b, 0.08), 8, 8)
+		summary_box.add_theme_stylebox_override("panel", box(Color(accent_col.r, accent_col.g, accent_col.b, 0.08), 8, Color(accent_col.r, accent_col.g, accent_col.b, 0.3), 6, false))
+		var sv := vbox(3)
+		if ev_text != "":
+			sv.add_child(label("※ 經歷事件：%s" % ev_text, 12 if is_phone else 13, Color("#3a3028"), true))
+		if gap_val > 0:
+			sv.add_child(label("※ 財務缺口：%d 萬元（方案未能完全承接）" % gap_val, 12 if is_phone else 13, Color("#992b2b"), true))
+		else:
+			sv.add_child(label("※ 財務缺口：0 萬元（防護穩健，無缺口）", 12 if is_phone else 13, Color("#26734d"), true))
+		summary_box.add_child(sv)
+		v.add_child(summary_box)
+
+	# 信件內文
+	var content: String = str(letter.get("content", ""))
+	if content != "":
+		var body_lbl := label(content, 14 if is_phone else 15, Color("#2c241d"), true)
+		v.add_child(body_lbl)
+
+	# 落款
+	var sign_row := hbox(8)
+	sign_row.add_child(spacer())
+	var sign_lbl := label("—— %s 敬上" % client_name, 12 if is_phone else 13, Color("#5e564c"))
+	sign_row.add_child(sign_lbl)
+	v.add_child(sign_row)
+
+	return p
+

@@ -1,4 +1,7 @@
 import type { Award, QuestState, QuestStats } from './extras.ts';
+import type { LifeTwist } from './twists.ts';
+import type { ClientLetter } from './letters.ts';
+import type { ComplianceLevel } from './compliance.ts';
 /* INSURE QUEST｜共用型別。伺服器權威狀態、客戶資料與訊息協定都在這裡定義。 */
 
 export type Metric = 'trust' | 'insight' | 'fit' | 'risk' | 'compliance';
@@ -96,8 +99,20 @@ export interface PlayerState {
 export interface SessionState {
   playerId: string; clientId: string; referral: boolean;
   step: 'discover' | 'plan' | 'objection' | 'result';
-  asked: { qid: QuestionId | 'free'; question: string; answer: string; key: string | null; note?: string }[];
+  asked: {
+    qid: QuestionId | 'free';
+    question: string;
+    answer: string;
+    key: string | null;
+    note?: string;
+    compliance?: ComplianceLevel;
+    emotion?: string;
+    coachTip?: string;
+    source?: 'ai' | 'rule';
+  }[];
   freeLeft: number;
+  talkLeft?: number;
+  twist?: LifeTwist | null;
   /** 自由提問命中的標準題目（計入關鍵問題覆蓋） */
   freeHits: QuestionId[];
   /** 場景線索（3 真 1 干擾），observed 為已調查的索引 */
@@ -118,6 +133,7 @@ export interface SessionState {
     signed: boolean; score: number; grade: string; caps: string[]; commission: number; summary: string;
     predictionHits: string[];
     epilogue: { headline: string; title: string; list: string[]; noPlan: string[] };
+    letter?: ClientLetter | null;
   };
   aiBusy?: boolean;
 }
@@ -138,6 +154,8 @@ export interface PendingEvent {
 export interface SessionLog {
   clientId: string; clientName: string; job: string; round: number;
   grade: string; score: number; signed: boolean; referral: boolean; hintUsed: boolean;
+  twist?: { id: string; title: string; hint: string } | null;
+  letter?: ClientLetter | null;
   clues: { found: number; decoy: boolean };
   questions: { qid: string; text: string; key: string | null }[];
   freeQuestion: { text: string; note: string } | null;
@@ -157,6 +175,7 @@ export interface FinalRow {
   score: number; grade: string; caps: string[];
   skill: Metrics; service: number; reputation: number; commission: number; clients: number;
   coach: string;
+  letters?: { clientName: string; outcome: 'thanks' | 'regret' | 'mixed'; content: string }[];
 }
 
 export interface GameState {
@@ -177,6 +196,8 @@ export interface GameState {
   announcement?: Announcement | null;
   quests?: QuestState[];
   awards?: Award[] | null;
+  /** 結算後 AI 仍在撰寫教練回饋與十年後的信（報告先顯示規則版，完成後更新） */
+  aiPending?: boolean;
   version: number;
 }
 
@@ -185,6 +206,7 @@ export type Action =
   | { type: 'observe'; index: number }
   | { type: 'ask'; qid: QuestionId }
   | { type: 'ask_free'; text: string }
+  | { type: 'talk'; text: string; suggested?: QuestionId }
   | { type: 'to_plan' }
   | { type: 'plan'; alloc: Alloc; cards: CardId[] }
   | { type: 'objection'; index: number }

@@ -1,3 +1,4 @@
+@tool
 extends Control
 ## 人生棋盤：24 格環狀（7×7 外圈），繪製格子與玩家棋子，棋子沿格子彈跳移動並自適應尺寸。
 ## 支援中央精美羅盤主視覺、格子圖示層次辨識與擲骰過場凍結機制。
@@ -157,12 +158,7 @@ func _draw() -> void:
 		draw_style_box(UI.box(col.darkened(0.15), 6, col.lightened(0.15), 0), ribbon_r)
 
 		# 色帶文字與格子序號
-		var cat_name: String = {
-			"client": "客 客戶", "market": "市 市場", "life": "✚ 人生", "training": "訓 合規",
-			"audit": "稽 稽核", "referral": "♥ 轉介", "seminar": "研 研討", "start": "★ 結算"
-		}.get(type_key, "事件")
-		if is_compact:
-			cat_name = cat_name.substr(0, 1)
+		var cat_name: String = UI.tile_badge(type_key, is_compact)
 
 		var cat_fs: int = int(clampf(ribbon_h * 0.65, 9, 12))
 		draw_string(font, Vector2(ribbon_r.position.x + 4, ribbon_r.get_center().y + cat_fs * 0.38), cat_name, HORIZONTAL_ALIGNMENT_LEFT, int(ribbon_r.size.x - 18), cat_fs, Color.WHITE)
@@ -248,29 +244,29 @@ func _draw() -> void:
 func _draw_tile_symbol(type_key: String, c: Vector2, sz: float, col: Color) -> void:
 	match type_key:
 		"client":
-			# 咖啡杯／人物拜訪：小茶杯圖案
-			draw_arc(c + Vector2(0, sz * 0.2), sz * 0.6, 0, PI, 16, col, 2.0)
-			draw_line(c + Vector2(-sz * 0.6, sz * 0.2), c + Vector2(sz * 0.6, sz * 0.2), col, 2.0)
-			draw_arc(c + Vector2(sz * 0.6, 0), sz * 0.3, -PI * 0.5, PI * 0.5, 12, col, 1.5)
+			# 客戶：人像（頭＋肩膀）
+			draw_circle(c + Vector2(0, -sz * 0.35), sz * 0.32, col)
+			var body := PackedVector2Array()
+			for i in range(13):
+				var a: float = PI + PI * float(i) / 12.0
+				body.append(c + Vector2(cos(a) * sz * 0.7, sz * 0.75 + sin(a) * sz * 0.65))
+			draw_colored_polygon(body, col)
 		"market":
-			# 市場行情趨勢：三根長條圖
-			draw_rect(Rect2(c.x - sz * 0.7, c.y + sz * 0.1, sz * 0.35, sz * 0.6), col, true)
-			draw_rect(Rect2(c.x - sz * 0.15, c.y - sz * 0.6, sz * 0.35, sz * 1.3), col, true)
-			draw_rect(Rect2(c.x + sz * 0.4, c.y - sz * 0.2, sz * 0.35, sz * 0.9), col, true)
+			# 市場行情：三根長條＋底線＋上升趨勢線
+			draw_rect(Rect2(c.x - sz * 0.7, c.y + sz * 0.15, sz * 0.32, sz * 0.55), col, true)
+			draw_rect(Rect2(c.x - sz * 0.16, c.y - sz * 0.15, sz * 0.32, sz * 0.85), col, true)
+			draw_rect(Rect2(c.x + sz * 0.38, c.y - sz * 0.45, sz * 0.32, sz * 1.15), col, true)
+			draw_line(c + Vector2(-sz * 0.85, sz * 0.75), c + Vector2(sz * 0.85, sz * 0.75), col, 2.0)
+			draw_polyline(PackedVector2Array([c + Vector2(-sz * 0.75, -sz * 0.15), c + Vector2(-sz * 0.1, -sz * 0.5), c + Vector2(sz * 0.6, -sz * 0.85)]), col, 1.5, true)
 		"life":
 			# 人生十字防線：醫療與愛心十字
 			draw_rect(Rect2(c.x - sz * 0.2, c.y - sz * 0.7, sz * 0.4, sz * 1.4), col, true)
 			draw_rect(Rect2(c.x - sz * 0.7, c.y - sz * 0.2, sz * 1.4, sz * 0.4), col, true)
 		"training":
-			# 合規防護盾牌
-			var pts := PackedVector2Array([
-				c + Vector2(0, sz * 0.8),
-				c + Vector2(-sz * 0.7, sz * 0.1),
-				c + Vector2(-sz * 0.7, -sz * 0.6),
-				c + Vector2(sz * 0.7, -sz * 0.6),
-				c + Vector2(sz * 0.7, sz * 0.1)
-			])
-			draw_polyline(pts, col, 2.0, true)
+			# 合規：封閉盾牌＋打勾
+			var shield := PackedVector2Array([c + Vector2(0, -sz * 0.8), c + Vector2(sz * 0.7, -sz * 0.55), c + Vector2(sz * 0.62, sz * 0.15), c + Vector2(0, sz * 0.85), c + Vector2(-sz * 0.62, sz * 0.15), c + Vector2(-sz * 0.7, -sz * 0.55), c + Vector2(0, -sz * 0.8)])
+			draw_polyline(shield, col, 2.0, true)
+			draw_polyline(PackedVector2Array([c + Vector2(-sz * 0.32, 0), c + Vector2(-sz * 0.05, sz * 0.28), c + Vector2(sz * 0.36, -sz * 0.25)]), col, 2.5, true)
 		"audit":
 			# 稽核放大鏡
 			draw_arc(c + Vector2(-sz * 0.2, -sz * 0.2), sz * 0.55, 0, TAU, 18, col, 2.0)
@@ -280,12 +276,13 @@ func _draw_tile_symbol(type_key: String, c: Vector2, sz: float, col: Color) -> v
 			draw_arc(c + Vector2(-sz * 0.3, 0), sz * 0.45, 0, TAU, 16, col, 2.0)
 			draw_arc(c + Vector2(sz * 0.3, 0), sz * 0.45, 0, TAU, 16, col, 2.0)
 		"seminar":
-			# 顧問研討會書本
-			draw_line(c + Vector2(-sz * 0.7, sz * 0.3), c + Vector2(0, -sz * 0.3), col, 2.0)
-			draw_line(c + Vector2(0, -sz * 0.3), c + Vector2(sz * 0.7, sz * 0.3), col, 2.0)
-			draw_line(c + Vector2(-sz * 0.7, sz * 0.7), c + Vector2(0, sz * 0.1), col, 2.0)
-			draw_line(c + Vector2(0, sz * 0.1), c + Vector2(sz * 0.7, sz * 0.7), col, 2.0)
-			draw_line(c + Vector2(0, -sz * 0.3), c + Vector2(0, sz * 0.6), col, 1.5)
+			# 顧問研討會：攤開的書（左右兩頁＋書脊＋頁面橫線）
+			draw_polyline(PackedVector2Array([c + Vector2(0, -sz * 0.45), c + Vector2(-sz * 0.8, -sz * 0.65), c + Vector2(-sz * 0.8, sz * 0.5), c + Vector2(0, sz * 0.7), c + Vector2(0, -sz * 0.45)]), col, 2.0, true)
+			draw_polyline(PackedVector2Array([c + Vector2(0, -sz * 0.45), c + Vector2(sz * 0.8, -sz * 0.65), c + Vector2(sz * 0.8, sz * 0.5), c + Vector2(0, sz * 0.7), c + Vector2(0, -sz * 0.45)]), col, 2.0, true)
+			for k in range(3):
+				var yy: float = -sz * 0.3 + sz * 0.3 * k
+				draw_line(c + Vector2(-sz * 0.62, yy - sz * 0.05), c + Vector2(-sz * 0.18, yy + sz * 0.07), col, 1.2)
+				draw_line(c + Vector2(sz * 0.18, yy + sz * 0.07), c + Vector2(sz * 0.62, yy - sz * 0.05), col, 1.2)
 		"start":
 			# 結算四角星芒
 			var sp := PackedVector2Array([

@@ -1,3 +1,4 @@
+@tool
 extends Control
 ## 主控：畫面切換、單人／多人流程、提示訊息。
 
@@ -21,6 +22,12 @@ var _was_quota_exhausted := false
 
 
 func _ready() -> void:
+	# 編輯器中開啟 main.tscn 時顯示主選單設計（各畫面另見 scenes/preview/）
+	if Engine.is_editor_hint():
+		var preview: Control = load("res://scenes/preview/preview.gd").new()
+		preview.screen = "menu"
+		add_child(preview)
+		return
 	theme = UI.make_theme()
 	var bg := ColorRect.new()
 	bg.color = UI.BG
@@ -168,7 +175,7 @@ func set_busy(text: String) -> void:
 # ───────── 流程 ─────────
 
 func create_and_join(solo_bots: Array, solo: bool) -> void:
-	set_busy("建立房間中……")
+	set_busy("準備單人練習中……" if solo else "建立房間中……")
 	var r := await Net.create_room()
 	set_busy("")
 	if not r[0]:
@@ -176,6 +183,7 @@ func create_and_join(solo_bots: Array, solo: bool) -> void:
 		return
 	_solo_bots = solo_bots
 	_solo = solo
+	Net.is_solo = solo
 	Net.join(str(r[1]))
 	set_busy("連線中……")
 
@@ -183,6 +191,7 @@ func create_and_join(solo_bots: Array, solo: bool) -> void:
 func resume_seat() -> void:
 	_solo_bots = []
 	_solo = false
+	Net.is_solo = false
 	Net.join(str(Net.saved_seat.get("room", "")), true)
 	set_busy("回到房間中……")
 
@@ -190,6 +199,7 @@ func resume_seat() -> void:
 func join_room(code: String) -> void:
 	_solo_bots = []
 	_solo = false
+	Net.is_solo = false
 	Net.join(code)
 	set_busy("連線中……")
 
@@ -198,6 +208,7 @@ func leave_to_menu() -> void:
 	Net.leave()
 	_solo_bots = []
 	_solo = false
+	Net.is_solo = false
 	show_menu()
 
 
@@ -211,7 +222,8 @@ func _on_welcomed(_data: Dictionary) -> void:
 		for level in _solo_bots:
 			Net.send({"t": "add_bot", "level": level})
 		_solo_bots = []
-		Net.send({"t": "settings", "rounds": 5})
+		# 登入者才有 AI 即時新客戶；訪客一律規則版（伺服器另有檢查）
+		Net.send({"t": "settings", "rounds": 5, "aiClients": Net.ai_enabled})
 		Net.send({"t": "start"})
 
 

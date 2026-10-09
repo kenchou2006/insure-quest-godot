@@ -9,8 +9,17 @@ import { apply, clamp, commissionFor, evaluatePlan, finalScore, marketOne, METRI
 import { BOARD, CLIENTS, DECOYS, MARKET_EVENTS, QUESTIONS, QUIZ } from './data.ts';
 import type { AIService } from '../ai.ts';
 import { computeAwards, DILEMMAS, DILEMMA_EFFECT, emptyStats, pickLifeChange, reviewOutcome, rollQuests, updateQuests, type ReviewPick } from './extras.ts';
+import { LIFE_TWISTS, applyTwist, type LifeTwist } from './twists.ts';
+import { ruleCompliance, mergeCompliance } from './compliance.ts';
+import { determineLetter, generateTemplateLetter, type LetterFacts, type ClientLetter } from './letters.ts';
 
-export interface Ctx { ai: AIService; rng: () => number; now: () => number }
+export interface Ctx {
+  ai: AIService; rng: () => number; now: () => number;
+  /** 面談對話時，客戶回答串流產生的目前文字（房間轉送給所有連線） */
+  onStream?: (text: string) => void;
+  /** 動作處理完成：丟棄尚未送出的串流片段（避免在最終狀態之後才送達） */
+  endStream?: () => void;
+}
 
 export const MAX_PLAYERS = 4;
 const STANDARD_ASKS = 3;
@@ -103,15 +112,19 @@ function draw<T>(deckIds: string[], all: (T & { id: string })[], rng: () => numb
 function startSession(s: GameState, p: PlayerState, c: ClientProfile, referral: boolean, ctx: Ctx) {
   const m = { ...START };
   if (referral) m.trust += 10;
+  // 隨機抽 1 個動態人生變數掛到面談
+  const twist = LIFE_TWISTS[Math.floor(ctx.rng() * LIFE_TWISTS.length)];
+  if (twist.initialTrustDelta) m.trust = clamp(m.trust + twist.initialTrustDelta);
+
   // 有場景插圖的客戶用專屬干擾物（含熱點座標），其餘隨機挑一個通用干擾物
   const decoy = c.decoy ?? DECOYS[Math.floor(ctx.rng() * DECOYS.length)];
   const clues = shuffle([...c.facts.map(f => ({ ...f, real: true })), { ...decoy, fact: '', real: false }], ctx.rng);
   s.session = {
-    playerId: p.id, clientId: c.id, referral, step: 'discover', asked: [], freeLeft: 1, freeHits: [], clues, observed: [], m,
+    playerId: p.id, clientId: c.id, referral, step: 'discover', asked: [], freeLeft: 1, talkLeft: 3, twist, freeHits: [], clues, observed: [], m,
     objectionOrder: shuffle([0, 1, 2, 3], ctx.rng), predictions: {},
   };
   s.turnStage = 'session';
-  log(s, `${p.name} 在${BOARD[p.pos].name}遇見了${c.name}（${c.job}）${referral ? '——轉介紹客戶，信任 +10' : ''}`, 'info', ctx.now());
+  log(s, `${p.name} 在${BOARD[p.pos].name}遇見了${c.name}（${c.job}）${referral ? '——轉介紹客戶，信任 +10' : ''}【${twist.title}】`, 'info', ctx.now());
 }
 
 function setEvent(s: GameState, ev: PendingEvent) { s.event = ev; s.turnStage = 'event'; }
@@ -273,9 +286,10 @@ function decide(p: PlayerState, s: GameState, clientName: string, stage: string,
 
 function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ctx) {
   const c = s.clients[sess.clientId];
-  const pe = evaluatePlan(c, sess.plan!.alloc, sess.plan!.cards);
+  const twistedClient = applyTwist(c, sess.twist);
+  const pe = evaluatePlan(twistedClient, sess.plan!.alloc, sess.plan!.cards);
   // 90 天壓力預演：讓學員立刻看見配置在三個事件下的承接結果
-  const st = runStress(c, sess.plan!.alloc, sess.plan!.cards);
+  const st = runStress(twistedClient, sess.plan!.alloc, sess.plan!.cards);
   for (const e of st.events) apply(sess.m, STEP.stressEvent(e.result));
   apply(sess.m, STEP.stressFinal(st.quality));
   sess.stress = st.events.map(e => ({ title: e.ev.title, tag: e.ev.tag, result: e.result, defense: e.defense, need: e.ev.need, text: e.result === 'broken' ? e.ev.hit : e.ev.held }));
@@ -305,7 +319,19 @@ function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ct
     if (who && guess === fs.grade) { who.reputation = clamp(who.reputation + 2); predictionHits.push(who.name); }
   }
   if (predictionHits.length) log(s, `${predictionHits.join('、')} 準確預測了評級 ${fs.grade}（聲望 +2）`, 'good', ctx.now());
-  sess.result = { signed, score: fs.score, grade: fs.grade, caps: fs.caps, commission, summary, predictionHits, epilogue: epilogueFor(c, st.quality, st.events) };
+
+  // 十年後的信：規則引擎決定結局、事件與缺口
+  const letterFacts = determineLetter(twistedClient, signed, st);
+  const templateLetter = generateTemplateLetter(twistedClient, letterFacts);
+  const clientLetter: ClientLetter = { ...letterFacts, content: templateLetter };
+
+  // 面談中先用模板信；遊戲結束時由 enrichCoach 批次以 AI 潤稿（背景 promise 在 DO 中不會被保存與推送）
+
+  sess.result = {
+    signed, score: fs.score, grade: fs.grade, caps: fs.caps, commission, summary, predictionHits,
+    epilogue: epilogueFor(c, st.quality, st.events),
+    letter: clientLetter,
+  };
   sess.step = 'result';
   p.sessionLogs = [...(p.sessionLogs ?? []), buildSessionLog(s, c, sess, pe, st.events, fs, signed)];
   // 任務統計與合規連擊：連續 3 場以上合規 100，每場額外聲望 +2
@@ -371,13 +397,15 @@ function buildSessionLog(s: GameState, c: ClientProfile, sess: SessionState, pe:
   if (pe.off.cash === 'low') tags.push('low_cash');
   if (pe.off.protect === 'low') tags.push('low_protect');
   if (pe.off.growth === 'high') tags.push('growth_heavy');
-  if (sess.m.compliance < 100) tags.push('non_compliant');
+  if (sess.m.compliance < 100 || sess.asked.some(a => a.compliance === 'violation')) tags.push('non_compliant');
   if (reply.quality !== 'good') tags.push('objection_weak');
   if (events.some(e => e.result === 'broken')) tags.push('stress_broken');
   if (!signed) tags.push('not_signed');
   return {
     clientId: c.id, clientName: c.name, job: c.job, round: s.round, grade: fs.grade, score: fs.score, signed,
     referral: sess.referral, hintUsed: !!sess.hintUsed,
+    twist: sess.twist ? { id: sess.twist.id, title: sess.twist.title, hint: sess.twist.hint } : null,
+    letter: sess.result?.letter ?? null,
     clues: { found: realFound, decoy: decoySeen },
     questions: sess.asked.filter(a => a.qid !== 'free').map(a => ({ qid: String(a.qid), text: a.question, key: a.key })),
     freeQuestion: free ? { text: free.question, note: free.note ?? '' } : null,
@@ -434,6 +462,7 @@ function coveredQuestions(sess: SessionState): Set<string> {
 }
 
 function interviewReady(sess: SessionState) {
+  if (sess.talkLeft !== undefined && sess.talkLeft <= 0) return true;
   return coveredQuestions(sess).size >= STANDARD_ASKS;
 }
 
@@ -575,9 +604,78 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       if (r.compliance < 0) decide(p, s, c.name, '需求訪談', 'bad', '提問出現不當說法', r.note || '提問時避免保證或恐嚇式用語。');
       return null;
     }
+    case 'talk': {
+      if (sess.step !== 'discover') return '訪談已結束';
+      const talkLeft = sess.talkLeft ?? 3;
+      if (talkLeft <= 0) return '對話輪數已用完，請進入方案配置';
+      const text = (a.text || '').trim().slice(0, 150);
+      if (text.length < 2) return '請輸入話語';
+
+      // 1. 先跑規則版合規雷達
+      const ruleComp = ruleCompliance(text);
+
+      // 2. 呼叫 AI 或走規則版 fallback
+      sess.aiBusy = true;
+      const dialogue = await ctx.ai.talk(c, sess.twist, sess.asked, text, a.suggested, ctx.onStream);
+      sess.aiBusy = false;
+
+      // 3. 合規結果合併（取較嚴重者與扣分較多者）
+      const mergedComp = mergeCompliance(ruleComp, dialogue.compliance);
+
+      // 4. 數值 clamp
+      const trustDelta = Math.max(-15, Math.min(12, dialogue.trustDelta));
+      const insightDelta = Math.max(0, Math.min(15, dialogue.insightDelta));
+      const penalty = Math.max(-25, Math.min(0, mergedComp.penalty));
+      apply(sess.m, { trust: trustDelta, insight: insightDelta, compliance: penalty });
+
+      // 5. 白名單過濾 revealedFacts
+      const realTitles = new Set(c.facts.map(f => f.title));
+      const hits = (dialogue.revealedFacts || []).filter(t => realTitles.has(t));
+      for (const h of hits) {
+        const idx = sess.clues.findIndex(cl => cl.real && cl.title === h);
+        if (idx >= 0 && !sess.observed.includes(idx)) {
+          sess.observed.push(idx);
+          apply(sess.m, STEP.clueFound);
+        }
+      }
+      if (sess.clues.every((cl, i) => !cl.real || sess.observed.includes(i))) {
+        apply(sess.m, STEP.clueFinish);
+        decide(p, s, c.name, '線索觀察', 'good', '透過對話找齊了需求線索', '在對話中探詢出真實生活狀況。');
+      }
+      if (a.suggested && !coveredQuestions(sess).has(a.suggested)) {
+        sess.freeHits.push(a.suggested);
+      }
+
+      // 6. 輪數遞減
+      sess.talkLeft = talkLeft - 1;
+
+      // 7. 存入 session.asked
+      sess.asked.push({
+        qid: (a.suggested ?? 'free') as any,
+        question: text,
+        answer: dialogue.answer,
+        key: hits[0] ?? (a.suggested ? c.answers[a.suggested]?.key : null),
+        note: dialogue.coachTip,
+        compliance: mergedComp.level,
+        emotion: dialogue.emotion,
+        coachTip: dialogue.coachTip,
+        source: ctx.ai.enabled ? 'ai' : 'rule',
+      });
+
+      // 8. 決策紀錄
+      if (mergedComp.level === 'violation') {
+        decide(p, s, c.name, '需求訪談', 'bad', '對話出現違規招攬說法', mergedComp.issues.map(i => i.suggestion).join('；') || '避免保證收益或恐嚇式用語');
+      } else if (mergedComp.level === 'warning') {
+        decide(p, s, c.name, '需求訪談', 'ok', '對話出現話術瑕疵', mergedComp.issues.map(i => i.suggestion).join('；'));
+      } else if (trustDelta > 0) {
+        decide(p, s, c.name, '需求訪談', 'good', '合規且切中需求', dialogue.coachTip);
+      }
+
+      return null;
+    }
     case 'to_plan': {
       if (sess.step !== 'discover') return '訪談已結束';
-      if (!interviewReady(sess)) return `請先完成 ${STANDARD_ASKS} 個訪談問題`;
+      if (!interviewReady(sess)) return `請先完成 ${STANDARD_ASKS} 個訪談問題或 3 輪對話`;
       const askedKeys = new Set<string>([...sess.asked.map(x => x.qid), ...sess.freeHits]);
       const keyHit = c.keyQuestions.filter(k => askedKeys.has(k)).length;
       apply(sess.m, STEP.interviewFinish(keyHit));
@@ -591,9 +689,10 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       if (sess.step !== 'plan') return '現在不是方案配置階段';
       const alloc: Alloc = { cash: Number(a.alloc?.cash), protect: Number(a.alloc?.protect), growth: Number(a.alloc?.growth) };
       const cards = Array.isArray(a.cards) ? a.cards.map(String) as CardId[] : [];
-      const err = validPlan(alloc, cards, c);
+      const twistedClient = applyTwist(c, sess.twist);
+      const err = validPlan(alloc, cards, twistedClient);
       if (err) return err;
-      const pe = evaluatePlan(c, alloc, cards);
+      const pe = evaluatePlan(twistedClient, alloc, cards);
       apply(sess.m, pe.changes);
       sess.plan = { alloc, cards, quality: pe.quality, notes: pe.notes };
       decide(p, s, c.name, '方案配置', pe.quality,
@@ -666,7 +765,18 @@ export function scorePlayer(p: PlayerState): Omit<FinalRow, 'coach'> {
 
 function endGame(s: GameState, ctx: Ctx) {
   s.phase = 'ended'; s.turnStage = 'done';
-  s.final = s.players.map(p => ({ ...scorePlayer(p), coach: fallbackTip(p) })).sort((x, y) => y.score - x.score);
+  s.final = s.players.map(p => {
+    const row = { ...scorePlayer(p), coach: fallbackTip(p) };
+    const letters = (p.sessionLogs ?? [])
+      .filter(l => l.letter)
+      .slice(-3)
+      .map(l => ({
+        clientName: l.clientName,
+        outcome: l.letter!.outcome as 'thanks' | 'regret' | 'mixed',
+        content: l.letter!.content,
+      }));
+    return { ...row, letters };
+  }).sort((x, y) => y.score - x.score);
   s.awards = computeAwards(s, p => scorePlayer(p).score);
   log(s, `遊戲結束！最佳顧問：${s.final[0].name}（${s.final[0].grade}）`, 'good', ctx.now());
 }
@@ -677,8 +787,21 @@ export async function enrichCoach(s: GameState, aiFor: (p: PlayerState) => AISer
   await Promise.all(s.final.map(async row => {
     const p = playerById(s, row.playerId);
     if (!p || p.isBot) return;
-    const text = await aiFor(p).debrief(p, row).catch(() => null);
+    const ai = aiFor(p);
+    const text = await ai.debrief(p, row).catch(() => null);
     if (text) row.coach = text;
+    // 十年後的信：結局與缺口已由規則引擎決定，AI 只改寫文字（失敗或訪客時保留模板信）
+    if (!ai.enabled || !row.letters?.length) return;
+    const logs = (p.sessionLogs ?? []).filter(l => l.letter).slice(-3);
+    await Promise.all(logs.map(async (l, i) => {
+      const c = s.clients[l.clientId];
+      const row_letter = row.letters?.[i];
+      if (!c || !l.letter || !row_letter) return;
+      const twist = LIFE_TWISTS.find(t => t.id === l.twist?.id) ?? null;
+      const { content: _, ...facts } = l.letter;
+      const content = await ai.letter(applyTwist(c, twist), twist, facts).catch(() => null);
+      if (content) { row_letter.content = content; l.letter.content = content; }
+    }));
   }));
 }
 
@@ -700,6 +823,8 @@ export function publicView(s: GameState, viewerId: string | null = null) {
     deckLeft: s.deck.length,
     session: sess && c ? {
       playerId: sess.playerId, referral: sess.referral, step: sess.step, asked: sess.asked, freeLeft: sess.freeLeft,
+      talkLeft: sess.talkLeft ?? 3,
+      twist: sess.twist ? { id: sess.twist.id, title: sess.twist.title, hint: sess.twist.hint } : null,
       metrics: sess.m, aiBusy: !!sess.aiBusy,
       // 熱點座標對真線索與干擾物都提供，不洩漏真假
       clues: sess.clues.map((cl, i) => sess.observed.includes(i)
@@ -731,6 +856,7 @@ export function publicView(s: GameState, viewerId: string | null = null) {
     log: s.log.slice(-25),
     quests: s.quests ?? [],
     awards: s.awards ?? null,
+    aiPending: !!s.aiPending,
     final: s.final,
     announcement: s.announcement ?? null,
     version: s.version,

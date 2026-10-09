@@ -4,7 +4,7 @@ import { CLIENTS } from '../src/game/data.ts';
 import { evaluatePlan, runStress, TOTAL_COINS } from '../src/game/engine.ts';
 import { addPlayer, applyAction, createGame, publicView, scorePlayer, startGame, type Ctx } from '../src/game/game.ts';
 import { botAction } from '../src/game/bots.ts';
-import { RuleAI, ruleGrade, buildGeneratedClient, MeteredAI, MockAI, extractJson, type RawAI } from '../src/ai.ts';
+import { RuleAI, ruleGrade, buildGeneratedClient, MeteredAI, MockAI, extractJson, FallbackRawAI, makeAI, detectProvider, type RawAI } from '../src/ai.ts';
 import { buildProfile } from '../src/game/profile.ts';
 import { predict } from '../src/game/game.ts';
 import type { Alloc, CardId, GameState } from '../src/game/types.ts';
@@ -237,6 +237,111 @@ test('extractJson：可從程式碼區塊、think 標記與雜訊中取出 JSON'
   assert.deepEqual(extractJson('<think>嗯</think>好的```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(extractJson({ b: 2 }), { b: 2 });
   assert.equal(extractJson('沒有 JSON'), null);
+});
+
+test('FallbackRawAI：支援 NVIDIA NIM 優先並在失敗/未配置時切換至備援供應者', async () => {
+  let primaryCalls = 0;
+  let secondaryCalls = 0;
+  const primary: RawAI = Object.assign(new MockAI(), {
+    provider: 'primary-nim',
+    marketNews: async () => {
+      primaryCalls++;
+      return null; // 模擬連線失敗或回傳空值
+    },
+    coachTip: async () => {
+      primaryCalls++;
+      return 'NVIDIA 建議';
+    },
+  });
+  const secondary: RawAI = Object.assign(new MockAI(), {
+    provider: 'secondary-workers',
+    marketNews: async () => {
+      secondaryCalls++;
+      return '備援 Workers 快訊';
+    },
+    coachTip: async () => {
+      secondaryCalls++;
+      return '備援建議';
+    },
+  });
+
+  const chained = new FallbackRawAI([primary, secondary]);
+  assert.equal(chained.provider, 'primary-nim -> secondary-workers');
+
+  // 1. primary 成功時，不呼叫 secondary
+  const tip = await chained.coachTip({} as never);
+  assert.equal(tip, 'NVIDIA 建議');
+  assert.equal(primaryCalls, 1);
+  assert.equal(secondaryCalls, 0);
+
+  // 2. primary 失敗 (回傳 null) 時，自動 fallback 至 secondary
+  const news = await chained.marketNews({ id: '1', title: 'T' } as never);
+  assert.equal(news, '備援 Workers 快訊');
+  assert.equal(primaryCalls, 2);
+  assert.equal(secondaryCalls, 1);
+
+  // 3. makeAI 與 detectProvider 組合行為
+  const envBoth = { NVIDIA_API_KEY: 'nvapi-test', AI: {} as never };
+  assert.equal(detectProvider(envBoth), 'nvidia-nim (fallback: nvidia-nim-backup -> workers-ai)');
+  const aiBoth = makeAI(envBoth);
+  assert.ok(aiBoth instanceof FallbackRawAI);
+  assert.equal(aiBoth.provider, 'nvidia-nim -> nvidia-nim-backup -> workers-ai');
+  // 關閉 NIM 備援模型
+  assert.equal(makeAI({ ...envBoth, NVIDIA_FALLBACK_MODEL: 'none' })!.provider, 'nvidia-nim -> workers-ai');
+
+  const envWorkersOnly = { AI: {} as never };
+  assert.equal(detectProvider(envWorkersOnly), 'workers-ai');
+  const aiWorkers = makeAI(envWorkersOnly);
+  assert.equal(aiWorkers?.provider, 'workers-ai');
+
+  const envNone = {};
+  assert.equal(detectProvider(envNone), 'rules');
+  assert.equal(makeAI(envNone), null);
+});
+
+test('MeteredAI 容錯計量：走 unmetered（如 NVIDIA NIM）不扣次數，只有 fallback 到 metered 時才扣額度', async () => {
+  let used = 0; const limit = 1;
+  const meter = {
+    consume: async () => (used < limit ? (used++, true) : false),
+    refund: async () => { used--; },
+  };
+
+  const nim: RawAI = Object.assign(new MockAI(), {
+    provider: 'nvidia-nim',
+    unmetered: true,
+    coachTip: async () => 'NIM 成功回答',
+    hint: async () => null, // 故意失敗
+  });
+
+  const workers: RawAI = Object.assign(new MockAI(), {
+    provider: 'workers-ai',
+    unmetered: false,
+    coachTip: async () => 'Workers 備援回答',
+    hint: async () => 'Workers 提示',
+  });
+
+  const chained = new FallbackRawAI([nim, workers]);
+  const ai = new MeteredAI(chained, meter);
+
+  // 1. NIM 成功回答 -> 不扣除額度
+  const tip1 = await ai.coachTip({} as never);
+  assert.equal(tip1, 'NIM 成功回答');
+  assert.equal(used, 0, '走 NVIDIA NIM 不應計入 AI 次數');
+
+  // 2. NIM 失敗 -> fallback 到 Workers AI -> 成功時扣 1 次
+  const h1 = await ai.hint(CLIENTS[0], { step: 'objection', asked: [], freeHits: [], observed: [] } as never);
+  assert.equal(h1, 'Workers 提示');
+  assert.equal(used, 1, 'fallback 到 Workers AI 需計入 1 次額度');
+
+  // 3. 此時 Workers AI 額度已用完 (used=1, limit=1)，但 NIM 仍可正常服務且不被擋
+  const tip2 = await ai.coachTip({} as never);
+  assert.equal(tip2, 'NIM 成功回答');
+  assert.equal(used, 1);
+
+  // 4. 若額度用完且 NIM 失敗 -> Workers 額度被擋 -> 退回規則版
+  const h2 = await ai.hint(CLIENTS[0], { step: 'objection', asked: [], freeHits: [], observed: [] } as never);
+  assert.ok(h2.length > 0 && h2 !== 'Workers 提示', '應退回規則版提示');
+  assert.equal(used, 1);
 });
 
 test('旁觀者預測、專屬結局、面談紀錄標籤、終局大事件', async () => {

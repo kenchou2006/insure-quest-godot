@@ -1,6 +1,7 @@
+@tool
 extends Control
 ## 遊戲主畫面：左側棋盤（面談／事件以覆蓋面板顯示），右側玩家狀態、客戶簿、動態紀錄與表情互動。
-## 支援手機直向三分頁切換、震撼擲骰過場動畫、清楚的個人／觀摩回合轉場與狀態緞帶。
+## 支援手機直向三分頁切換、震撼擲骰過場動畫、清晰的個人／觀摩回合轉場與狀態緞帶。
 
 const Board := preload("res://scripts/ui/board.gd")
 const SessionPanel := preload("res://scripts/ui/session_panel.gd")
@@ -46,10 +47,11 @@ var _deferred_overlay_timer: float = 0.0
 var _quests_card: PanelContainer = null
 var _quests_content: VBoxContainer = null
 var _quests_toggle_btn: Button = null
-var _quests_collapsed: bool = false
+var _quests_title_lbl: Label = null
+var _quests_collapsed: bool = true
 
 # 響應式佈局與分頁控制
-var _current_tab: int = 0  # 0: 棋盤, 1: 面談事件, 2: 我的狀態
+var _current_tab: int = 0  # 直向分頁：0 遊戲（棋盤，有面談／事件時直接顯示面板）、1 狀態動態
 var _was_overlay: bool = false
 var _root: BoxContainer
 var _left_stack: Control
@@ -226,15 +228,25 @@ func _build_ui() -> void:
 	_roll_btn.custom_minimum_size = Vector2(170 if UI.is_phone_portrait() else (180 if portrait else 220), 50 if UI.is_phone_portrait() else (50 if portrait else 56))
 	_center.add_child(_roll_btn)
 
-	var leg_text: String = "客客戶 ✚事件 市市場 訓合規\n稽稽核 ♥介紹 研研討 ★結算" if UI.is_phone_portrait() else "客客戶 ✚事件 市市場 訓合規 稽稽核 ♥介紹 研研討 ★結算"
+	var leg_text: String = "◎客戶 ✚事件 ↗市場 ✓合規\n⚠稽核 ♥介紹 ◇研討 ★結算" if UI.is_phone_portrait() else "◎客戶 ✚事件 ↗市場 ✓合規 ⚠稽核 ♥介紹 ◇研討 ★結算"
 	var legend := UI.label(leg_text, 11 if UI.is_phone_portrait() else (12 if portrait else 13), UI.MUTED, true)
 	legend.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center.add_child(legend)
 
 	_session = SessionPanel.new()
 	_session.main = main
-	_session.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_session.visible = false
+	if not UI.is_phone():
+		_session.anchor_left = 0.35
+		_session.anchor_right = 1.0
+		_session.anchor_top = 0.0
+		_session.anchor_bottom = 1.0
+		_session.offset_left = 0
+		_session.offset_right = 0
+		_session.offset_top = 0
+		_session.offset_bottom = 0
+	else:
+		_session.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_left_stack.add_child(_session)
 
 	_event = EventPanel.new()
@@ -261,7 +273,10 @@ func _build_ui() -> void:
 	_side_panel.add_child(sv)
 
 	var top := UI.hbox(8)
-	top.add_child(UI.label("房間 " + Net.room_code, 14 if UI.is_phone() else 15, UI.GOLD))
+	if Net.is_multiplayer():
+		top.add_child(UI.label("房間 " + Net.room_code, 14 if UI.is_phone() else 15, UI.GOLD))
+	else:
+		top.add_child(UI.label("單人練習", 14 if UI.is_phone() else 15, UI.ACCENT_2))
 	top.add_child(UI.spacer())
 	var sound_btn: Button = UI.button("音效：關" if Sound.is_muted() else "音效：開", Callable(), 13, UI.PANEL_2)
 	sound_btn.pressed.connect(func():
@@ -272,19 +287,21 @@ func _build_ui() -> void:
 	top.add_child(UI.button("離開", func(): main.leave_to_menu(), 13, UI.PANEL_2))
 	sv.add_child(top)
 
-	# 可摺疊的本局任務卡
+	# 可摺疊的本局任務卡（平常收合成一行「★ 任務 2/3 ▼」，點擊展開）
 	_quests_card = UI.panel(Color("#102b3a"), 8, 8)
 	_quests_card.add_theme_stylebox_override("panel", UI.box(Color("#102b3a"), 8, UI.GOLD.darkened(0.3), 8, false))
 	var q_box := UI.vbox(4)
 	var q_head := UI.hbox(6)
-	q_head.add_child(UI.label("★ 本局任務", 14 if UI.is_phone() else 15, UI.GOLD))
+	_quests_title_lbl = UI.label("★ 任務 0/0 ▼", 14 if UI.is_phone() else 15, UI.GOLD)
+	q_head.add_child(_quests_title_lbl)
 	q_head.add_child(UI.spacer())
-	_quests_toggle_btn = UI.button("收合" if not _quests_collapsed else "展開", Callable(), 11, UI.PANEL_2)
-	_quests_toggle_btn.pressed.connect(func():
+	_quests_toggle_btn = UI.button("展開" if _quests_collapsed else "收合", Callable(), 11, UI.PANEL_2)
+	var toggle_fn := func():
 		_quests_collapsed = not _quests_collapsed
-		_quests_toggle_btn.text = "收合" if not _quests_collapsed else "展開"
+		_quests_toggle_btn.text = "展開" if _quests_collapsed else "收合"
 		_quests_content.visible = not _quests_collapsed
-	)
+		_update_quests_title()
+	_quests_toggle_btn.pressed.connect(toggle_fn)
 	q_head.add_child(_quests_toggle_btn)
 	q_box.add_child(q_head)
 
@@ -320,7 +337,7 @@ func _build_ui() -> void:
 		_tab_bar.custom_minimum_size = Vector2(0, tab_h)
 		_root.add_child(_tab_bar)
 
-		var tab_names := ["◎ 棋盤", "★ 面談事件", "● 狀態動態"]
+		var tab_names := ["◎ 遊戲", "● 狀態動態"]
 		for idx: int in range(tab_names.size()):
 			var tab_i: int = idx
 			var btn := UI.button(tab_names[idx], func(): _switch_tab(tab_i), 14 if UI.is_phone_portrait() else 16, UI.PANEL_2)
@@ -367,20 +384,22 @@ func _sync_tabs() -> void:
 	var is_ev: bool = ev is Dictionary and not is_sess and not _is_overlay_deferred
 
 	if _current_tab == 0:
+		# 遊戲分頁：有面談或事件就直接顯示面板（不分自己或觀摩），否則顯示棋盤
+		var overlay: bool = is_sess or is_ev
 		_left_stack.get_parent().visible = true
-		_board.visible = true
-		_center.visible = not is_sess and not is_ev
-		_session.visible = false
-		_event.visible = false
-		_side_panel.visible = false
-	elif _current_tab == 1:
-		_left_stack.get_parent().visible = true
-		_board.visible = false
-		_center.visible = false
+		if overlay and UI.is_phone():
+			# 手機：面板全螢幕
+			_board.visible = false
+			_board.modulate = Color.WHITE
+		else:
+			# 平板直向：面談面板約 65% 寬度，左側保留棋盤半透明可見
+			_board.visible = true
+			_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
+		_center.visible = not overlay
 		_session.visible = is_sess
 		_event.visible = is_ev
 		_side_panel.visible = false
-	elif _current_tab == 2:
+	else:
 		_left_stack.get_parent().visible = false
 		_side_panel.visible = true
 
@@ -540,11 +559,9 @@ func refresh(s: Dictionary) -> void:
 			_current_tab = 0
 	else:
 		# 自動切換手機分頁
-		if UI.is_portrait():
-			if has_overlay and not _was_overlay and mine:
-				_current_tab = 1
-			elif not has_overlay and _was_overlay and _current_tab == 1:
-				_current_tab = 0
+		# 輪到自己的面談／事件出現時，從狀態分頁切回遊戲分頁
+		if UI.is_portrait() and has_overlay and not _was_overlay and mine:
+			_current_tab = 0
 		_was_overlay = has_overlay
 
 		if not UI.is_portrait():
@@ -552,6 +569,7 @@ func refresh(s: Dictionary) -> void:
 			_event.visible = is_ev
 			_center.visible = not is_sess and not is_ev
 			_board.visible = true
+			_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
 
 		if is_sess:
 			_session.refresh(sess, cur_name)
@@ -560,6 +578,10 @@ func refresh(s: Dictionary) -> void:
 
 	_sync_tabs()
 
+	# 面談或事件開啟時自動收合任務卡
+	if has_overlay:
+		_quests_collapsed = true
+
 	# 本局任務卡更新
 	var quests: Array = s.get("quests", []) if s.get("quests") != null else []
 	if quests.is_empty():
@@ -567,6 +589,7 @@ func refresh(s: Dictionary) -> void:
 	else:
 		_quests_card.visible = true
 		UI.clear(_quests_content)
+		var done_count: int = 0
 		for q: Dictionary in quests:
 			var q_row := UI.panel(Color("#0c202c"), 6, 6)
 			var qv := UI.vbox(2)
@@ -576,6 +599,8 @@ func refresh(s: Dictionary) -> void:
 			var cur_p: int = int(q_prog.get("cur", 0))
 			var target_p: int = int(q_prog.get("target", 1))
 			var is_done: bool = bool(q_prog.get("done", false)) or (target_p > 0 and cur_p >= target_p)
+			if is_done:
+				done_count += 1
 
 			qh.add_child(UI.label(q_title, 13 if UI.is_phone() else 14, UI.GOLD if is_done else UI.TEXT, true))
 			qh.add_child(UI.spacer())
@@ -598,6 +623,16 @@ func refresh(s: Dictionary) -> void:
 
 			q_row.add_child(qv)
 			_quests_content.add_child(q_row)
+
+		if _quests_title_lbl != null:
+			if _quests_collapsed:
+				_quests_title_lbl.text = "★ 任務 %d/%d ▼" % [done_count, quests.size()]
+				_quests_toggle_btn.text = "展開"
+				_quests_content.visible = false
+			else:
+				_quests_title_lbl.text = "★ 任務 %d/%d ▲" % [done_count, quests.size()]
+				_quests_toggle_btn.text = "收合"
+				_quests_content.visible = true
 
 	# 玩家列表
 	UI.clear(_players_box)
@@ -626,6 +661,23 @@ func refresh(s: Dictionary) -> void:
 		i += 1
 
 
+func _update_quests_title() -> void:
+	if _quests_title_lbl == null:
+		return
+	var quests: Array = Net.state.get("quests", []) if Net.state.get("quests") != null else []
+	var done_count: int = 0
+	for q: Dictionary in quests:
+		var q_prog: Dictionary = q.get("progress", {}).get(Net.player_id, {})
+		var cur_p: int = int(q_prog.get("cur", 0))
+		var target_p: int = int(q_prog.get("target", 1))
+		if bool(q_prog.get("done", false)) or (target_p > 0 and cur_p >= target_p):
+			done_count += 1
+	if _quests_collapsed:
+		_quests_title_lbl.text = "★ 任務 %d/%d ▼" % [done_count, quests.size()]
+	else:
+		_quests_title_lbl.text = "★ 任務 %d/%d ▲" % [done_count, quests.size()]
+
+
 func _apply_deferred_overlay() -> void:
 	if Net.state.is_empty():
 		return
@@ -639,11 +691,8 @@ func _apply_deferred_overlay() -> void:
 	var cur_name: String = str(cur.get("name", ""))
 	var mine: bool = Net.is_my_turn()
 
-	if UI.is_portrait():
-		if has_overlay and mine:
-			_current_tab = 1
-		elif not has_overlay and _current_tab == 1:
-			_current_tab = 0
+	if UI.is_portrait() and has_overlay and not _was_overlay and mine:
+		_current_tab = 0
 	_was_overlay = has_overlay
 
 	if not UI.is_portrait():
@@ -651,6 +700,7 @@ func _apply_deferred_overlay() -> void:
 		_event.visible = is_ev
 		_center.visible = not is_sess and not is_ev
 		_board.visible = true
+		_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
 
 	if is_sess:
 		_session.refresh(sess, cur_name)
@@ -664,7 +714,7 @@ func _apply_deferred_overlay() -> void:
 	var me: Dictionary = Net.me()
 	var book: Array = me.get("book", [])
 	if book.is_empty():
-		_book_box.add_child(UI.label("尚無客戶。走到 客 客戶格開始面談！", 13, UI.MUTED, true))
+		_book_box.add_child(UI.label("尚無客戶。走到 ◎ 客戶格開始面談！", 13, UI.MUTED, true))
 	for b: Dictionary in book:
 		var h := UI.hbox(6)
 		h.add_child(UI.label(str(b.get("name", "")) + (" ⚠" if b.get("mis", false) else ""), 14, UI.OK if b.get("mis", false) else UI.TEXT))

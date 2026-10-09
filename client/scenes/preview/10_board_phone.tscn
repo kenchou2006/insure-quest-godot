@@ -1,0 +1,12 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/preview/preview.gd" id="1"]
+
+[node name="BoardPhone" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 480
+offset_bottom = 854
+script = ExtResource("1")
+screen = "roll"
+layout = "phone_portrait"

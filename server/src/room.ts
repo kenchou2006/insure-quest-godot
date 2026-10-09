@@ -1,7 +1,7 @@
 /* INSURE QUEST｜Room Durable Object：一個房間＝一場遊戲。
  * - 伺服器權威：所有規則在 game.ts 執行，客戶端只送動作。
  * - Hibernatable WebSocket：閒置時 DO 可休眠，狀態存在 storage。
- * - 電腦顧問與斷線代打由 alarm 驅動，間隔讓真人看得到每一步。
+ * - 電腦顧問與斷線代打由 alarm 驅動，間隔讓真人看得見每一步。
  */
 import { DurableObject } from 'cloudflare:workers';
 import type { Action, BotLevel, GameState, PlayerState } from './game/types.ts';
@@ -9,10 +9,11 @@ import { addPlayer, applyAction, createGame, enrichCoach, injectClient, log, pre
 import { botAction } from './game/bots.ts';
 import { BOARD, CARDS, QUESTIONS } from './game/data.ts';
 import { makeAI, MeteredAI, type AIService, type Meter, type RawAI } from './ai.ts';
+import { globalRecords, userRecords, type RecordInput, type RecordSummary } from './records.ts';
 import type { Env } from './index.ts';
 
 const BOT_DELAY_MS = 1300;
-/** 結果與事件畫面多停一下，讓旁觀的真人看得到內容 */
+/** 結果與事件畫面多停一下，讓旁觀的真人看得見內容 */
 const BOT_READ_DELAY_MS = 4500;
 const AFK_TAKEOVER_MS = 45_000;
 
@@ -38,7 +39,7 @@ const BOT_NAMES = ['電腦顧問・安安', '電腦顧問・小賴', '電腦顧�
 export class Room extends DurableObject<Env> {
   private game: GameState | null = null;
   private queue: Promise<unknown> = Promise.resolve();
-  /** AI 供應者（Workers AI／Claude／模擬）；null 代表只用規則版 */
+  /** AI 提供者（Workers AI／Claude／模擬）；null 代表只用規則版 */
   private raw: RawAI | null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -49,23 +50,26 @@ export class Room extends DurableObject<Env> {
     });
   }
 
-  private get aiLimit() { return Math.max(0, Number(this.env.AI_DAILY_LIMIT) || 100); }
-  private records() { return this.env.RECORDS.get(this.env.RECORDS.idFromName('global')); }
+  private get aiLimit() { return Math.max(0, Number(this.env.AI_DAILY_LIMIT) || 10); }
+  private globalRecords() { return globalRecords(this.env); }
+  private userRecords(accountId: string) { return userRecords(this.env, accountId); }
 
-  /** 帳號的 AI 額度計量；每次變動都推送給該帳號的連線 */
+  /** 帳號的 AI 額度計量；由個人 DO 切片獨立處理，每次變動都推送給該帳號的連線 */
   private meterFor(accountId: string | null | undefined): Meter | null {
     if (!accountId || !this.raw) return null;
     const limit = this.aiLimit;
+    const userStub = this.userRecords(accountId);
     return {
       consume: async () => {
-        const r = await this.records().consumeAi(accountId, limit);
+        const r = await userStub.consumeAi(accountId, limit);
         this.sendToAccount(accountId, { t: 'quota', used: r.used, limit, exhausted: !r.ok });
         return r.ok;
       },
       refund: async () => {
-        const used = await this.records().refundAi(accountId);
+        const used = await userStub.refundAi(accountId);
         this.sendToAccount(accountId, { t: 'quota', used, limit, exhausted: false });
       },
+      record: async (provider: string) => { await userStub.recordAiCall(accountId, provider); },
     };
   }
 
@@ -74,7 +78,21 @@ export class Room extends DurableObject<Env> {
     return new MeteredAI(this.raw, p && !p.isBot ? this.meterFor(p.accountId) : null);
   }
 
-  private makeCtx(actor?: PlayerState | null): Ctx { return { ai: this.aiFor(actor), rng: Math.random, now: Date.now }; }
+  private makeCtx(actor?: PlayerState | null): Ctx {
+    // 客戶回答串流：節流後推給房內所有連線（伺服器送出的 WebSocket 訊息不計費）
+    let last = 0;
+    let pending: string | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => { timer = null; if (pending !== null) { last = Date.now(); this.broadcast({ t: 'stream', text: pending }); pending = null; } };
+    const onStream = (text: string) => {
+      pending = text;
+      const wait = 120 - (Date.now() - last);
+      if (wait <= 0) flush();
+      else if (!timer) timer = setTimeout(flush, wait);
+    };
+    const endStream = () => { if (timer) clearTimeout(timer); timer = null; pending = null; };
+    return { ai: this.aiFor(actor), rng: Math.random, now: Date.now, onStream, endStream };
+  }
 
   private sendToAccount(accountId: string, msg: unknown) {
     const data = JSON.stringify(msg);
@@ -117,7 +135,7 @@ export class Room extends DurableObject<Env> {
       return this.run(async () => {
         if (this.game) return new Response('exists', { status: 409 });
         this.game = createGame(code);
-        this.game.settings.aiClients = !!this.raw;
+        this.game.settings.aiClients = false;
         await this.save();
         return Response.json({ ok: true });
       });
@@ -173,9 +191,9 @@ export class Room extends DurableObject<Env> {
         const p = id ? g.players.find(x => x.id === id) : null;
         if (p) { p.connected = true; p.disconnectedAt = null; }
         const meInfo = att.accountId
-          ? { name: att.accountName, ai: { used: this.raw ? await this.records().aiUsage(att.accountId) : 0, limit: this.aiLimit } }
+          ? { name: att.accountName, ai: { used: this.raw ? await this.userRecords(att.accountId).aiUsage(att.accountId) : 0, limit: this.aiLimit } }
           : null;
-        ws.send(JSON.stringify({ t: 'welcome', playerId: id, spectator: !id, static: { board: BOARD, questions: QUESTIONS.map(q => ({ id: q.id, text: q.text, coach: q.coach })), cards: CARDS }, ai: !!this.raw, me: meInfo }));
+        ws.send(JSON.stringify({ t: 'welcome', playerId: id, spectator: !id, static: { board: BOARD, questions: QUESTIONS.map(q => ({ id: q.id, text: q.text, coach: q.coach })), cards: CARDS }, ai: !!this.raw && !!att.accountId, me: meInfo }));
         break;
       }
       case 'add_bot': {
@@ -194,19 +212,24 @@ export class Room extends DurableObject<Env> {
       case 'settings': {
         if (!isHost || g.phase !== 'lobby') return this.err(ws, '只有房主可以在大廳調整設定');
         if (msg.rounds !== undefined) g.settings.rounds = Math.max(2, Math.min(12, Math.round(Number(msg.rounds)) || 6));
-        if (msg.aiClients !== undefined) g.settings.aiClients = !!msg.aiClients && !!this.raw;
+        if (msg.aiClients !== undefined) {
+          const host = g.players.find(p => p.id === g.hostId);
+          g.settings.aiClients = !!msg.aiClients && !!this.raw && !!host?.accountId;
+        }
         break;
       }
       case 'start': {
         if (!isHost) return this.err(ws, '只有房主可以開始遊戲');
         const e = startGame(g, ctx);
         if (e) return this.err(ws, e);
-        if (g.settings.aiClients && this.raw) this.generateClients(2);
+        const host = g.players.find(p => p.id === g.hostId);
+        if (g.settings.aiClients && this.raw && host?.accountId) this.generateClients(1);
         break;
       }
       case 'action': {
         if (!me) return this.err(ws, '旁觀者無法操作');
         const e = await applyAction(g, me, msg.action, ctx);
+        ctx.endStream?.();
         if (e) return this.err(ws, e);
         if (g.phase === 'ended') await this.finish();
         break;
@@ -229,11 +252,12 @@ export class Room extends DurableObject<Env> {
   }
 
   /** 背景產生 AI 客戶，不阻塞遊戲進行 */
-  private generateClients(n: number) {
+  private generateClients(n = 1) {
+    const host = this.game?.players.find(p => p.id === this.game?.hostId);
+    if (!host?.accountId) return;
     for (let i = 0; i < n; i++) {
       const seed = Date.now() + i * 7919;
       // AI 生成客戶使用房主的額度；房主是訪客時不生成
-      const host = this.game?.players.find(p => p.id === this.game?.hostId);
       this.ctx.waitUntil(this.aiFor(host).generateClient(seed).then(c => c && this.run(async () => {
         if (!this.game || this.game.phase !== 'playing') return;
         injectClient(this.game, c);
@@ -277,7 +301,12 @@ export class Room extends DurableObject<Env> {
       if (!action) return;
       // 電腦顧問與斷線代打都不消耗任何人的 AI 額度
       const e = await applyAction(g, p.id, action, this.makeCtx(null));
-      if (e) { console.warn('bot action rejected', e, action); return; }
+      if (e) {
+        console.warn('bot action rejected', e, action);
+        if (g.session?.step === 'discover') {
+          await applyAction(g, p.id, { type: 'to_plan' }, this.makeCtx(null));
+        }
+      }
       if (g.phase === 'ended') await this.finish();
       await this.save();
       this.pushState();
@@ -287,15 +316,32 @@ export class Room extends DurableObject<Env> {
 
   private async finish() {
     const g = this.game!;
+    // 報告先以規則版內容推送並標記 AI 撰寫中，畫面顯示提示；AI 完成後再推送一次
+    g.aiPending = true;
     this.pushState();
-    await enrichCoach(g, p => this.aiFor(p));
+    try {
+      await enrichCoach(g, p => this.aiFor(p));
+    } finally {
+      g.aiPending = false;
+    }
     this.pushState();
     // 只保存已登入玩家的紀錄（訪客不保存）
     for (const row of g.final ?? []) {
       const p = g.players.find(x => x.id === row.playerId)!;
       if (row.isBot || !p.accountId) continue;
-      await this.records().add({ room: g.code, name: row.name, ts: Date.now(), score: row.score, grade: row.grade, players: g.players.length, userId: p.accountId, data: { ...row, decisions: p.decisions, book: p.book, sessions: p.sessionLogs ?? [], quizCorrect: p.quizCorrect, quizTotal: p.quizTotal } })
-        .catch(e => console.warn('record save failed', e));
+      const record: RecordInput = {
+        name: row.name, ts: Date.now(), score: row.score, grade: row.grade,
+        players: g.players.length, userId: p.accountId, room: g.code,
+        data: { ...row, decisions: p.decisions, book: p.book, sessions: p.sessionLogs ?? [], quizCorrect: p.quizCorrect, quizTotal: p.quizTotal }
+      };
+      // 1. 寫入個人獨立 DO 切片（享受 10 GB 專屬容量、資料隔離、保證不滿）
+      await this.userRecords(p.accountId).add(record)
+        .catch(e => console.warn('user record save failed', e));
+      // 2. 寫入全域輕量摘要（供講師後台跨學員高效彙總）
+      await this.globalRecords().addSummary({
+        name: record.name, ts: record.ts, score: record.score, grade: record.grade,
+        players: record.players, userId: record.userId, room: record.room
+      }).catch(e => console.warn('global summary save failed', e));
     }
   }
 

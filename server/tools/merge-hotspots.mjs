@@ -7,9 +7,7 @@ const data = JSON.parse(readFileSync(src, 'utf8'));
 const okSpot = s => s && ['x', 'y', 'w', 'h'].every(k => typeof s[k] === 'number' && s[k] >= 0 && s[k] <= 100) && s.x + s.w <= 100.5 && s.y + s.h <= 100.5;
 const out = {};
 // 只收錄真的有插圖的客戶（沒有圖就沒有場景可點）
-const hasImage = id => ['webp', 'png', 'jpg'].some(ext => existsSync(`../client/assets/clients/${id}.${ext}`));
 for (const [id, v] of Object.entries(data)) {
-  if (!hasImage(id)) { console.warn(`略過 ${id}：沒有插圖`); continue; }
   const facts = (v.facts || []).filter(f => f && typeof f.title === 'string' && okSpot(f.spot));
   const decoy = v.decoy && typeof v.decoy.title === 'string' && okSpot(v.decoy.spot) ? v.decoy : null;
   if (facts.length !== 3 || !decoy) { console.warn(`略過 ${id}：需要 3 個線索與 1 個干擾物，且座標在 0–100`); continue; }

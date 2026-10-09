@@ -13,8 +13,8 @@ Cloudflare Worker  insure-quest
    ├─ 靜態檔（Workers Static Assets）：../web 的 Godot 匯出檔
    ├─ /api/rooms…        建房、WebSocket ──▶ Room Durable Object（每個房間一個，伺服器權威遊戲邏輯、電腦顧問）
    ├─ /api/auth/*        Google 登入（OAuth，HttpOnly Cookie）─┐
-   ├─ /api/me /api/records /api/profile /api/learners ─────────┴▶ Records Durable Object（SQLite：帳號、工作階段、每日 AI 額度、培訓紀錄）
-   └─ Workers AI（預設，env.AI）／Claude（選用）：AI 客戶、AI 評分、教練提示與回饋；每個帳號每日 100 次，超過或訪客改用規則版
+   ├─ /api/me /api/records /api/profile /api/learners ─────────┴▶ Records Durable Object（雙軌制切片：個人 DO 切片 10 GB 存詳細決策與 AI 額度；全域 DO 存帳號與統計摘要）
+   └─ Workers AI（預設，env.AI）／Claude（選用）：AI 客戶、AI 評分、教練提示與回饋；每個帳號 Workers AI 每日 10 次（NVIDIA NIM 不計次），超過或訪客改用規則版
 ```
 
 - **不使用 Cloudflare Pages。** Pages 無法部署 Durable Object，若用 Pages 必須另外部署一個 Worker 放 DO，變成兩次部署、兩個網域（或服務繫結）。Workers Static Assets 讓網頁與 API／DO 在同一個 Worker 一次部署，也是 Cloudflare 目前建議全端專案使用的方式。
@@ -26,6 +26,7 @@ Cloudflare Worker  insure-quest
 ```
 client/        Godot 4.7 專案（UI 全部以程式碼建構，scripts/ui/*.gd）
   fonts-src/   完整字型原檔（.gdignore，不會被匯出）
+  scenes/preview/  編輯器預覽場景：在 Godot 編輯器直接看到各畫面設計（@tool，假資料由 server 的 `node tools/dump-preview-states.ts` 產生；不會被匯出）
 server/        Cloudflare Worker（TypeScript）
   src/game/    遊戲規則、客戶資料、電腦顧問（純邏輯，有單元測試）
   src/room.ts  Room Durable Object　src/records.ts  Records Durable Object　src/ai.ts  AI 服務
@@ -45,7 +46,7 @@ web/           Godot 網頁匯出結果（建置產物，不納入版本控制�
 cd server
 npm install
 npm run build:web     # 匯出 Godot 網頁版到 ../web（並壓縮 wasm、修正 PWA 快取清單、產生 _headers）
-npm run dev           # http://127.0.0.1:8787（--env local：AI 用模擬、不需登入 Cloudflare）
+npm run dev           # http://127.0.0.1:8787（--env local：Workers AI 需先 npx wrangler login；.dev.vars 設 AI_PROVIDER=mock 可離線）
 npm run dev:remote-ai # 需先 npx wrangler login，連線真正的 Workers AI
 ```
 
@@ -61,18 +62,28 @@ cd server
 npx wrangler login                          # 第一次
 npx wrangler secret put GOOGLE_CLIENT_ID     # Google 登入（選用；不設定則只有訪客模式）
 npx wrangler secret put GOOGLE_CLIENT_SECRET
-npx wrangler secret put ANTHROPIC_API_KEY   # 選用；AI_PROVIDER=claude 時才需要 AI
-npm run deploy                              # = build:web + wrangler deploy
+npx wrangler secret put NVIDIA_API_KEY        # 選用；優先使用 NVIDIA NIM（失敗/未配置自動退回 Workers AI）
+npx wrangler secret put ANTHROPIC_API_KEY     # 選用；AI_PROVIDER=claude 時才需要 AI
+npm run deploy                                # = build:web + wrangler deploy
 ```
 
 設定集中在 `server/wrangler.jsonc`：靜態檔目錄、`/api/*` 先交給 Worker、Workers AI 繫結、兩個 Durable Object 繫結與 SQLite 遷移（`v1`）、AI／額度／講師變數，以及不含 AI 繫結的 `local` 開發環境。帳號資料放在既有的 Records Durable Object，不需要另外建立 D1，部署仍是一次完成。
+### 自動部署（GitHub Actions）
+
+推送到 `main` 時 `.github/workflows/deploy.yml` 會跑 `npm run check` → 下載 Godot 與匯出範本 → `npm run build:web` → `wrangler deploy`；PR 只跑檢查。
+在 GitHub 儲存庫設定 Secrets：`CLOUDFLARE_API_TOKEN`（範本「Edit Cloudflare Workers」）與 `CLOUDFLARE_ACCOUNT_ID`。
+不建議用 Cloudflare 儀表板的「Connect to Git」（Workers Builds）：它的建置映像沒有 Godot，每次建置都得重新下載 Godot 與約 1 GB 的匯出範本才能產生 `web/`，GitHub Actions 可以快取。
+
 新增或改名 Durable Object 類別時，必須在 `migrations` 加一個新的 tag，不要修改既有的 `v1`。
 
 ## 帳號、AI 額度與培訓紀錄
 
+- **雙軌制切片（DO Sharding）**：
+  - **個人 DO 切片（`idFromName('user:' + userId)`）**：每位登入學員擁有專屬的 10 GB SQLite 儲存空間，保存完整的面談決策歷程、每回合詳細軌跡與每日 AI 額度。個人資料徹底隔離、容量保證不爆滿，且閒置時自動休眠，不產生額外維護費用。
+  - **全域 DO 實例（`idFromName('global')`）**：保存帳號身分、登入工作階段（Session）與比賽輕量摘要。講師查詢全體學員名單（`/api/learners`）或總體紀錄（`/api/records?scope=all`）時直接由全域實例以單一 SQL 快速彙總，避免跨切片 Fan-out 延遲與額外請求計費。
 - **登入**：Google OAuth 授權碼流程全部在 Worker 完成（`src/auth.ts`），工作階段存在 HttpOnly Cookie；Godot 的 HTTP 與 WebSocket 同源自動帶上，前端不接觸 token。跨來源的 WebSocket 不會帶入身分。
-- **AI 額度**：每次實際呼叫模型扣 1 次（`AI_DAILY_LIMIT`，預設 100，台北時間午夜重置）；模型失敗會退還。訪客、電腦顧問、額度用完時一律改用規則版，遊戲照常進行。
-- **AI 供應者**（`AI_PROVIDER`）：`workers-ai`（預設，模型 `WORKERS_AI_MODEL`=`@cf/qwen/qwen3.8-27b`）｜`claude`（需 `ANTHROPIC_API_KEY`）｜`mock`（本機模擬）｜`rules`。
+- **AI 額度**：走 NVIDIA NIM **完全不計入 AI 額度次數（無限制）**；若切換或退回 Workers AI / Claude 則每次呼叫扣 1 次（`AI_DAILY_LIMIT`，預設 10，台北時間午夜重置；模型失敗會退還）。訪客、電腦顧問、額度用完時一律改用規則版，遊戲照常進行。
+- **AI 供應者**（`AI_PROVIDER`）：優先使用 **NVIDIA NIM**（若設定 `NVIDIA_API_KEY`；主模型 `NVIDIA_MODEL`=nemotron-3-super，失敗時改用 NIM 備援模型 `NVIDIA_FALLBACK_MODEL`=deepseek-v4.1-flash（較慢，逾時 45 秒；設 `none` 關閉），再失敗才退回 **Workers AI**，模型 `WORKERS_AI_MODEL`=`@cf/qwen/qwen3.8-27b`）｜`claude`（需 `ANTHROPIC_API_KEY`）｜`mock`（本機模擬）｜`rules`。
 - **培訓紀錄只保存登入者**，且只能看自己的；`TRAINER_EMAILS` 內的講師可查看全部學員（`/api/records?scope=all`、`/api/learners`、`/api/profile?user=`）。
 - **保存什麼**：除了分數，每場面談都保存完整決策軌跡（線索、提問順序、自由提問、配置與檢討、異議回應、壓力結果、是否用提示），並標記弱點標籤。學習檔案（`/api/profile`）由此彙整出：分數與五力趨勢、最常犯的錯誤與改進建議、客戶圖鑑（18 位客戶的服務次數與最佳評級）、徽章。
 

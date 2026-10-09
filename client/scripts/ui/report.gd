@@ -1,9 +1,11 @@
+@tool
 extends Control
 ## 結算報告：排名、個人五力、AI 教練回饋、關鍵決策回顧。支援直向上下分欄。
 
 var main: Node
 var _v: VBoxContainer
 var _scroll: ScrollContainer
+var _letter_idx: int = 0
 
 
 func _ready() -> void:
@@ -147,23 +149,124 @@ func refresh(s: Dictionary) -> void:
 	var ct := UI.vbox(6)
 	ct.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ct.add_child(UI.label("AI 教練回饋" if Net.ai_enabled else "教練回饋", 17 if portrait else 18, UI.ACCENT_2))
-	ct.add_child(UI.label(str(mine.get("coach", "")), 15 if portrait else 16, UI.TEXT, true))
+	# AI 仍在撰寫時先顯示提示（只有登入、有 AI 的玩家會等到 AI 版）
+	var ai_pending: bool = bool(s.get("aiPending", false)) and Net.ai_enabled
+	if ai_pending:
+		ct.add_child(UI.label("AI 教練正在撰寫你的專屬回饋……", 15 if portrait else 16, UI.GOLD, true))
+	else:
+		ct.add_child(UI.label(str(mine.get("coach", "")), 15 if portrait else 16, UI.TEXT, true))
 	cv.add_child(ct)
 	coach.add_child(cv)
 	body.add_child(coach)
 	_v.add_child(body)
 
+	# 十年後的信（最多 3 封，可左右切換）
+	var letters: Array = mine.get("letters", []) as Array if mine.get("letters") != null else []
+	if not letters.is_empty():
+		var l_section := UI.vbox(8)
+		l_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		var l_head := UI.hbox(8)
+		l_head.add_child(UI.label("十年後的信", 17 if portrait else 18, UI.ACCENT_2))
+		if ai_pending:
+			l_head.add_child(UI.label("AI 潤稿中……（先顯示草稿）", 12 if UI.is_phone_portrait() else 13, UI.GOLD))
+		l_head.add_child(UI.spacer())
+
+		if letters.size() > 1:
+			var prev_btn := UI.button("◀ 上一封", func():
+				_letter_idx = (_letter_idx - 1 + letters.size()) % letters.size()
+				refresh(s)
+			, 12 if UI.is_phone_portrait() else 13, UI.PANEL_2)
+			l_head.add_child(prev_btn)
+
+			l_head.add_child(UI.label("%d / %d" % [_letter_idx + 1, letters.size()], 13, UI.MUTED))
+
+			var next_btn := UI.button("下一封 ▶", func():
+				_letter_idx = (_letter_idx + 1) % letters.size()
+				refresh(s)
+			, 12 if UI.is_phone_portrait() else 13, UI.PANEL_2)
+			l_head.add_child(next_btn)
+
+		l_section.add_child(l_head)
+
+		if _letter_idx >= letters.size() or _letter_idx < 0:
+			_letter_idx = 0
+		var cur_letter: Dictionary = letters[_letter_idx] if letters[_letter_idx] is Dictionary else {}
+		var c_name: String = str(cur_letter.get("clientName", "客戶"))
+		var card := UI.letter_card(cur_letter, c_name)
+		l_section.add_child(card)
+
+		_v.add_child(l_section)
+
 	var me: Dictionary = Net.me()
 	var ds: Array = me.get("decisions", [])
 	if not ds.is_empty():
-		var dp := UI.panel()
-		var dv := UI.vbox(6)
-		dv.add_child(UI.label("關鍵決策回顧（最近 12 項）", 17 if portrait else 18, UI.ACCENT_2))
+		var dp := UI.panel(Color("#0d2432"), 14, 14)
+		var dv := UI.vbox(10)
+
+		var dh := UI.hbox(8)
+		dh.add_child(UI.label("關鍵決策回顧（最近 %d 項）" % ds.size(), 17 if portrait else 18, UI.ACCENT_2))
+		dh.add_child(UI.spacer())
+		var good_cnt: int = 0
+		var ok_cnt: int = 0
+		var bad_cnt: int = 0
 		for d: Dictionary in ds:
 			var q: String = str(d.get("quality", ""))
-			var mark: String = {"good": "✓", "ok": "△", "bad": "×"}.get(q, "・")
-			dv.add_child(UI.label("%s 第%d回合｜%s｜%s：%s" % [mark, int(d.get("round", 1)), d.get("clientName", ""), d.get("stage", ""), d.get("title", "")], 14 if portrait else 15, UI.tone_color(q), true))
-			dv.add_child(UI.label("　" + str(d.get("body", "")), 13, UI.MUTED, true))
+			if q == "good": good_cnt += 1
+			elif q == "ok": ok_cnt += 1
+			elif q == "bad": bad_cnt += 1
+		dh.add_child(UI.label("✓ 優質 %d　△ 尚可 %d　× 盲點 %d" % [good_cnt, ok_cnt, bad_cnt], 12 if portrait else 13, UI.MUTED))
+		dv.add_child(dh)
+
+		var d_grid := GridContainer.new()
+		d_grid.columns = 1 if UI.is_phone_portrait() else (1 if portrait else 2)
+		d_grid.add_theme_constant_override("h_separation", 10)
+		d_grid.add_theme_constant_override("v_separation", 10)
+		d_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		for d: Dictionary in ds:
+			var q: String = str(d.get("quality", "ok"))
+			var q_col: Color = UI.tone_color(q)
+			var q_bg: Color = Color(q_col.r, q_col.g, q_col.b, 0.08)
+			var q_border: Color = Color(q_col.r, q_col.g, q_col.b, 0.35)
+			var q_label: String = {"good": "✓ 優質", "ok": "△ 尚可", "bad": "× 盲點"}.get(q, "・紀錄")
+
+			var card := UI.panel(q_bg, 8, 10)
+			card.add_theme_stylebox_override("panel", UI.box(q_bg, 8, q_border, 6, false))
+			card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+			var cv_item := UI.vbox(4)
+			var top_row := UI.hbox(6)
+
+			# 品質標籤 Chip
+			var badge := UI.panel(Color(q_col.r, q_col.g, q_col.b, 0.2), 4, 3)
+			badge.add_child(UI.label(q_label, 11, q_col))
+			top_row.add_child(badge)
+
+			# 回合與客戶
+			var rnd_txt := "第 %d 回合・%s" % [int(d.get("round", 1)), str(d.get("clientName", "客戶"))]
+			top_row.add_child(UI.label(rnd_txt, 12, UI.TEXT))
+
+			# 階段標籤
+			var stg_txt := "［%s］" % str(d.get("stage", ""))
+			top_row.add_child(UI.label(stg_txt, 11, UI.MUTED))
+
+			cv_item.add_child(top_row)
+
+			# 決策標題
+			var tit_lbl := UI.label(str(d.get("title", "")), 14 if portrait else 15, UI.GOLD if q == "good" else UI.TEXT, true)
+			cv_item.add_child(tit_lbl)
+
+			# 決策說明
+			var body_txt: String = str(d.get("body", ""))
+			if body_txt != "":
+				var body_lbl := UI.label(body_txt, 12 if portrait else 13, UI.MUTED, true)
+				cv_item.add_child(body_lbl)
+
+			card.add_child(cv_item)
+			d_grid.add_child(card)
+
+		dv.add_child(d_grid)
 		dp.add_child(dv)
 		_v.add_child(dp)
 

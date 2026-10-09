@@ -1,3 +1,4 @@
+@tool
 extends Control
 ## 培訓紀錄：學習檔案（成長總覽、趨勢折線圖、客戶圖鑑、歷次面談重播）與講師學員管理。
 
@@ -10,7 +11,9 @@ var _outer_v: VBoxContainer
 var _tabs_bar: HBoxContainer
 var _tab_buttons: Array = []
 var _body_area: Control
-var _current_tab: int = 0  # 0: 總覽, 1: 客戶圖鑑, 2: 歷次紀錄, 3: 全部學員
+var _current_tab: int = 0  # 目前分頁在 _tab_ids 中的位置
+## 分頁代號（依顯示順序）：overview 成長總覽、codex 客戶圖鑑、history 歷次紀錄、ai AI 使用、trainer 全部學員
+var _tab_ids: Array = []
 
 # 歷次紀錄 UI 參照
 var _history_list: VBoxContainer
@@ -130,7 +133,7 @@ func _build_ui() -> void:
 		head.add_child(UI.button("← 返回學員清單", func():
 			target_user_id = ""
 			target_user_name = ""
-			_current_tab = 3
+			_current_tab = maxi(0, _tab_ids.find("trainer"))
 			_build_ui()
 		, 14, UI.PANEL_2))
 
@@ -147,8 +150,15 @@ func _build_ui() -> void:
 	_tabs_bar = UI.hbox(8)
 	_tab_buttons.clear()
 	var tabs: Array = ["成長總覽", "客戶圖鑑", "歷次紀錄"]
+	_tab_ids = ["overview", "codex", "history"]
+	# AI 使用紀錄只看自己的（講師檢視學員時不顯示）
+	if target_user_id == "" or target_user_id == str(Net.get_user().get("id", "")):
+		tabs.append("AI 使用")
+		_tab_ids.append("ai")
 	if Net.is_trainer() and target_user_id == "":
 		tabs.append("全部學員（講師）")
+		_tab_ids.append("trainer")
+	_current_tab = clampi(_current_tab, 0, _tab_ids.size() - 1)
 
 	for i: int in tabs.size():
 		var idx: int = i
@@ -220,14 +230,16 @@ func _switch_tab(tab_idx: int) -> void:
 
 	UI.clear(_body_area)
 
-	match _current_tab:
-		0:
+	match str(_tab_ids[_current_tab]) if _current_tab < _tab_ids.size() else "overview":
+		"overview":
 			_render_overview_tab()
-		1:
+		"codex":
 			_render_codex_tab()
-		2:
+		"history":
 			_render_history_tab()
-		3:
+		"ai":
+			_render_ai_tab()
+		"trainer":
 			_render_trainer_tab()
 
 
@@ -267,7 +279,7 @@ func _render_overview_tab() -> void:
 	var quiz: Dictionary = _profile.get("quiz", {})
 	var q_corr: int = int(quiz.get("correct", 0))
 	var q_tot: int = int(quiz.get("total", 0))
-	var quiz_str: String = "尚無測驗" if q_tot == 0 else ("%d / %d（%.0f%%）" % [q_corr, q_tot, (float(q_corr) * 100.0 / float(q_tot))])
+	var quiz_str: String = "尚未測驗" if q_tot == 0 else ("%d / %d（%.0f%%）" % [q_corr, q_tot, (float(q_corr) * 100.0 / float(q_tot))])
 
 	kpi_flow.add_child(_make_kpi_card("培訓場次", "%d 場" % games_cnt, UI.ACCENT_2))
 	kpi_flow.add_child(_make_kpi_card("平均分數", "%.1f 分" % avg_score, UI.TEXT))
@@ -368,6 +380,115 @@ func _make_kpi_card(title: String, val: String, val_color: Color) -> PanelContai
 
 
 # ──────────────────────────────────────────────────────────────────
+# AI 使用紀錄：今日額度、各供應者呼叫次數、近 7 天
+# ──────────────────────────────────────────────────────────────────
+
+const PROVIDER_NAMES := {
+	"nvidia-nim": "NVIDIA NIM（不計額度）",
+	"nvidia-nim-backup": "NVIDIA NIM 備援 DeepSeek（不計額度）",
+	"workers-ai": "Cloudflare Workers AI（計入額度）",
+	"claude": "Claude（計入額度）",
+	"mock": "本機模擬",
+}
+
+
+func _render_ai_tab() -> void:
+	var scroll: ScrollContainer = UI.scroll(UI.vbox(14))
+	_body_area.add_child(scroll)
+	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
+	content.add_child(UI.label("載入 AI 使用紀錄中……", 15, UI.MUTED))
+
+	var res: Array = await Net.http_json(HTTPClient.METHOD_GET, "/api/ai-usage")
+	if not is_instance_valid(content):
+		return
+	UI.clear(content)
+	if not bool(res[0]) or not (res[1] is Dictionary):
+		content.add_child(UI.label("無法載入 AI 使用紀錄：%s" % str(res[1]), 14, UI.BAD, true))
+		return
+	var d: Dictionary = res[1]
+	var limit: int = int(d.get("limit", 50))
+	var used: int = int(d.get("used", 0))
+	var remaining: int = int(d.get("remaining", maxi(0, limit - used)))
+	var history: Array = d.get("history", [])
+	var today: Dictionary = history.back() if not history.is_empty() and history.back() is Dictionary else {}
+	var today_calls: Dictionary = today.get("calls", {}) if today.get("calls") is Dictionary else {}
+	var total_today: int = 0
+	for k in today_calls:
+		total_today += int(today_calls[k])
+
+	# 今日額度
+	var qp := UI.panel(UI.PANEL, 14, 14)
+	var qv := UI.vbox(8)
+	qp.add_child(qv)
+	qv.add_child(UI.label("今日 AI 額度（Workers AI 計次）", 17, UI.ACCENT_2))
+	var row := UI.hbox(10)
+	row.add_child(UI.label("已用 %d / %d 次" % [used, limit], 22, UI.TEXT))
+	row.add_child(UI.spacer())
+	row.add_child(UI.label("剩餘 %d 次" % remaining, 22, UI.GOOD if remaining > 10 else (UI.OK if remaining > 0 else UI.BAD)))
+	qv.add_child(row)
+	var bar := UI.bar(100.0 * float(used) / float(maxi(1, limit)), UI.GOOD if remaining > 10 else (UI.OK if remaining > 0 else UI.BAD), 400)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.custom_minimum_size = Vector2(0, 10)
+	qv.add_child(bar)
+	var secs: int = maxi(0, int((float(d.get("resetAt", 0)) - float(d.get("now", 0))) / 1000.0))
+	qv.add_child(UI.label("%d 小時 %d 分後重置（台北時間午夜）" % [secs / 3600, (secs % 3600) / 60], 13, UI.MUTED))
+	if remaining <= 0:
+		qv.add_child(UI.label("※ 今日額度已用完：AI 功能改用規則版，遊戲照常進行。", 13, UI.GOLD, true))
+	content.add_child(qp)
+
+	# 今日各供應者呼叫次數
+	var cp := UI.panel(UI.PANEL, 14, 14)
+	var cv := UI.vbox(6)
+	cp.add_child(cv)
+	cv.add_child(UI.label("今日 AI 呼叫 %d 次" % total_today, 17, UI.ACCENT_2))
+	if today_calls.is_empty():
+		cv.add_child(UI.label("今天還沒有使用 AI。登入後在面談中自由提問、異議回應、教練提示都會用到 AI。", 13, UI.MUTED, true))
+	for k in today_calls:
+		var r := UI.hbox(8)
+		r.add_child(UI.label(str(PROVIDER_NAMES.get(str(k), str(k))), 14, UI.TEXT))
+		r.add_child(UI.spacer())
+		r.add_child(UI.label("%d 次" % int(today_calls[k]), 14, UI.TEXT))
+		cv.add_child(r)
+	if bool(d.get("nimUnmetered", false)):
+		cv.add_child(UI.label("說明：優先使用 NVIDIA NIM，失敗時改用 NIM 備援模型（DeepSeek，較慢），兩者都不扣每日額度；都失敗時才改用 Workers AI，並扣 1 次額度（失敗會退還）。", 12, UI.MUTED, true))
+	content.add_child(cp)
+
+	# 近 7 天
+	var hp := UI.panel(UI.PANEL, 14, 14)
+	var hv := UI.vbox(6)
+	hp.add_child(hv)
+	hv.add_child(UI.label("近 7 天", 17, UI.ACCENT_2))
+	var head := UI.hbox(8)
+	head.add_child(UI.label("日期", 13, UI.MUTED))
+	head.add_child(UI.spacer())
+	head.add_child(UI.label("AI 呼叫　｜　計入額度", 13, UI.MUTED))
+	hv.add_child(head)
+	var max_calls: int = 1
+	for h: Dictionary in history:
+		var tot: int = 0
+		for k in (h.get("calls", {}) as Dictionary):
+			tot += int(h["calls"][k])
+		max_calls = maxi(max_calls, tot)
+	for i in range(history.size() - 1, -1, -1):
+		var h: Dictionary = history[i]
+		var tot: int = 0
+		for k in (h.get("calls", {}) as Dictionary):
+			tot += int(h["calls"][k])
+		var r := UI.hbox(8)
+		var day: String = str(h.get("day", ""))
+		r.add_child(UI.label(day.substr(5).replace("-", "/") + ("（今天）" if i == history.size() - 1 else ""), 14, UI.TEXT))
+		var b := UI.bar(100.0 * float(tot) / float(max_calls), UI.ACCENT_2, 160)
+		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		r.add_child(b)
+		r.add_child(UI.label("%d 次　｜　%d 次" % [tot, int(h.get("quota", 0))], 14, UI.TEXT))
+		hv.add_child(r)
+	content.add_child(hp)
+
+	content.add_child(UI.button("重新整理", func(): _switch_tab(_current_tab), 14, UI.PANEL_2))
+
+
+# ──────────────────────────────────────────────────────────────────
 # 分頁 1：客戶圖鑑（18 格）
 # ──────────────────────────────────────────────────────────────────
 
@@ -387,7 +508,7 @@ func _render_codex_tab() -> void:
 
 	var clients: Array = _profile.get("clients", [])
 	if clients.is_empty():
-		content.add_child(UI.label("尚無客戶圖鑑資料。", 15, UI.MUTED))
+		content.add_child(UI.label("尚未有客戶圖鑑資料。", 15, UI.MUTED))
 		return
 
 	var served_count: int = 0
@@ -452,7 +573,7 @@ func _render_history_tab() -> void:
 
 	var top_filter := UI.hbox(8)
 	_history_filter = LineEdit.new()
-	_history_filter.placeholder_text = "依房間代碼或玩家篩選（空白＝全部）"
+	_history_filter.placeholder_text = "依玩家姓名篩選（空白＝全部）"
 	_history_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_history_filter.custom_minimum_size = Vector2(0, 42)
 	_history_filter.text_submitted.connect(func(_t: String): _load_history())
@@ -505,17 +626,21 @@ func _load_history() -> void:
 		return
 
 	_records = res[1].get("records", []) if res[1] is Dictionary else []
+	if filter_text != "":
+		_records = _records.filter(func(r: Dictionary): return filter_text.to_lower() in str(r.get("name", "")).to_lower())
 	if res[1] is Dictionary and res[1].get("tagInfo") is Dictionary:
 		_tag_labels = res[1]["tagInfo"]
 	if _records.is_empty():
-		_history_list.add_child(UI.label("尚無歷次紀錄。完成一場遊戲後將自動保存。", 14, UI.MUTED, true))
+		_history_list.add_child(UI.label("尚未有歷次紀錄。完成一場遊戲後將自動保存。", 14, UI.MUTED, true))
 		return
 
 	for rec_item: Dictionary in _records:
 		var rr: Dictionary = rec_item
 		var local_ts: int = int(rr.get("ts", 0)) / 1000 + int(Time.get_time_zone_from_system().get("bias", 0)) * 60
 		var dt: String = Time.get_datetime_string_from_unix_time(local_ts).replace("T", " ").substr(0, 16)
-		var label_str: String = "%s　%d 分　%s　（%s）" % [str(rr.get("grade", "C")), int(rr.get("score", 0)), dt, str(rr.get("room", ""))]
+		var players_cnt: int = int(rr.get("players", 1))
+		var mode_str: String = "單人" if players_cnt <= 1 else ("%d 人局" % players_cnt)
+		var label_str: String = "%s　%d 分　%s　（%s）" % [str(rr.get("grade", "C")), int(rr.get("score", 0)), dt, mode_str]
 
 		var b: Button = UI.option_button(label_str, func(): _show_history_detail(rr))
 		_history_list.add_child(b)

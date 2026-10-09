@@ -1,3 +1,4 @@
+@tool
 extends Control
 ## 多人大廳：房間代碼、玩家列表、加入電腦顧問、回合數、AI 客戶開關、開始。支援直向與橫向佈局切換。
 
@@ -171,7 +172,10 @@ func refresh(s: Dictionary) -> void:
 	elif n < 2:
 		_hint.text = "目前只有你一人：可以等同伴加入，或加入電腦顧問。也可以直接開始自主練習。"
 	else:
-		_hint.text = "%d 位玩家就緒。%s" % [n, "" if Net.ai_enabled else "（伺服器未設定 AI 金鑰：AI 功能改用規則版）"]
+		var ai_note := ""
+		if not Net.ai_enabled:
+			ai_note = "（訪客房主：AI 功能改用規則版）" if not Net.is_logged_in() else "（伺服器未啟用 AI：AI 功能改用規則版）"
+		_hint.text = "%d 位玩家就緒。%s" % [n, ai_note]
 
 	if not Net.is_logged_in():
 		_visitor_hint.text = "※ 訪客模式：AI 功能改用規則版、紀錄不保存，登入後可使用"

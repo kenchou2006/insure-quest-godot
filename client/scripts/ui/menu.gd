@@ -1,5 +1,6 @@
+@tool
 extends Control
-## 主選單：姓名、會員登入／AI 額度、單人練習、建立／加入多人房間、培訓紀錄、圖文遊戲說明。支援橫向與直向適配、PWA更新檢查與音效開關。
+## 主選單：姓名、會員登入（Google 頭貼與顧問等級）、單人練習、建立／加入多人房間、培訓紀錄、圖文遊戲說明。支援橫向與直向適配、PWA更新檢查與音效開關。
 
 var main: Node
 var _name: LineEdit
@@ -204,26 +205,36 @@ func _update_auth_card() -> void:
 		var u: Dictionary = Net.get_user()
 		var u_name: String = str(u.get("name", "顧問"))
 		var is_trainer: bool = bool(u.get("trainer", false))
-		var rem_quota: int = Net.get_ai_remaining()
+		var lv: Dictionary = Net.get_level()
 
 		var h := UI.hbox(8)
-		# 圓形姓名首字頭像
-		var av := UI.panel(UI.ACCENT, 18, 0)
-		av.custom_minimum_size = Vector2(36, 36)
-		var av_l := UI.label(u_name.substr(0, 1), 16, Color.WHITE)
-		av_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		av_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		av.add_child(av_l)
-		h.add_child(av)
+		# Google 大頭貼（尚未下載完成或沒有頭貼時，先顯示姓名首字）
+		h.add_child(UI.avatar(Net.avatar_tex, u_name, 40))
+		if Net.avatar_tex == null:
+			_load_avatar()
 
 		var info_v := UI.vbox(2)
 		info_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var tag_text: String = " ［講師］" if is_trainer else ""
 		info_v.add_child(UI.label(u_name + tag_text, 15, UI.TEXT, true))
-		info_v.add_child(UI.label("AI 額度剩餘 %d 次" % rem_quota, 12, UI.ACCENT_2))
+		# 顧問等級與經驗條（經驗值＝歷次對局分數總和）
+		if not lv.is_empty():
+			var lv_row := UI.hbox(6)
+			lv_row.add_child(UI.label("Lv.%d %s" % [int(lv.get("level", 1)), str(lv.get("title", ""))], 12, UI.GOLD))
+			var nxt: Variant = lv.get("next")
+			var xp: int = int(lv.get("xp", 0))
+			if nxt != null:
+				var floor_xp: int = int(lv.get("floor", 0))
+				var pct: float = 100.0 * float(xp - floor_xp) / float(maxi(1, int(nxt) - floor_xp))
+				var b := UI.bar(pct, UI.GOLD, 70)
+				b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+				lv_row.add_child(b)
+				lv_row.add_child(UI.label("%d / %d" % [xp, int(nxt)], 11, UI.MUTED))
+			else:
+				lv_row.add_child(UI.label("最高等級・經驗 %d" % xp, 11, UI.MUTED))
+			info_v.add_child(lv_row)
 		h.add_child(info_v)
 
-		h.add_child(UI.button("我的紀錄", func(): _save(); main.show_records(), 13, UI.PANEL))
 		h.add_child(UI.button("登出", _logout, 13, UI.BAD.darkened(0.4)))
 		_auth_card_container.add_child(h)
 	else:
@@ -236,6 +247,14 @@ func _update_auth_card() -> void:
 			h.add_child(UI.button("測試登入", _login_dev, 14, UI.GOLD.darkened(0.3)))
 		_auth_card_container.add_child(h)
 		_auth_card_container.add_child(UI.label("訪客模式：AI 功能改用規則版、紀錄不保存，登入後可使用", 12, UI.MUTED, true))
+
+
+func _load_avatar() -> void:
+	if Engine.is_editor_hint():
+		return
+	var tex: Texture2D = await Net.fetch_avatar()
+	if tex != null and is_inside_tree():
+		_update_auth_card()
 
 
 func _login_google() -> void:
@@ -374,7 +393,7 @@ func _build_howto() -> Control:
 		{
 			"img": "",
 			"title": "棋盤格子圖例與多人競猜",
-			"desc": "[color=#00a36c]客 客戶格[/color]：進行完整面談　[color=#e76f51]✚ 人生事件[/color]：考驗已簽約客戶\n[color=#7aa2ff]市 市場快訊[/color]：全體市場波動　[color=#9d7bea]訓 合規訓練[/color]：合規小測驗\n[color=#ff6b6b]稽 合規稽核[/color]：抽查適合度　[color=#2fd197]♥ 轉介紹[/color]：滿意客戶介紹（信任 +10）\n[color=#8ecae6]研 研討會[/color]：AI 教練建議　[color=#f2c14e]★ 季度結算[/color]：滿意續約、不滿意解約\n\n[b]多人觀摩競猜[/b]：輪到其他顧問時可即時觀摩並預測其評級，猜中聲望 +2！"
+			"desc": "[color=#00a36c]◎ 客戶格[/color]：進行完整面談　[color=#e76f51]✚ 人生事件[/color]：考驗已簽約客戶\n[color=#7aa2ff]↗ 市場快訊[/color]：全體市場波動　[color=#9d7bea]✓ 合規訓練[/color]：合規小測驗\n[color=#ff6b6b]⚠ 合規稽核[/color]：抽查適合度　[color=#2fd197]♥ 轉介紹[/color]：滿意客戶介紹（信任 +10）\n[color=#8ecae6]◇ 研討會[/color]：AI 教練建議　[color=#f2c14e]★ 季度結算[/color]：滿意續約、不滿意解約\n\n[b]多人觀摩競猜[/b]：輪到其他顧問時可即時觀摩並預測其評級，猜中聲望 +2！"
 		}
 	]
 

@@ -53,7 +53,9 @@ export async function verifyGoogleIdToken(token: string, clientId: string, expec
     if (c.aud !== clientId) return null;
     if (!c.exp || c.exp * 1000 < now) return null;
     if (c.email_verified !== true || !c.sub) return null;
-    if (expectedNonce !== undefined && (!expectedNonce || c.nonce !== expectedNonce)) return null;
+    if (c.nonce) {
+      if (!expectedNonce || c.nonce !== expectedNonce) return null;
+    }
     return c;
   } catch {
     return null;

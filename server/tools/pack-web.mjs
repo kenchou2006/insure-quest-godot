@@ -55,14 +55,15 @@ const sw = join(dir, 'index.service.worker.js');
 if (existsSync(sw)) {
   let code = readFileSync(sw, 'utf8');
   for (const ext of packed) code = code.split(`"index.${ext}"`).join(`"index.${ext}.gz"`);
+  code = code.replace(/const CACHE_VERSION = '[^']+';/, `const CACHE_VERSION = '${Date.now()}';`);
   writeFileSync(sw, code);
-  console.log(`service worker：快取清單改為 ${packed.map(e => `index.${e}.gz`).join(', ') || '（無需修改）'}`);
+  console.log(`service worker：快取清單更新，版本號重置為 ${Date.now()}`);
 }
 
 // Workers Static Assets 自訂標頭（只作用在靜態檔，/api/* 由 Worker 處理）
 writeFileSync(join(dir, '_headers'), `/*
   X-Content-Type-Options: nosniff
-  Referrer-Policy: strict-origin-when-cross-origin
+  Referrer-Policy: no-referrer
 
 /
   Cache-Control: no-cache
@@ -76,5 +77,14 @@ writeFileSync(join(dir, '_headers'), `/*
 /index.manifest.json
   Content-Type: application/manifest+json
   Cache-Control: no-cache
+
+/index.pck
+  Cache-Control: no-cache, must-revalidate
+
+/index.wasm.gz
+  Cache-Control: no-cache, must-revalidate
+
+/index.js
+  Cache-Control: no-cache, must-revalidate
 `);
 console.log('_headers：已產生');

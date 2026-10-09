@@ -1,0 +1,12 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/preview/preview.gd" id="1"]
+
+[node name="Report" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1280
+offset_bottom = 720
+script = ExtResource("1")
+screen = "ended"
+layout = "desktop"

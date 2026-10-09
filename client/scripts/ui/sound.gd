@@ -1,3 +1,4 @@
+@tool
 class_name Sound
 ## 音效管理器：使用 AudioStreamWAV 程式合成音效，無須任何外部音檔。
 ## 支援靜音開關與網頁版延遲播放保護。
@@ -17,6 +18,8 @@ static func toggle_mute() -> bool:
 
 
 static func play(name: String, caller: Node = null) -> void:
+	if Engine.is_editor_hint():
+		return
 	if muted:
 		return
 	if _player == null or not is_instance_valid(_player):

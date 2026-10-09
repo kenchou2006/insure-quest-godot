@@ -1,0 +1,70 @@
+# 推送到 main：型別檢查＋單元測試 → Godot 網頁匯出 → wrangler deploy。PR 只跑檢查。
+# 需要的 GitHub Secrets：CLOUDFLARE_API_TOKEN（範本「Edit Cloudflare Workers」）、CLOUDFLARE_ACCOUNT_ID。
+# 不用 Cloudflare Workers Builds：建置映像沒有 Godot，每次都要重新下載約 1 GB 匯出範本；這裡用 actions/cache 快取。
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+      - run: npm run check
+
+      - name: Cache Godot + export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Install Godot ${{ env.GODOT_VERSION }}
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          base=https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable
+          curl -fsSLo godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSLo templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          mkdir -p ~/godot ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          unzip -q godot.zip -d ~/godot && mv ~/godot/Godot_v*_linux.x86_64 ~/godot/godot
+          unzip -q templates.tpz -d tpl && mv tpl/templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+
+      - name: Import project (first run builds .godot cache)
+        run: ~/godot/godot --headless --path ../client --import || true
+
+      - name: Export web build
+        run: npm run build:web
+        env:
+          GODOT: /home/runner/godot/godot
+
+      - name: Deploy to Cloudflare
+        if: github.event_name != 'pull_request'
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -1,3 +1,4 @@
+@tool
 extends PanelContainer
 ## 事件面板：人生事件、市場快訊、合規測驗、合規抉擇、客戶回訪、稽核、季度結算、研討會。
 
@@ -37,18 +38,20 @@ func refresh(ev: Dictionary, actor_name: String) -> void:
 	elif title == "" and review is Dictionary:
 		title = "客戶回訪：%s" % str(review.get("clientName", "已簽約客戶"))
 
-	if title != "" and title != _last_ev_title:
+	# 只有換了一個事件才播音效與淡入；同一事件內的更新（作答、別人按繼續）直接重繪，避免畫面閃爍
+	var is_new_event: bool = title != _last_ev_title
+	if title != "" and is_new_event:
 		_last_ev_title = title
 		Sound.play("ding", self)
 
 	var icons: Dictionary = {
 		"life": "✚ 人生事件",
-		"market": "市 市場快訊",
-		"quiz": "訓 合規訓練",
-		"audit": "稽 合規稽核",
+		"market": "↗ 市場快訊",
+		"quiz": "✓ 合規訓練",
+		"audit": "⚠ 合規稽核",
 		"settlement": "★ 季度結算",
-		"seminar": "研 顧問研討會",
-		"dilemma": "訓 合規情境抉擇",
+		"seminar": "◇ 顧問研討會",
+		"dilemma": "✓ 合規情境抉擇",
 		"review": "◎ 客戶回訪",
 		"info": "※ 提示"
 	}
@@ -145,7 +148,8 @@ func refresh(ev: Dictionary, actor_name: String) -> void:
 				wait_text = "等待 %s 作答……" % actor_name
 		_v.add_child(UI.label(wait_text, 14, UI.MUTED))
 
-	UI.fade_in(_v, 0.2)
+	if is_new_event:
+		UI.fade_in(_v, 0.2)
 	UI.pass_wheel(_v)
 
 

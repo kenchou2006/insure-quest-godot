@@ -4,7 +4,7 @@
  * - 兩種登入方式：FedCM／One Tap（瀏覽器取得 ID Token 後 POST 給我們）與授權碼重新導向（退路）；兩者都驗證 RS256 簽章、iss／aud／exp／email_verified，FedCM 另外檢查 nonce。
  */
 import type { Env } from './index.ts';
-import type { User } from './records.ts';
+import { globalRecords, type User } from './records.ts';
 import { verifyGoogleIdToken, type GoogleClaims } from './google-jwt.ts';
 
 export const SESSION_COOKIE = 'iq_session';
@@ -43,7 +43,7 @@ function randomHex(bytes: number) {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function records(env: Env) { return env.RECORDS.get(env.RECORDS.idFromName('global')); }
+function records(env: Env) { return globalRecords(env); }
 
 export async function currentUser(req: Request, env: Env): Promise<User | null> {
   const token = readCookie(req, SESSION_COOKIE);
@@ -95,10 +95,23 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
   if (url.pathname === '/api/auth/google/credential' && req.method === 'POST') {
     if (!googleEnabled(env)) return new Response('Google 登入尚未設定', { status: 503 });
     if (!sameOriginPost(req, url)) return Response.json({ error: 'forbidden' }, { status: 403 });
-    const { credential } = await req.json<{ credential?: string }>().catch(() => ({ credential: undefined }));
+    let { credential } = await req.json<{ credential?: string | Record<string, unknown> }>().catch(() => ({ credential: undefined }));
+    if (typeof credential === 'object' && credential !== null) {
+      credential = String(credential.id_token || credential.token || credential.credential || '');
+    } else if (typeof credential === 'string') {
+      try {
+        const parsed = JSON.parse(credential);
+        if (parsed && typeof parsed === 'object') {
+          credential = String(parsed.id_token || parsed.token || parsed.credential || credential);
+        }
+      } catch {}
+    }
     const nonce = readCookie(req, NONCE_COOKIE) || '';
     const claims = credential ? await verifyGoogleIdToken(credential, env.GOOGLE_CLIENT_ID!, nonce) : null;
-    if (!claims) return Response.json({ error: '登入驗證失敗' }, { status: 401 });
+    if (!claims) {
+      console.warn('Google credential verification failed:', { hasCred: !!credential, noncePresent: !!nonce });
+      return Response.json({ error: '登入驗證失敗' }, { status: 401 });
+    }
     const user = userFromClaims(claims);
     await records(env).upsertUser(user);
     const token = await records(env).createSession(user.id);

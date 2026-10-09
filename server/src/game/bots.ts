@@ -3,10 +3,11 @@
  * novice：常見新人錯誤（亂問、太早問預算、偏向高佣金配置、偶爾恐嚇）——讓學員看見反例。
  */
 import type { Action, Alloc, CardId, GameState, QuestionId } from './types.ts';
-import { QUIZ } from './data.ts';
+import { QUESTIONS, QUIZ } from './data.ts';
 import { DILEMMAS } from './extras.ts';
 import { RES, TOTAL_COINS } from './engine.ts';
 import { shuffle } from './game.ts';
+import { applyTwist } from './twists.ts';
 
 export function botAction(s: GameState, rng: () => number): Action | null {
   const p = s.players[s.turn];
@@ -50,21 +51,28 @@ export function botAction(s: GameState, rng: () => number): Action | null {
       const pick = pro ? open.find(x => x.cl.real) ?? open[0] : open[Math.floor(rng() * open.length)];
       return { type: 'observe', index: pick.i };
     }
-    const askedStd = sess.asked.filter(a => a.qid !== 'free').map(a => a.qid as QuestionId);
+    if (sess.talkLeft !== undefined && sess.talkLeft <= 0) return { type: 'to_plan' };
+    const askedStd = sess.asked.map(a => a.qid as QuestionId);
     if (askedStd.length >= 3) return { type: 'to_plan' };
     const all: QuestionId[] = ['income', 'goal', 'coverage', 'risk', 'premium'];
-    const remaining = all.filter(q => !askedStd.includes(q));
+    const remaining = all.filter(q => !askedStd.includes(q) && !sess.freeHits.includes(q));
+    if (!remaining.length) return { type: 'to_plan' };
+    let target: QuestionId;
     if (pro) {
       const order = [...c.keyQuestions, ...shuffle(all.filter(q => q !== 'premium' && !c.keyQuestions.includes(q)), rng)];
-      return { type: 'ask', qid: order.find(q => remaining.includes(q))! };
+      target = order.find(q => remaining.includes(q)) ?? remaining[0];
+    } else {
+      target = remaining[Math.floor(rng() * remaining.length)];
     }
-    return { type: 'ask', qid: remaining[Math.floor(rng() * remaining.length)] };
+    const qObj = QUESTIONS.find(q => q.id === target);
+    return { type: 'talk', text: qObj?.text ?? '我想了解您的需求。', suggested: target };
   }
 
   if (sess.step === 'plan') {
-    const weights = Object.entries(c.plan.cards) as [CardId, number][];
+    const activeClient = pro ? applyTwist(c, sess.twist) : c;
+    const weights = Object.entries(activeClient.plan.cards) as [CardId, number][];
     if (pro) {
-      const ideal = c.plan.ideal;
+      const ideal = activeClient.plan.ideal;
       const alloc: Alloc = { cash: ideal.cash[0], protect: ideal.protect[0], growth: ideal.growth[0] };
       let left = TOTAL_COINS - alloc.cash - alloc.protect - alloc.growth;
       for (const r of ['protect', 'cash', 'growth'] as const) {
