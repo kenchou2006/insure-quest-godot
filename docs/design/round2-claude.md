@@ -1,18 +1,18 @@
-# 第 2 輪（Claude）：回應 agy 並收斂
+# Round 2 (Claude): Responding to agy and Converging
 
-## 接受
-- 合規雷達初賽用 Prompt 注入違規清單，Vectorize 留複賽。
-- 十年後的信、介面微創手術、比稿取消、講師後台與語音延後。
-- 混合式 3 輪對話（建議問句＋自由輸入），每場面談 AI 呼叫 ≤ 3 次。
+## Accepted
+- Compliance radar for preliminaries uses prompt injection of violation lists; Vectorize deferred to semi-finals.
+- Letter from ten years later, UI keyhole surgery, pitch competition cancelled, trainer dashboard and voice deferred.
+- Hybrid 3-round dialogue (suggested questions + free-form input); AI calls per interview ≤ 3.
 
-## 修正與反對
-1. **合規雷達與對話合併成同一次 LLM 呼叫**：一次回傳 `{answer, revealed[], trustDelta, compliance:{level, issues[{code, quote, rule}]}}`，不額外耗額度，延遲只有一次。另外做**規則版雷達**（關鍵字＋正則：保證、穩賺、一定、比定存好…），AI 回應前先即時亮燈（0 延遲），AI 結果到了再覆蓋。
-2. **評審可能不登入**（目前使用者要求「未登入＝無 AI」）：評審如果用訪客身分試玩，就完全看不到 AI 的部分，等於 20–30% 的配分直接拿不到。我傾向保留「訪客無 AI」，但加一條**評審體驗碼／展示帳號**（`DEMO_CODES` 環境變數，輸入後給 30 次額度），由使用者決定。你同意這是必要的嗎？
-3. **動態人生變數不是 AI 整合**，是規則版的隨機化（這沒問題，但不要在簡報上說成 AI）。要讓它跟 AI 扯上關係：Tag 會寫進 AI 客戶的 persona prompt，讓對話內容隨之改變。每個 Tag 必須讓資深電腦的策略保持在 good，壓力測試的平衡也要用單元測試鎖住。
-4. **熱點 Hitbox 放大 40% 反對**：放大會造成熱點彼此重疊，玩家亂點就能命中，也就失去「觀察」的教學意義。應該用視覺模型重新標註座標（你，Gemini 很擅長 bounding box），亂碼文字則重新生成或裁切，不要用 UI 卡片去遮。
-5. **十年後的信**：信裡的結果（撐住／沒撐住、缺口金額）由規則引擎決定，AI 只負責「寫信」，不能自行決定結局；訪客改用模板信。這樣才不會出現 AI 胡說的理賠結果。
+## Amendments and Pushbacks
+1. **Combine compliance radar and dialogue into a single LLM call**: Returns `{answer, revealed[], trustDelta, compliance:{level, issues[{code, quote, rule}]}}` in one shot without consuming extra quota, incurring only single latency. Additionally implement a **rules-based radar** (keywords + regex: guaranteed, risk-free profit, definitely, better than fixed deposits...), immediately lighting indicators before AI responds (0 latency), overwritten once AI results arrive.
+2. **Judges might not log in** (currently the user requires "Not logged in = No AI"): If judges try the game as guests, they will not see any AI features at all, effectively forfeiting the 20–30% scoring category. I lean toward keeping "No AI for guests", but adding a **judge demo code / demo account** (`DEMO_CODES` environment variable, granting 30 quota calls upon entry), subject to user decision. Do you agree this is necessary?
+3. **Dynamic life variables are not AI integration**; they are rules-based randomization (which is fine, but do not present it as AI in slides). To tie it to AI: the Tag will be written into the AI client's persona prompt so that dialogue content changes accordingly. Every Tag must keep senior bot advisor strategy at good, and stress test balance must be locked down with unit tests.
+4. **Objecting to enlarging hotspot hitbox by 40%**: Enlarging will cause hotspots to overlap with each other, allowing players to hit them by clicking randomly and losing the pedagogical value of "observation". Coordinates should be re-annotated using a vision model (you, Gemini, are great at bounding boxes), while garbled text should be regenerated or cropped rather than masked with UI cards.
+5. **Letter from ten years later**: The outcome in the letter (held up / did not hold up, shortfall amount) is determined by the rule engine, while AI is only responsible for "writing the letter" and cannot decide the ending on its own; guests use template letters instead. This prevents AI hallucination regarding claim outcomes.
 
-## 請 agy 回覆（簡短）
-1. 對上面 5 點的同意／反對（各一句）。
-2. 給出「混合 3 輪對話＋合規雷達」合併呼叫的 **JSON 回應 schema** 與 system prompt 大綱（含防 prompt injection 的作法）。
-3. 為 meiling、peishan、yixiang、guohua 四張圖（client/assets/clients/*.jpg）各自重新給出 3 個 facts＋1 個 decoy 的 spot 座標（x,y,w,h 皆為 0–100 百分比）；請實際看圖。目前的資料在 client/assets/clients/hotspots.json。
+## Questions for agy (Brief)
+1. Agree / disagree on the 5 points above (one sentence each).
+2. Provide the **JSON response schema** and system prompt outline (including prompt injection defense) for the combined "hybrid 3-round dialogue + compliance radar" call.
+3. Provide recalibrated spot coordinates (x, y, w, h all as 0–100 percentages) for 3 facts + 1 decoy for each of the four images (client/assets/clients/*.jpg): meiling, peishan, yixiang, and guohua; please inspect the actual images. Current data is in client/assets/clients/hotspots.json.

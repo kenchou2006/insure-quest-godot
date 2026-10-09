@@ -1,6 +1,6 @@
-// 將 Godot 網頁匯出的 .wasm / .pck 壓成 .gz，並在 index.html 注入解壓縮 fetch shim。
-// 原因：Workers Static Assets 單檔上限 25 MiB，而 Godot 的 wasm 約 38 MiB；壓縮後也大幅減少下載量。
-// 用法：node tools/pack-web.mjs ../web
+// Compress Godot web export .wasm / .pck into .gz, and inject decompression fetch shim into index.html.
+// Reason: Workers Static Assets has 25 MiB single-file limit, Godot wasm is ~38 MiB; compression also reduces download size.
+// Usage: node tools/pack-web.mjs ../web
 import { readFileSync, writeFileSync, unlinkSync, existsSync, statSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
@@ -16,7 +16,7 @@ for (const ext of ['wasm', 'pck']) {
   if (!existsSync(f)) continue;
   const raw = readFileSync(f);
   const gz = gzipSync(raw, { level: 9 });
-  // 壓不太下來且未超過上限的檔案維持原樣
+  // Keep files unchanged if they cannot be compressed much and do not exceed the limit
   if (gz.length > raw.length * 0.9 && raw.length <= LIMIT) { console.log(`${f}: 保留原檔（${(raw.length / 1048576).toFixed(1)} MiB）`); continue; }
   if (gz.length > LIMIT) { console.error(`${f} 壓縮後仍超過 25 MiB（${gz.length} bytes）`); process.exit(1); }
   writeFileSync(`${f}.gz`, gz);
@@ -27,7 +27,7 @@ for (const ext of ['wasm', 'pck']) {
 
 const SHIM = `<script id="iq-gz-shim">
 (function () {
-  // 把 index.wasm / index.pck 的請求改抓 .gz 並在瀏覽器端解壓縮
+  // Redirect index.wasm / index.pck requests to .gz and decompress in the browser
   var origFetch = window.fetch.bind(window);
   window.fetch = function (input, init) {
     var url = typeof input === 'string' ? input : (input && input.url) || '';
@@ -50,7 +50,18 @@ if (!page.includes('iq-gz-shim')) {
 }
 console.log('index.html：已注入解壓縮 shim');
 
-// PWA：Godot 產生的 service worker 快取清單寫的是 index.wasm，但瀏覽器實際抓的是 index.wasm.gz
+// Local (in-browser) solo engine for guests; must load before the Godot runtime starts.
+if (existsSync(join(dir, 'local-room.js'))) {
+  page = readFileSync(html, 'utf8');
+  if (!page.includes('local-room.js')) {
+    page = page.replace('<script src="index.js"></script>', `<script src="local-room.js"></script>\n\t\t<script src="index.js"></script>`);
+    if (!page.includes('local-room.js')) { console.error('index.html: cannot inject local-room.js'); process.exit(1); }
+    writeFileSync(html, page);
+  }
+  console.log('index.html: injected local-room.js');
+}
+
+// PWA: Godot-generated service worker cache manifest lists index.wasm, but browser actually fetches index.wasm.gz
 const sw = join(dir, 'index.service.worker.js');
 if (existsSync(sw)) {
   let code = readFileSync(sw, 'utf8');
@@ -60,7 +71,7 @@ if (existsSync(sw)) {
   console.log(`service worker：快取清單更新，版本號重置為 ${Date.now()}`);
 }
 
-// Workers Static Assets 自訂標頭（只作用在靜態檔，/api/* 由 Worker 處理）
+// Workers Static Assets custom headers (applies only to static files, /api/* handled by Worker)
 writeFileSync(join(dir, '_headers'), `/*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
@@ -69,6 +80,9 @@ writeFileSync(join(dir, '_headers'), `/*
   Cache-Control: no-cache
 
 /index.html
+  Cache-Control: no-cache
+
+/local-room.js
   Cache-Control: no-cache
 
 /index.service.worker.js

@@ -1,12 +1,12 @@
-/* INSURE QUEST｜新增客戶（第 6–18 位）。
- * 結構與原型五位客戶相同；壓力事件的 need 由 data.ts 依「理想配置下限」自動校準，
- * 平衡由 test/balance.test.ts 驗證。所有情境僅供教育模擬，保障卡為功能概念、不對應實際商品。
+/* INSURE QUEST | Additional clients (clients 6-18).
+ * Same structure as original 5 clients; need of stress events is calibrated automatically by data.ts based on "lower bound of ideal allocation",
+ * balance verified by test/balance.test.ts. All scenarios for educational simulation only; coverage cards are functional concepts, not actual products.
  */
 import type { CardId, ClientProfile, ChoiceOption, QuestionId, ResKey, Answer, StressEvent } from './types.ts';
 
 const a = (text: string, trust: number, insight: number, key: string | null = null): Answer => ({ text, trust, insight, key });
 
-/** 異議處理四選項：連結目標（佳）／提問（可）／恐嚇（差）／保證（差） */
+/** Objection handling four options: link to goal (good) / question (ok) / fear-mongering (bad) / guarantee (bad) */
 function objection(text: string, good: [string, string, string], ok: string, fear: string, promise: string): { text: string; options: ChoiceOption[] } {
   return {
     text,
@@ -25,7 +25,7 @@ const ABSORB: Record<EvKind, Partial<Record<ResKey, number>>> = {
   cash: { cash: 2.2, protect: 0.6, growth: 0 },
   market: { cash: 1.6, protect: 0, growth: -0.5 },
 };
-/** need 先填 0，由 data.ts 校準 */
+/** need initialized to 0, calibrated by data.ts */
 function ev(day: number, kind: EvKind, tag: string, title: string, body: string, cards: CardId[], held: string, hit: string): StressEvent {
   return { day, tag, title, body, absorb: ABSORB[kind], cards, need: 0, held, hit };
 }

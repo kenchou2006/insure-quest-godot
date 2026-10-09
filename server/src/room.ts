@@ -1,7 +1,7 @@
-/* INSURE QUEST｜Room Durable Object：一個房間＝一場遊戲。
- * - 伺服器權威：所有規則在 game.ts 執行，客戶端只送動作。
- * - Hibernatable WebSocket：閒置時 DO 可休眠，狀態存在 storage。
- * - 電腦顧問與斷線代打由 alarm 驅動，間隔讓真人看得見每一步。
+/* INSURE QUEST | Room Durable Object: one room = one game.
+ * - Server-authoritative: all rules execute in game.ts, client only sends actions.
+ * - Hibernatable WebSocket: DO can hibernate when idle, state stored in storage.
+ * - Bot advisors and disconnect takeovers are driven by alarm, with delays so human observers can follow.
  */
 import { DurableObject } from 'cloudflare:workers';
 import type { Action, BotLevel, GameState, PlayerState } from './game/types.ts';
@@ -13,9 +13,13 @@ import { globalRecords, userRecords, type RecordInput, type RecordSummary } from
 import type { Env } from './index.ts';
 
 const BOT_DELAY_MS = 1300;
-/** 結果與事件畫面多停一下，讓旁觀的真人看得見內容 */
+/** Pause longer on result and event screens so observing human players can read content */
 const BOT_READ_DELAY_MS = 4500;
 const AFK_TAKEOVER_MS = 45_000;
+/** A room whose host never connected after creation is deleted after this long. */
+const HOST_NEVER_JOINED_MS = 2 * 60_000;
+/** Safety net after a game ends: delete the room once no sockets remain (re-checked at this interval). */
+const ENDED_SWEEP_MS = 30 * 60_000;
 
 type ClientMsg =
   | { t: 'hello'; playerId?: string; name?: string }
@@ -26,9 +30,10 @@ type ClientMsg =
   | { t: 'action'; action: Action }
   | { t: 'react'; emoji: string }
   | { t: 'predict'; grade: string }
+  | { t: 'abandon' }
   | { t: 'ping' };
 
-/** 每條連線綁定的身分：accountId 由 Worker 依登入 Cookie 解析後傳入，客戶端無法偽造 */
+/** Identity bound to each connection: accountId resolved by Worker from login cookie, unforgeable by client */
 interface Attachment { playerId: string | null; accountId: string | null; accountName: string | null }
 
 export interface AccountHeader { id: string; name: string }
@@ -39,7 +44,7 @@ const BOT_NAMES = ['電腦顧問・安安', '電腦顧問・小賴', '電腦顧�
 export class Room extends DurableObject<Env> {
   private game: GameState | null = null;
   private queue: Promise<unknown> = Promise.resolve();
-  /** AI 提供者（Workers AI／Claude／模擬）；null 代表只用規則版 */
+  /** AI provider (Workers AI / Claude / mock); null means rule-based only */
   private raw: RawAI | null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -54,7 +59,7 @@ export class Room extends DurableObject<Env> {
   private globalRecords() { return globalRecords(this.env); }
   private userRecords(accountId: string) { return userRecords(this.env, accountId); }
 
-  /** 帳號的 AI 額度計量；由個人 DO 切片獨立處理，每次變動都推送給該帳號的連線 */
+  /** AI quota metering per account; handled independently by personal DO shard, broadcasts to connection on change */
   private meterFor(accountId: string | null | undefined): Meter | null {
     if (!accountId || !this.raw) return null;
     const limit = this.aiLimit;
@@ -73,13 +78,13 @@ export class Room extends DurableObject<Env> {
     };
   }
 
-  /** 真人玩家用自己的帳號額度；電腦顧問與訪客一律用規則版 */
+  /** Human players use their own account quota; bot advisors and guests always use rule-based */
   private aiFor(p: PlayerState | null | undefined): AIService {
     return new MeteredAI(this.raw, p && !p.isBot ? this.meterFor(p.accountId) : null);
   }
 
   private makeCtx(actor?: PlayerState | null): Ctx {
-    // 客戶回答串流：節流後推給房內所有連線（伺服器送出的 WebSocket 訊息不計費）
+    // Client response stream: throttled and broadcast to all room connections (server outbound WebSocket messages are free)
     let last = 0;
     let pending: string | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -97,11 +102,11 @@ export class Room extends DurableObject<Env> {
   private sendToAccount(accountId: string, msg: unknown) {
     const data = JSON.stringify(msg);
     for (const ws of this.ctx.getWebSockets()) {
-      if ((ws.deserializeAttachment() as Attachment | null)?.accountId === accountId) { try { ws.send(data); } catch { /* 已關閉 */ } }
+      if ((ws.deserializeAttachment() as Attachment | null)?.accountId === accountId) { try { ws.send(data); } catch { /* already closed */ } }
     }
   }
 
-  /** 串行化所有狀態變更（AI 呼叫期間 DO 會讓出執行權） */
+  /** Serialize all state mutations (DO yields execution during AI calls) */
   private run<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.queue.then(fn, fn);
     this.queue = next.catch(() => undefined);
@@ -114,29 +119,44 @@ export class Room extends DurableObject<Env> {
     await this.ctx.storage.put('game', this.game);
   }
 
-  private broadcast(msg: unknown) {
-    const data = JSON.stringify(msg);
-    for (const ws of this.ctx.getWebSockets()) { try { ws.send(data); } catch { /* 已關閉 */ } }
+  /** Completely clear room storage and scheduled alarm to prevent orphaned data */
+  private async destroy() {
+    this.game = null;
+    await this.ctx.storage.deleteAlarm().catch(() => {});
+    await this.ctx.storage.deleteAll().catch(() => {});
   }
 
-  /** 每條連線各自產生狀態（預測等個人化欄位） */
+  /** Tell every client the room is gone, then delete it and close all sockets (clients stop reconnecting). */
+  private async closeRoom(message: string) {
+    this.broadcast({ t: 'closed', message });
+    await this.destroy();
+    for (const o of this.ctx.getWebSockets()) { try { o.close(1000, 'room closed'); } catch { /* already closed */ } }
+  }
+
+  private broadcast(msg: unknown) {
+    const data = JSON.stringify(msg);
+    for (const ws of this.ctx.getWebSockets()) { try { ws.send(data); } catch { /* already closed */ } }
+  }
+
+  /** Generate per-connection state (personalized fields such as predictions) */
   private pushState() {
     if (!this.game) return;
     for (const ws of this.ctx.getWebSockets()) {
       const att = ws.deserializeAttachment() as Attachment | null;
-      try { ws.send(JSON.stringify({ t: 'state', state: publicView(this.game, att?.playerId ?? null) })); } catch { /* 已關閉 */ }
-    }
+      try { ws.send(JSON.stringify({ t: 'state', state: publicView(this.game, att?.playerId ?? null) })); } catch { /* already closed */ } }
   }
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname.endsWith('/init') && req.method === 'POST') {
-      const { code } = await req.json<{ code: string }>();
+      const { code, solo } = await req.json<{ code: string; solo?: boolean }>();
       return this.run(async () => {
         if (this.game) return new Response('exists', { status: 409 });
         this.game = createGame(code);
         this.game.settings.aiClients = false;
+        this.game.solo = !!solo;
         await this.save();
+        await this.ctx.storage.setAlarm(Date.now() + HOST_NEVER_JOINED_MS);
         return Response.json({ ok: true });
       });
     }
@@ -176,9 +196,12 @@ export class Room extends DurableObject<Env> {
 
     switch (msg.t) {
       case 'hello': {
-        // 重新連線：座位綁定帳號時，必須是同一個帳號才能取回
+        // Reconnect: when seat is bound to an account, only the matching account may reclaim it
         const seat = msg.playerId ? g.players.find(p => p.id === msg.playerId && !p.isBot) : undefined;
         let id = seat && (!seat.accountId || seat.accountId === att.accountId) ? seat.id : null;
+        // Multiplayer is for logged-in users only; a solo room only accepts its own player back.
+        if (!id && !g.solo && !att.accountId) return this.err(ws, '多人連線需先登入');
+        if (!id && g.solo && g.players.some(p => !p.isBot)) return this.err(ws, '這是單人練習房間，無法加入');
         if (!id && g.phase === 'lobby') {
           id = crypto.randomUUID();
           const typed = (msg.name || '').trim();
@@ -245,19 +268,26 @@ export class Room extends DurableObject<Env> {
         if (p && typeof msg.emoji === 'string') this.broadcast({ t: 'react', from: p.name, emoji: msg.emoji.slice(0, 4) });
         return;
       }
+      case 'abandon': {
+        // Only the sole human player of a solo game may void it; spectators and multiplayer hosts cannot.
+        const humans = g.players.filter(x => !x.isBot);
+        if (!me || humans.length !== 1 || humans[0].id !== me) return this.err(ws, '只有單人練習可以放棄本局');
+        await this.closeRoom('已放棄本局');
+        return;
+      }
     }
     await this.save();
     this.pushState();
     await this.scheduleBot();
   }
 
-  /** 背景產生 AI 客戶，不阻塞遊戲進行 */
+  /** Generate AI clients in the background without blocking gameplay */
   private generateClients(n = 1) {
     const host = this.game?.players.find(p => p.id === this.game?.hostId);
     if (!host?.accountId) return;
     for (let i = 0; i < n; i++) {
       const seed = Date.now() + i * 7919;
-      // AI 生成客戶使用房主的額度；房主是訪客時不生成
+      // Generating AI clients consumes host quota; skipped if host is guest
       this.ctx.waitUntil(this.aiFor(host).generateClient(seed).then(c => c && this.run(async () => {
         if (!this.game || this.game.phase !== 'playing') return;
         injectClient(this.game, c);
@@ -279,10 +309,21 @@ export class Room extends DurableObject<Env> {
   private async scheduleBot() {
     const g = this.game;
     if (!g || g.phase !== 'playing') return;
+    const humanPlayers = g.players.filter(x => !x.isBot);
+    const hasOnlineHuman = humanPlayers.some(x => x.connected);
+
+    // All human players disconnected (solo or all multiplayer): schedule 45s void timer from latest disconnect
+    if (!hasOnlineHuman) {
+      const times = humanPlayers.map(p => p.disconnectedAt ?? Date.now());
+      const disconnectTime = times.length > 0 ? Math.max(...times) : Date.now();
+      await this.ctx.storage.setAlarm(disconnectTime + AFK_TAKEOVER_MS);
+      return;
+    }
+
     const p = g.players[g.turn];
     if (p?.isBot) {
       const reading = g.turnStage === 'event' || g.session?.step === 'result';
-      const humans = g.players.some(x => !x.isBot && x.connected);
+      const humans = humanPlayers.some(x => x.connected);
       await this.ctx.storage.setAlarm(Date.now() + (reading && humans ? BOT_READ_DELAY_MS : BOT_DELAY_MS));
     }
     else if (p && !p.connected && p.disconnectedAt) await this.ctx.storage.setAlarm(p.disconnectedAt + AFK_TAKEOVER_MS);
@@ -291,15 +332,45 @@ export class Room extends DurableObject<Env> {
   async alarm() {
     await this.run(async () => {
       const g = this.game;
-      if (!g || !this.needsAuto(g)) return;
+      if (!g) return;
+
+      // Host never connected after creating the room: delete it. A lobby with the host present is kept
+      // indefinitely (waiting for others is fine); the host leaving closes it in onLeave.
+      if (g.phase === 'lobby') {
+        if (!g.players.some(p => !p.isBot) && this.ctx.getWebSockets().length === 0) await this.destroy();
+        return;
+      }
+
+      // Game over: delete once nobody is left on the report screen, otherwise check again later.
+      if (g.phase === 'ended') {
+        if (this.ctx.getWebSockets().length === 0) await this.destroy();
+        else await this.ctx.storage.setAlarm(Date.now() + ENDED_SWEEP_MS);
+        return;
+      }
+
+      const humanPlayers = g.players.filter(x => !x.isBot);
+      const hasOnlineHuman = humanPlayers.some(x => x.connected);
+
+      // Solo or multiplayer: if all human players remain disconnected over 45s, void game, discard scores, clear room storage
+      if (!hasOnlineHuman) {
+        const times = humanPlayers.map(p => p.disconnectedAt ?? 0);
+        const latestDisconnect = times.length > 0 ? Math.max(...times) : 0;
+        if (Date.now() - latestDisconnect >= AFK_TAKEOVER_MS) {
+          console.log(`[Room ${g.code}] 所有真人玩家均已斷線超時，作廢此局並清空房間暫存`);
+          await this.destroy();
+          return;
+        }
+      }
+
+      if (!this.needsAuto(g)) return;
       const p = g.players[g.turn];
-      // 斷線真人由資深電腦代打一步
+      // Disconnected human played one step by pro bot
       const level = p.botLevel;
       if (!p.isBot) p.botLevel = 'pro';
       const action = botAction(g, Math.random);
       if (!p.isBot) p.botLevel = level;
       if (!action) return;
-      // 電腦顧問與斷線代打都不消耗任何人的 AI 額度
+      // Bot advisors and disconnect takeovers never consume anyone's AI quota
       const e = await applyAction(g, p.id, action, this.makeCtx(null));
       if (e) {
         console.warn('bot action rejected', e, action);
@@ -307,16 +378,18 @@ export class Room extends DurableObject<Env> {
           await applyAction(g, p.id, { type: 'to_plan' }, this.makeCtx(null));
         }
       }
-      if (g.phase === 'ended') await this.finish();
+      if ((g.phase as string) === 'ended') await this.finish();
       await this.save();
       this.pushState();
     });
-    await this.scheduleBot();
+    if (this.game) {
+      await this.scheduleBot();
+    }
   }
 
   private async finish() {
     const g = this.game!;
-    // 報告先以規則版內容推送並標記 AI 撰寫中，畫面顯示提示；AI 完成後再推送一次
+    // Report pushed first with rule-based content marked AI pending with UI hints; pushed again when AI finishes
     g.aiPending = true;
     this.pushState();
     try {
@@ -325,7 +398,7 @@ export class Room extends DurableObject<Env> {
       g.aiPending = false;
     }
     this.pushState();
-    // 只保存已登入玩家的紀錄（訪客不保存）
+    // Save records only for logged-in players (guests not saved)
     for (const row of g.final ?? []) {
       const p = g.players.find(x => x.id === row.playerId)!;
       if (row.isBot || !p.accountId) continue;
@@ -334,15 +407,16 @@ export class Room extends DurableObject<Env> {
         players: g.players.length, userId: p.accountId, room: g.code,
         data: { ...row, decisions: p.decisions, book: p.book, sessions: p.sessionLogs ?? [], quizCorrect: p.quizCorrect, quizTotal: p.quizTotal }
       };
-      // 1. 寫入個人獨立 DO 切片（享受 10 GB 專屬容量、資料隔離、保證不滿）
+      // 1. Write to personal standalone DO shard (10 GB dedicated capacity, isolated data, never overflows)
       await this.userRecords(p.accountId).add(record)
         .catch(e => console.warn('user record save failed', e));
-      // 2. 寫入全域輕量摘要（供講師後台跨學員高效彙總）
+      // 2. Write to global lightweight summary (for trainer backend high-efficiency aggregation)
       await this.globalRecords().addSummary({
         name: record.name, ts: record.ts, score: record.score, grade: record.grade,
         players: record.players, userId: record.userId, room: record.room
       }).catch(e => console.warn('global summary save failed', e));
     }
+    await this.ctx.storage.setAlarm(Date.now() + ENDED_SWEEP_MS);
   }
 
   async webSocketClose(ws: WebSocket) { await this.run(() => this.onLeave(ws)); }
@@ -356,8 +430,31 @@ export class Room extends DurableObject<Env> {
     if (still) return;
     const p = g.players.find(x => x.id === att.playerId);
     if (!p) return;
-    if (g.phase === 'lobby') { removePlayer(g, p.id); log(g, `${p.name} 離開了房間`); }
-    else { p.connected = false; p.disconnectedAt = Date.now(); log(g, `${p.name} 斷線了，${AFK_TAKEOVER_MS / 1000} 秒後由電腦代打`, 'ok'); }
+    if (g.phase === 'lobby') {
+      // The host leaving the lobby closes the room for everyone.
+      if (p.id === g.hostId) {
+        await this.closeRoom('房主已離開，房間已關閉');
+        return;
+      }
+      removePlayer(g, p.id);
+      log(g, `${p.name} 離開了房間`);
+    } else if (g.phase === 'ended') {
+      // Game ended and reported; if everyone has left the room, clear room storage immediately
+      const remainingSockets = this.ctx.getWebSockets().filter(o => o !== ws);
+      if (remainingSockets.length === 0) {
+        await this.destroy();
+        return;
+      }
+    } else {
+      p.connected = false;
+      p.disconnectedAt = Date.now();
+      const stillHasHumans = g.players.some(x => !x.isBot && x.connected);
+      if (!stillHasHumans) {
+        log(g, `${p.name} 斷線了，所有真人玩家皆已離線，45 秒未重連將自動作廢此局`, 'ok');
+      } else {
+        log(g, `${p.name} 斷線了，45 秒後由電腦代打`, 'ok');
+      }
+    }
     await this.save();
     this.pushState();
     await this.scheduleBot();

@@ -30,8 +30,8 @@ def big5_range(lo: int, hi: int) -> set[str]:
 
 
 chars = set(chr(c) for c in range(0x20, 0x7F))
-chars |= big5_range(0xA140, 0xA3BF)  # 標點與符號
-chars |= big5_range(0xA440, 0xC67E)  # 常用字
+chars |= big5_range(0xA140, 0xA3BF)  # Punctuation and symbols
+chars |= big5_range(0xA440, 0xC67E)  # Common characters
 for pattern in ("client/scripts/**/*.gd", "server/src/**/*.ts", "server/src/**/*.json"):
     for f in ROOT.glob(pattern):
         chars |= set(f.read_text(encoding="utf-8"))

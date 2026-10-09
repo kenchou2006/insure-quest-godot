@@ -7,7 +7,7 @@
     "dev": "wrangler dev --env local",
     "deploy": "npm run build:web && wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts",
+    "test": "node --import ./test/helpers/register-cf.mjs --test test/*.test.ts",
     "check": "npm run typecheck && npm test",
     "build:web": "bash tools/build-web.sh",
     "dev:remote-ai": "wrangler dev"

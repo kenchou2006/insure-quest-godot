@@ -1,9 +1,9 @@
-/* INSURE QUEST｜玩法擴充：情境抉擇卡、客戶生命週期回訪、季度任務、終局榮譽榜。
- * 都是純資料＋純函式，由 game.ts 呼叫；情境僅供教育訓練模擬。
+/* INSURE QUEST | Gameplay expansions: dilemma cards, client lifecycle review, quarterly quests, endgame hall of fame.
+ * All pure data and pure functions, called by game.ts; scenarios are for educational training simulation only.
  */
 import type { BookEntry, CardId, ClientProfile, GameState, PlayerState, Quality } from './types.ts';
 
-/* ───────── 情境抉擇卡：合規 vs 業績、短期 vs 長期 ───────── */
+/* ───────── Dilemma cards: compliance vs performance, short-term vs long-term ───────── */
 
 export interface DilemmaChoice { id: 'A' | 'B' | 'C'; text: string; quality: Quality; title: string; body: string; commission?: number }
 export interface Dilemma { id: string; title: string; prompt: string; choices: DilemmaChoice[] }
@@ -79,7 +79,7 @@ export const DILEMMA_EFFECT: Record<Quality, { rep: number; tone: 'good' | 'ok' 
   good: { rep: 4, tone: 'good' }, ok: { rep: 1, tone: 'ok' }, bad: { rep: -6, tone: 'bad' },
 };
 
-/* ───────── 客戶生命週期：已簽約客戶的人生變化與保單健檢 ───────── */
+/* ───────── Client lifecycle: life changes and policy reviews for signed clients ───────── */
 
 export interface LifeChange { id: string; title: string; body: (c: ClientProfile) => string; needCard: CardId; applies: (c: ClientProfile) => boolean }
 
@@ -99,7 +99,7 @@ export function pickLifeChange(c: ClientProfile, rng: () => number): LifeChange 
   return options[Math.floor(rng() * options.length)];
 }
 
-/** 回訪結果：正確加保／確認已足夠是好的服務；亂加保是過度銷售；不聯絡會讓客戶覺得被忽略 */
+/** Review outcome: correct add-on / confirming coverage sufficiency is good service; indiscriminate add-on is over-selling; no contact makes clients feel neglected */
 export function reviewOutcome(entry: BookEntry, need: CardId, pick: ReviewPick, clientCards: Record<CardId, number>) {
   const has = entry.cards.includes(need);
   if (pick === 'skip') return { quality: 'bad' as Quality, sat: -10, rep: -1, commission: 0, addCard: null, title: '客戶覺得被忽略', body: '人生出現重大變化時沒有主動關心，客戶的信任明顯下降。' };
@@ -109,12 +109,12 @@ export function reviewOutcome(entry: BookEntry, need: CardId, pick: ReviewPick, 
       : { quality: 'bad' as Quality, sat: -6, rep: -1, commission: 0, addCard: null, title: '漏掉了新的缺口', body: '這項人生變化帶來新的風險，現有規劃並沒有涵蓋。' };
   }
   if (pick === need && !has) return { quality: 'good' as Quality, sat: 15, rep: 2, commission: 6, addCard: pick, title: '保單健檢補上缺口', body: '你及時依客戶的人生變化調整規劃，客戶非常滿意。' };
-  // 加了不相關或客戶已有的保障＝過度銷售
+  // Adding irrelevant or already-held coverage = over-selling
   const misfit = (clientCards[pick] ?? 0) < 0 || entry.cards.includes(pick);
   return { quality: (misfit ? 'bad' : 'ok') as Quality, sat: -4, rep: -1, commission: 4, addCard: entry.cards.includes(pick) ? null : pick, title: '加保沒有對準需求', body: '新加的保障和這次的人生變化關係不大，客戶覺得你在推銷。' };
 }
 
-/* ───────── 季度任務與合規連擊 ───────── */
+/* ───────── Quarterly quests and compliance streaks ───────── */
 
 export interface QuestStats { compliantSessions: number; keySessions: number; goodSigns: number; heldEvents: number; quizCorrect: number; goodReviews: number; dilemmaGood: number }
 export const emptyStats = (): QuestStats => ({ compliantSessions: 0, keySessions: 0, goodSigns: 0, heldEvents: 0, quizCorrect: 0, goodReviews: 0, dilemmaGood: 0 });
@@ -139,7 +139,7 @@ export function rollQuests(rng: () => number, n = 3): QuestState[] {
   return picked.map(q => ({ id: q.id, title: q.title, desc: q.desc, reward: q.reward, progress: {} }));
 }
 
-/** 更新任務進度；回傳本次新完成的 [玩家, 任務] 以便寫入動態 */
+/** Updates quest progress; returns newly completed [player, quest] pairs to write to the feed */
 export function updateQuests(s: GameState): { player: PlayerState; quest: QuestState }[] {
   const done: { player: PlayerState; quest: QuestState }[] = [];
   for (const q of s.quests ?? []) {
@@ -158,7 +158,7 @@ export function updateQuests(s: GameState): { player: PlayerState; quest: QuestS
   return done;
 }
 
-/* ───────── 終局榮譽榜 ───────── */
+/* ───────── Endgame hall of fame ───────── */
 
 export interface Award { id: string; title: string; winnerId: string; winnerName: string; reason: string }
 

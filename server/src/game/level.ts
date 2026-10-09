@@ -1,4 +1,4 @@
-/* INSURE QUEST｜顧問等級：經驗值＝歷次登入對局的分數總和（每場 0–100）。 */
+/* INSURE QUEST | Advisor levels: XP = sum of scores across login matches (0-100 per game). */
 
 export const LEVELS = [
   { min: 0, title: '見習顧問' },

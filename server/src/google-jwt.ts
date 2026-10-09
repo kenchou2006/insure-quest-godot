@@ -1,6 +1,6 @@
-/* INSURE QUEST｜Google ID Token 驗證（RS256，WebCrypto）。
- * FedCM／One Tap 由瀏覽器把 ID Token 交給我們，必須驗證簽章（不能只看內容），
- * 並檢查 iss、aud、exp、email_verified 與 nonce（防重放）。
+/* INSURE QUEST | Google ID Token verification (RS256, WebCrypto).
+ * FedCM / One Tap passes the ID Token to us from the browser; we must verify the signature (not just inspect content),
+ * and check iss, aud, exp, email_verified, and nonce (replay attack prevention).
  */
 
 const GOOGLE_CERTS = 'https://www.googleapis.com/oauth2/v3/certs';
@@ -11,7 +11,7 @@ export interface GoogleClaims {
   iss: string; aud: string; exp: number; nonce?: string;
 }
 
-/** 取得 Google 公鑰（JWK）；依 Cache-Control 快取在 isolate 記憶體 */
+/** Retrieves Google public keys (JWK); cached in isolate memory according to Cache-Control */
 export type KeyFetcher = () => Promise<JsonWebKey[]>;
 let cache: { keys: JsonWebKey[]; until: number } | null = null;
 export const fetchGoogleKeys: KeyFetcher = async () => {
@@ -33,8 +33,8 @@ function b64urlJson(s: string): Record<string, unknown> {
 }
 
 /**
- * 驗證 Google ID Token；任何一項不符都回傳 null。
- * expectedNonce 為 undefined 時不檢查 nonce（授權碼流程由伺服器直接向 Google 換得，沒有 nonce）。
+ * Verifies Google ID Token; returns null if any check fails.
+ * When expectedNonce is undefined, nonce is not checked (auth code flow exchanged directly with Google has no nonce).
  */
 export async function verifyGoogleIdToken(token: string, clientId: string, expectedNonce?: string, keys: KeyFetcher = fetchGoogleKeys, now = Date.now()): Promise<GoogleClaims | null> {
   try {

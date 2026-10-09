@@ -1,6 +1,6 @@
 @tool
 extends Control
-## 主控：畫面切換、單人／多人流程、提示訊息。
+## Main controller: screen switching, solo/multiplayer flow, and toast messages.
 
 const MenuScreen := preload("res://scripts/ui/menu.gd")
 const LobbyScreen := preload("res://scripts/ui/lobby.gd")
@@ -22,7 +22,7 @@ var _was_quota_exhausted := false
 
 
 func _ready() -> void:
-	# 編輯器中開啟 main.tscn 時顯示主選單設計（各畫面另見 scenes/preview/）
+	# When main.tscn is opened in editor, display main menu design (other screens see scenes/preview/)
 	if Engine.is_editor_hint():
 		var preview: Control = load("res://scenes/preview/preview.gd").new()
 		preview.screen = "menu"
@@ -35,7 +35,7 @@ func _ready() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	# 台北城市生活低對比背景紋理（暗底、低細節、營造溫暖顧問氛圍）
+	# Taipei urban life low-contrast background texture (dark base, low detail, creating a warm advisor atmosphere)
 	if ResourceLoader.exists("res://assets/title.jpg"):
 		var bg_tex := TextureRect.new()
 		bg_tex.texture = load("res://assets/title.jpg")
@@ -62,6 +62,13 @@ func _ready() -> void:
 	Net.state_changed.connect(_on_state)
 	Net.server_error.connect(func(m): toast(m, UI.BAD))
 	Net.connection_changed.connect(_on_connection)
+	Net.room_closed.connect(func(m: String):
+		_solo_bots = []
+		_solo = false
+		set_busy("")
+		toast(m, UI.INFO, 4.0)
+		show_menu()
+	)
 	Net.reaction.connect(func(from_name, emoji): toast("%s %s" % [from_name, emoji], UI.INFO))
 	Net.quota_changed.connect(func(_used: int, _limit: int, exhausted: bool):
 		if exhausted:
@@ -101,7 +108,7 @@ func _on_size_changed() -> void:
 	var target_scale: Vector2i = Vector2i(1280, 720)
 
 	if win_size.y > win_size.x:
-		# 直向：手機 (<600) vs 平板 (>=600)
+		# Portrait: phone (<600) vs tablet (>=600)
 		if css_size.x < 600.0:
 			profile = "phone_portrait"
 			target_scale = Vector2i(480, 854)
@@ -109,7 +116,7 @@ func _on_size_changed() -> void:
 			profile = "tablet_portrait"
 			target_scale = Vector2i(720, 1280)
 	else:
-		# 橫向：手機橫放 (<500) vs 電腦 (>=500)
+		# Landscape: phone landscape (<500) vs desktop (>=500)
 		if css_size.y < 500.0:
 			profile = "phone_landscape"
 			target_scale = Vector2i(960, 540)
@@ -130,7 +137,10 @@ func _on_size_changed() -> void:
 
 
 func _set_screen(kind: String, node: Control) -> void:
-	if _screen:
+	if _screen and is_instance_valid(_screen):
+		_screen.visible = false
+		if _screen.get_parent() == self:
+			remove_child(_screen)
 		_screen.queue_free()
 	_screen = node
 	_screen_kind = kind
@@ -142,6 +152,9 @@ func _set_screen(kind: String, node: Control) -> void:
 
 
 func show_menu() -> void:
+	if _screen_kind == "menu" and _screen != null and is_instance_valid(_screen) and not _screen.is_queued_for_deletion():
+		Net.fetch_me()
+		return
 	var m := MenuScreen.new()
 	m.main = self
 	_set_screen("menu", m)
@@ -172,11 +185,18 @@ func set_busy(text: String) -> void:
 	_busy_label.position = Vector2(16, size.y - 36)
 
 
-# ───────── 流程 ─────────
+# ───────── Flow ─────────
 
 func create_and_join(solo_bots: Array, solo: bool) -> void:
+	if solo and not Net.is_logged_in() and Net.local_available():
+		_solo_bots = solo_bots
+		_solo = solo
+		Net.is_solo = solo
+		Net.join_local()
+		set_busy("準備單人練習中……")
+		return
 	set_busy("準備單人練習中……" if solo else "建立房間中……")
-	var r := await Net.create_room()
+	var r := await Net.create_room(solo)
 	set_busy("")
 	if not r[0]:
 		toast(str(r[1]), UI.BAD, 4.0)
@@ -205,6 +225,8 @@ func join_room(code: String) -> void:
 
 
 func leave_to_menu() -> void:
+	if Net.is_solo and not Net.is_local():
+		Net.send({"t": "abandon"})
 	Net.leave()
 	_solo_bots = []
 	_solo = false
@@ -217,12 +239,12 @@ func _on_welcomed(_data: Dictionary) -> void:
 	if Net.spectator:
 		toast("遊戲已開始，你將以旁觀者身分觀看", UI.INFO)
 	if _solo:
-		# 單人模式：自動加入電腦對手並開始
+		# Solo mode: automatically add bot opponents and start
 		_solo = false
 		for level in _solo_bots:
 			Net.send({"t": "add_bot", "level": level})
 		_solo_bots = []
-		# 登入者才有 AI 即時新客戶；訪客一律規則版（伺服器另有檢查）
+		# Only logged-in users get AI real-time new clients; guests use rules version (server has separate check)
 		Net.send({"t": "settings", "rounds": 5, "aiClients": Net.ai_enabled})
 		Net.send({"t": "start"})
 

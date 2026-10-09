@@ -1,7 +1,7 @@
 @tool
 extends PanelContainer
-## 客戶面談面板：線索觀察 → 需求訪談（含 AI 自由提問）→ 方案配置 → 異議處理（含 AI 評分）→ 結果與壓力預演。
-## 支援直向堆疊適配、保障卡自適應排版（防截斷）、AI 教練提示與壓力預演視覺化。
+## Client interview panel: clue observation -> needs interview (with AI free questions) -> plan allocation -> objection handling (with AI scoring) -> result and stress test.
+## Supports portrait stacked layout, adaptive coverage card sizing (truncation prevention), AI coach hints, and visualized stress test.
 
 var main: Node
 var _sess: Dictionary = {}
@@ -12,26 +12,26 @@ var _header_box: Control
 var _metrics: Control
 var _steps: HBoxContainer
 var _content: VBoxContainer
-# 等待 AI 的狀態用 static：切換桌面／手機版面時面板會整個重建，
-# 不保留的話「客戶思考中……」會消失、輸入框重新出現（AI 回覆其實仍在路上）
+# Wait AI state uses static: panel is rebuilt when switching desktop/mobile layouts;
+# if not preserved, "client thinking..." vanishes and input box reappears while AI response is still en route
 static var _waiting_ai: bool = false
 static var _waiting_hint: bool = false
-## 上一次收到的面談狀態摘要（客戶／步驟／提問數…）；變了代表 AI 已回覆，清除等待
+## Summary of last received interview state (client/step/asked count...); change signifies AI response received, clearing wait
 static var _last_key: String = ""
-## 客戶回答串流：目前文字與收到時的面談狀態摘要（狀態一變就代表正式回答已到，不再顯示）
+## Client answer stream: current text and state summary at reception (state change means final answer arrived, stops showing)
 static var _stream_text: String = ""
 static var _stream_key: String = ""
 var _think_label: Label = null
 var _last_result_sound_key: String = ""
 
-# 方案配置的本地暫存
+# Local cache for plan allocation
 var _plan_key: String = ""
 var _sess_prev_id: String = ""
 var _alloc: Dictionary = {"cash": 0, "protect": 0, "growth": 0}
 var _cards: Array = []
 var _plan_ui: Dictionary = {}
 
-# 第 2 批新增狀態：即時雷達、浮動數值提示、縮圖收合與合規展開
+# Batch 2 state: real-time radar, floating metric deltas, thumbnail collapse, and compliance details
 var _prev_metrics: Dictionary = {}
 var _scene_collapsed: bool = false
 var _expanded_compliance_issues: Dictionary = {}
@@ -57,7 +57,7 @@ const STANDARD_QUESTIONS := [
 
 
 func _ready() -> void:
-	# 伺服器拒絕動作時面談狀態不會變，要主動解除「思考中」，否則會一直卡住
+	# Interview state doesn't change when server rejects action; proactively dismiss "thinking", otherwise stuck
 	if not Engine.is_editor_hint() and not Net.server_error.is_connected(_on_server_error):
 		Net.server_error.connect(_on_server_error)
 	if not Engine.is_editor_hint() and not Net.stream_text.is_connected(_on_stream_text):
@@ -89,7 +89,7 @@ func _on_stream_text(text: String) -> void:
 	var first: bool = _stream_text == "" or _stream_key != _last_key
 	_stream_text = text
 	_stream_key = _last_key
-	# 已經有泡泡就只改文字（不重建面板、不閃）；第一段才重繪一次把泡泡建出來（觀摩者也看得到）
+	# If bubble exists, only update text (no rebuild, no flicker); redraw on first chunk to construct bubble (visible to spectators)
 	if not first and _think_label != null and is_instance_valid(_think_label):
 		_think_label.text = text
 		_think_label.add_theme_color_override("font_color", UI.TEXT)
@@ -122,7 +122,7 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 		_waiting_ai = false
 		_pending_talk = {}
 		_stream_text = ""
-	# 換了一場面談（不同客戶或不同顧問）就回到頂端，避免停在上一場的捲動位置
+	# On new interview (different client or advisor), reset scroll to top to avoid staying at previous scroll position
 	if str(sess.get("client", {}).get("id", "")) + str(sess.get("playerId", "")) != str(_sess_prev_id):
 		_sess_prev_id = str(sess.get("client", {}).get("id", "")) + str(sess.get("playerId", ""))
 		_prev_metrics.clear()
@@ -131,7 +131,7 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 	if sess.get("hint") != null:
 		_waiting_hint = false
 
-	# 五力條數值變化浮動提示（例如「信任 +8」提示 1.5 秒）
+	# Floating indicator for metric changes (e.g. "trust +8" for 1.5s)
 	var m_dict: Dictionary = _sess.get("metrics", {}) if _sess.get("metrics") is Dictionary else {}
 	if not _prev_metrics.is_empty():
 		for k: String in ["trust", "insight", "fit", "risk", "compliance"]:
@@ -146,10 +146,10 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 	_build_steps()
 	UI.clear(_content)
 
-	# 顯示 AI 教練提示按鈕或提示條
+	# Show the AI coach hint button or hint bar
 	_render_coach_hint()
 
-	# 旁觀者競猜條（非當事人觀摩時顯示）
+	# Spectator prediction bar (shown when spectating other players)
 	if not _actor and str(sess.get("step", "")) in ["discover", "plan", "objection"]:
 		_render_spectator_prediction()
 
@@ -159,7 +159,7 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 		"objection": _build_objection()
 		"result": _build_result()
 
-	# 只有換場（換客戶、換顧問或換步驟）才淡入；同一步驟內的更新（新訊息、點按鈕）直接重繪，避免整片閃爍
+	# Only fade in on scene change (client, advisor, or step); updates within same step redraw directly to avoid flickering
 	var scene_key: String = "%s/%s/%s" % [str(sess.get("client", {}).get("id", "")), str(sess.get("playerId", "")), str(sess.get("step", ""))]
 	if scene_key != _fade_key:
 		_fade_key = scene_key
@@ -195,28 +195,28 @@ func _build_header(actor_name: String) -> void:
 	var twist: Dictionary = _sess.get("twist", {}) if _sess.get("twist") is Dictionary else {}
 	var m_dict: Dictionary = _sess.get("metrics", {}) if _sess.get("metrics") is Dictionary else {}
 
-	# 客戶檔案卡外框
+	# Client profile card frame
 	var card_panel := UI.panel(Color("#0d2432"), 14, 8 if is_phone else 10)
 	card_panel.add_theme_stylebox_override("panel", UI.box(Color("#0d2432"), 14, UI.GOLD if referral else Color("#1e475b"), 8))
 	card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	# 桌面版壓成一列，手機直向可兩列
+	# Desktop single row, phone portrait two rows
 	if not is_phone:
-		# 桌面版一列：頭像 64px ＋ 客戶資訊 ＋ 五力迷你條
+		# Desktop single row: avatar 64px + client info + mini competency bars
 		var h_row := UI.hbox(10)
 		h_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		card_panel.add_child(h_row)
 
-		# 頭像 64px
+		# Avatar 64px
 		var avatar_box := UI.portrait(c, 64)
 		h_row.add_child(avatar_box)
 
-		# 資訊欄
+		# Info column
 		var info_v := UI.vbox(2)
 		info_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-		# 第 1 行：姓名、年齡、職業、標籤、動態情境 (twist)
-		# 流式排版：放不下時整個標籤換行；標籤本身不換行，避免被壓成一字一行
+		# Line 1: name, age, job, tag, dynamic life twist
+		# Flow layout: wrap whole tags if overflowing; individual tags don't wrap to prevent single-char columns
 		var top_line := HFlowContainer.new()
 		top_line.add_theme_constant_override("h_separation", 6)
 		top_line.add_theme_constant_override("v_separation", 4)
@@ -234,7 +234,7 @@ func _build_header(actor_name: String) -> void:
 			tag_p.add_child(UI.label("［%s］" % tag_str, 11, UI.ACCENT_2))
 			top_line.add_child(tag_p)
 
-		# 動態人生變數情境標籤 (twist title)
+		# Dynamic life variable twist tag (twist title)
 		if not twist.is_empty() and twist.get("title") != null:
 			var tw_p := UI.panel(Color("#2e2614"), 6, 2)
 			tw_p.add_theme_stylebox_override("panel", UI.box(Color("#2e2614"), 6, UI.GOLD, 2, false))
@@ -259,7 +259,7 @@ func _build_header(actor_name: String) -> void:
 
 		info_v.add_child(top_line)
 
-		# 第 2 行：核心目標一句話
+		# Line 2: core goal one-liner
 		var goal_str: String = str(c.get("goal", ""))
 		var amount_str: String = str(c.get("amount", ""))
 		if goal_str != "":
@@ -272,7 +272,7 @@ func _build_header(actor_name: String) -> void:
 
 		h_row.add_child(info_v)
 
-		# 五力條改為一列 5 個迷你條
+		# Five competencies as a row of 5 mini bars
 		_metrics = UI.hbox(6)
 		_metrics.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		for k: String in ["trust", "insight", "fit", "risk", "compliance"]:
@@ -291,7 +291,7 @@ func _build_header(actor_name: String) -> void:
 		h_row.add_child(_metrics)
 
 	else:
-		# 手機直向兩列：上列頭像與檔案、下列五力迷你條
+		# Phone portrait two rows: top row avatar and profile, bottom row mini competency bars
 		var v_all := UI.vbox(6)
 		card_panel.add_child(v_all)
 
@@ -326,7 +326,7 @@ func _build_header(actor_name: String) -> void:
 		top_row.add_child(info_v)
 		v_all.add_child(top_row)
 
-		# 下列 5 個迷你五力條
+		# Bottom row 5 mini competency bars
 		_metrics = UI.hbox(4)
 		_metrics.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		for k: String in ["trust", "insight", "fit", "risk", "compliance"]:
@@ -353,7 +353,7 @@ func _build_steps() -> void:
 	var cur_step: String = str(_sess.get("step", ""))
 	var is_phone: bool = UI.is_phone_portrait()
 	var step_keys := ["discover", "plan", "objection", "result"]
-	# 編號由左側圖示（✓／●／數字）顯示，名稱不再重複編號
+	# Steps numbered by left icons (✓/●/number); names omit redundant numbers
 	var step_names := ["訪談線索", "方案配置", "異議處理", "結果預演"]
 	var cur_idx: int = step_keys.find(cur_step)
 	if cur_idx < 0:
@@ -451,7 +451,7 @@ func _section(title: String) -> VBoxContainer:
 	return v
 
 
-# ───────── ① 線索與訪談 ─────────
+# ───────── ① Clues and Interview ─────────
 
 func _build_discover() -> void:
 	var clues: Array = _sess.get("clues", [])
@@ -467,13 +467,13 @@ func _build_discover() -> void:
 	else:
 		_build_clues_grid(clues, observed)
 
-	# ───────── 對話串 ─────────
+	# ───────── Dialogue Thread ─────────
 	var dv := _section("◎ 需求訪談對話串")
 	var c_short: String = str(c_dict.get("short", c_dict.get("name", "客戶")))
 	var twist_dict: Dictionary = _sess.get("twist", {}) if _sess.get("twist") is Dictionary else {}
 	var has_twist: bool = not twist_dict.is_empty() and twist_dict.get("hint") != null
 
-	# 客戶開場訊息
+	# Client opening message
 	var open_row := UI.hbox(8)
 	open_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	open_row.add_child(UI.portrait(c_dict, 36))
@@ -496,7 +496,7 @@ func _build_discover() -> void:
 	open_row.add_child(open_v)
 	dv.add_child(open_row)
 
-	# 歷史對話串
+	# Dialogue history
 	var asked: Array = _sess.get("asked", [])
 	var idx: int = 0
 	for a: Dictionary in asked:
@@ -504,7 +504,7 @@ func _build_discover() -> void:
 		var ans_text: String = str(a.get("answer", ""))
 		var a_idx: int = idx
 
-		# 1. 顧問發言（在右側，藍色泡泡）
+		# 1. Advisor statement (right side, blue bubble)
 		var cons_row := UI.hbox(8)
 		cons_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cons_row.add_child(UI.spacer())
@@ -518,7 +518,7 @@ func _build_discover() -> void:
 		cons_bubble.add_child(q_lbl)
 		cons_v.add_child(cons_bubble)
 
-		# 合規燈號與短評
+		# Compliance indicator and short review
 		var comp_level: String = str(a.get("compliance", ""))
 		if comp_level == "" or comp_level == "null":
 			comp_level = Compliance.check(q_text).level
@@ -531,7 +531,7 @@ func _build_discover() -> void:
 		badge_p.add_child(UI.label(Compliance.level_tag(comp_level), 11, badge_col))
 		comp_h.add_child(badge_p)
 
-		# 展開合規分析
+		# Expand compliance analysis
 		var comp_issues: Array = a.get("issues", []) as Array if a.get("issues") != null else []
 		if comp_issues.is_empty():
 			comp_issues = Compliance.check(q_text).issues
@@ -546,7 +546,7 @@ func _build_discover() -> void:
 
 		cons_v.add_child(comp_h)
 
-		# 展開的 Issues 清單
+		# Expanded issues list
 		if bool(_expanded_compliance_issues.get(a_idx, false)) and not comp_issues.is_empty():
 			var issues_p := UI.panel(Color("#0d202c"), 8, 8)
 			issues_p.add_theme_stylebox_override("panel", UI.box(Color("#0d202c"), 8, badge_col, 6, false))
@@ -564,7 +564,7 @@ func _build_discover() -> void:
 			issues_p.add_child(iv_item)
 			cons_v.add_child(issues_p)
 
-		# 教練短評
+		# Coach tip
 		var coach_str: String = str(a.get("coachTip", a.get("note", "")))
 		if coach_str != "" and coach_str != "null":
 			var c_lbl := UI.label("★ 教練短評：" + coach_str, 12, UI.MUTED, true)
@@ -573,7 +573,7 @@ func _build_discover() -> void:
 		cons_row.add_child(cons_v)
 		dv.add_child(cons_row)
 
-		# 2. 客戶回覆（在左側，淺色泡泡）
+		# 2. Client response (left side, light bubble)
 		var client_row := UI.hbox(8)
 		client_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		client_row.add_child(UI.portrait(c_dict, 36))
@@ -605,7 +605,7 @@ func _build_discover() -> void:
 
 		idx += 1
 
-	# 本地即時雷達發言（送出中）
+	# Local real-time radar statement (sending)
 	if _waiting_ai and not _pending_talk.is_empty():
 		var pend_row := UI.hbox(8)
 		pend_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -632,7 +632,7 @@ func _build_discover() -> void:
 		pend_row.add_child(pend_v)
 		dv.add_child(pend_row)
 
-	# 等待 AI 打字思考動畫
+	# Waiting for AI typing animation
 	_think_label = null
 	if _waiting_ai or bool(_sess.get("aiBusy", false)) or _streaming():
 		var think_row := UI.hbox(8)
@@ -645,7 +645,7 @@ func _build_discover() -> void:
 
 		var think_bubble := UI.panel(Color("#0e2b3b"), 10, 8)
 		think_bubble.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		# 串流中：客戶回答逐字出現；還沒收到第一段前顯示「思考中」
+		# Streaming: client answer appears word by word; shows "thinking" before first chunk
 		_think_label = UI.label(_stream_text if _streaming() else "客戶思考中……", 14, UI.TEXT if _streaming() else UI.GOLD, true)
 		think_bubble.add_child(_think_label)
 		think_v.add_child(think_bubble)
@@ -653,7 +653,7 @@ func _build_discover() -> void:
 		think_row.add_child(think_v)
 		dv.add_child(think_row)
 
-	# ───────── 底部輸入區 ─────────
+	# ───────── Bottom Input Area ─────────
 	var talk_left: int = int(_sess.get("talkLeft", 3))
 	var iv := _section("◎ 顧問發言與提問（剩 %d 輪）" % talk_left)
 
@@ -687,7 +687,7 @@ func _build_discover() -> void:
 			b.text = "✓ " + qtext
 		iv.add_child(b)
 
-	# 自由輸入列
+	# Free-form input row
 	if _actor:
 		if talk_left > 0:
 			iv.add_child(UI.label("自由提問／溝通：", 13, UI.MUTED))
@@ -703,7 +703,7 @@ func _build_discover() -> void:
 	else:
 		iv.add_child(UI.label("（只有面談中的顧問可以發言）", 13, UI.MUTED))
 
-	# 進入方案配置按鈕
+	# Proceed to plan allocation button
 	var ready_to_plan: bool = bool(_sess.get("ready", false)) or talk_left <= 0
 	var go := UI.button("進入方案配置 →", func(): Net.act({"type": "to_plan"}), 18)
 	go.disabled = not _actor or not ready_to_plan
@@ -776,14 +776,14 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 		cv.add_child(thumb_card)
 		return
 
-	# 使用 AspectRatioContainer 嚴格鎖定 16:9，確保無論視窗寬窄或解析度，熱點框位與插圖物件 1:1 精準對齊
-	# 依插圖原始比例顯示（16:9 或 1:1 生成圖都不變形），熱點百分比座標因此與物件對齊
+	# Use AspectRatioContainer locked to 16:9 to guarantee hotspot boxes align 1:1 with illustration objects across resolutions
+	# Display at native aspect ratio (neither 16:9 nor 1:1 distorted) so percentage hotspot coords align with objects
 	var scene_tex: Texture2D = load(scene_path)
 	var img_ratio: float = 16.0 / 9.0
 	if scene_tex and scene_tex.get_height() > 0:
 		img_ratio = float(scene_tex.get_width()) / float(scene_tex.get_height())
 	var aspect_h: float = 240.0 if UI.is_phone_portrait() else (320.0 if UI.is_portrait() else 380.0)
-	# 方形圖在同樣高度下太小，放大高度讓熱點好點
+	# Square images appear too small at default height; increase height for easier clicking
 	if img_ratio < 1.4:
 		aspect_h *= 1.35
 	var arc := AspectRatioContainer.new()
@@ -797,7 +797,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 
 	var scene_box := Control.new()
 	scene_box.clip_contents = true
-	# 預設 STOP 會吃掉滾輪，讓外層 ScrollContainer 無法捲動
+	# Default STOP consumes wheel events, preventing outer ScrollContainer from scrolling
 	scene_box.mouse_filter = Control.MOUSE_FILTER_PASS
 	arc.add_child(scene_box)
 
@@ -829,7 +829,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 		btn.offset_right = 0
 		btn.offset_bottom = 0
 
-		# 不可設 flat：flat 按鈕不繪製 stylebox，外框會整個消失
+		# Do not set flat: flat buttons omit stylebox, making borders disappear completely
 		btn.text = ""
 		btn.mouse_filter = Control.MOUSE_FILTER_PASS
 
@@ -846,7 +846,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 			btn.add_theme_stylebox_override("focus", obs_sb)
 			btn.disabled = true
 
-			# 標籤放在框的上緣小標，不要蓋住插圖中的物件
+			# Put tag as small label at top edge so it does not obscure illustration objects
 			var tag_p := PanelContainer.new()
 			var tag_sb := UI.box(border_col.darkened(0.2), 4, Color(0, 0, 0, 0), 2)
 			tag_p.add_theme_stylebox_override("panel", tag_sb)
@@ -856,7 +856,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 			tag_p.add_child(tag_lbl)
 			btn.add_child(tag_p)
 		else:
-			# 未揭露：淡色金黃外框＋極淡填色 (alpha <= 0.12)，滑過時加亮
+			# Undiscovered: subtle gold border + faint fill (alpha <= 0.12), highlighted on hover
 			var unobs_fill := Color(0.95, 0.75, 0.3, 0.08)
 			var unobs_border := Color(0.95, 0.75, 0.3, 0.55)
 			var unobs_normal := UI.box(unobs_fill, 6, unobs_border, 2)
@@ -869,7 +869,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 			btn.add_theme_stylebox_override("disabled", unobs_disabled)
 			btn.add_theme_stylebox_override("focus", unobs_normal)
 
-			# 框上緣小標
+			# Top border small badge
 			var hint_p := PanelContainer.new()
 			var hint_sb := UI.box(Color(0.08, 0.20, 0.28, 0.75), 4, Color(0.95, 0.75, 0.3, 0.35), 2)
 			hint_p.add_theme_stylebox_override("panel", hint_sb)
@@ -908,7 +908,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 		cv.add_child(UI.label("提示：請在上方畫面上點選發光的黃框區域探索線索！", 13, UI.MUTED, true))
 
 
-# ───────── ② 方案配置 ─────────
+# ───────── ② Plan Allocation ─────────
 
 func _build_plan() -> void:
 	var key: String = str(_sess.get("client", {}).get("id", ""))
@@ -945,14 +945,14 @@ func _build_plan() -> void:
 	var cv := _section("")
 	_plan_ui["cards_title"] = cv.get_child(0)
 	var grid := GridContainer.new()
-	# 手機直向 480 寬用 1 欄，平板直向 2 欄，橫向 3 欄
+	# Phone portrait 480 width uses 1 column, tablet portrait 2 columns, landscape 3 columns
 	grid.columns = 1 if UI.is_phone_portrait() else (2 if UI.is_portrait() else 3)
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 8)
 	for card: Dictionary in Net.static_data.get("cards", []):
 		var cid: String = str(card.get("id", ""))
 		var b := UI.option_button("", func(): _toggle(cid))
-		# 1 欄時高度 80 即充足，2 欄時需 110
+		# 1 column needs 80 height, 2 columns need 110
 		var min_h: int = 80 if UI.is_phone_portrait() else (110 if UI.is_portrait() else 96)
 		b.custom_minimum_size = Vector2(0, min_h)
 		b.add_theme_font_size_override("font_size", 13)
@@ -971,7 +971,7 @@ func _build_plan() -> void:
 	_sync_plan()
 
 
-## 只更新文字與按鈕狀態，不重建節點（維持原本避免連點漏點的做法）
+## Only updates text and button states without rebuilding nodes (prevents missing rapid clicks)
 func _sync_plan() -> void:
 	var left: int = 10 - int(_alloc["cash"]) - int(_alloc["protect"]) - int(_alloc["growth"])
 	(_plan_ui["alloc_title"] as Label).text = "◎ 分配 10 枚資源幣（剩 %d 枚）" % left
@@ -1013,7 +1013,7 @@ func _toggle(cid: String) -> void:
 	_sync_plan()
 
 
-# ───────── ③ 異議處理 ─────────
+# ───────── ③ Objection Handling ─────────
 
 func _build_objection() -> void:
 	var o: Dictionary = _sess.get("objection", {})
@@ -1056,7 +1056,7 @@ func _card_names(ids: Array) -> String:
 	return "、".join(names)
 
 
-# ───────── ④ 結果與壓力預演 ─────────
+# ───────── ④ Results and Stress Test ─────────
 
 func _build_result() -> void:
 	var r: Dictionary = _sess.get("result", {})
@@ -1092,13 +1092,13 @@ func _build_result() -> void:
 	stamp_row.add_child(status_stamp)
 	tv.add_child(stamp_row)
 
-	# 數字滾動演出 (0.45s)
+	# Number rolling animation (0.45s)
 	var score_tw := create_tween()
 	score_tw.tween_method(func(val: int):
 		score_lbl.text = "評分 %d 分" % val
 	, 0, final_score, 0.45).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
-	# 印章蓋下彈跳與微震動動畫 (0.24s)
+	# Stamp bounce and subtle vibration animation (0.24s)
 	status_stamp.pivot_offset = Vector2(40, 14)
 	status_stamp.scale = Vector2(1.8, 1.8)
 	status_stamp.modulate.a = 0.0
@@ -1119,7 +1119,7 @@ func _build_result() -> void:
 	top.add_child(tv)
 	_content.add_child(top)
 
-	# 顯示旁觀者競猜命中名單
+	# Display spectator prediction hit list
 	var hits: Array = r.get("predictionHits", []) if r.get("predictionHits") is Array else []
 	if not hits.is_empty():
 		var hit_box := UI.panel(UI.GOOD.darkened(0.65), 10, 8)
@@ -1133,7 +1133,7 @@ func _build_result() -> void:
 		v.add_child(UI.label(str(rep.get("title", "")), 16 if is_phone else 17, UI.tone_color(str(rep.get("quality", "")))))
 		v.add_child(UI.label(str(rep.get("body", "")), 14, UI.TEXT, true))
 
-	# 壓力預演視覺化：對撞圖表演出
+	# Stress test visualization: clash comparison display
 	var stress: Array = _sess.get("stress", []) if _sess.get("stress") != null else []
 	if not stress.is_empty():
 		var sv := _section("◎ 90 天壓力預演（事件承接測試）")
@@ -1153,7 +1153,7 @@ func _build_result() -> void:
 			h.add_child(UI.label(tag_text, 13 if is_phone else 14, UI.tone_color(tone)))
 			cv.add_child(h)
 
-			# 視覺對撞比較：需求 vs 防禦
+			# Visual clash comparison: need vs defense
 			var need_val: float = float(e.get("need", 10.0))
 			var def_val: float = float(e.get("defense", 0.0))
 			var ratio: float = clampf((def_val / maxf(1.0, need_val)) * 100.0, 0.0, 100.0)
@@ -1170,7 +1170,7 @@ func _build_result() -> void:
 			cv.add_child(UI.label(str(e.get("text", "")), 13, UI.MUTED, true))
 			sv.add_child(card)
 
-	# 專屬結局與沒有規劃對比
+	# Dedicated ending and no-plan comparison
 	var ep: Dictionary = r.get("epilogue", {}) if r.get("epilogue") is Dictionary else {}
 	if not ep.is_empty():
 		var ep_v := _section("◎ 人生結局對比")
@@ -1184,7 +1184,7 @@ func _build_result() -> void:
 		var comp_box: BoxContainer = UI.vbox(8) if is_phone else UI.hbox(12)
 		comp_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-		# 沒有規劃
+		# Without a plan
 		var np_card := UI.panel(UI.BAD.darkened(0.7), 10, 10)
 		np_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var np_v := UI.vbox(4)
@@ -1194,7 +1194,7 @@ func _build_result() -> void:
 			np_v.add_child(UI.label("・" + str(item), 13, UI.MUTED, true))
 		comp_box.add_child(np_card)
 
-		# 你的方案
+		# Your advisor plan
 		var pl_card := UI.panel(UI.GOOD.darkened(0.7), 10, 10)
 		pl_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var pl_v := UI.vbox(4)
@@ -1206,7 +1206,7 @@ func _build_result() -> void:
 
 		ep_v.add_child(comp_box)
 
-	# 十年後的信（信紙風格卡片）
+	# Letter from ten years later (letter paper style card)
 	var letter_data: Dictionary = r.get("letter", {}) if r.get("letter") is Dictionary else {}
 	if not letter_data.is_empty():
 		var c_name: String = str(_sess.get("client", {}).get("name", "客戶"))

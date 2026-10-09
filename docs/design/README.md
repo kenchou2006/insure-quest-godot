@@ -1,29 +1,29 @@
-# 遊戲性與 AI 改版：Claude × agy 討論結論（2026-10-09）
+# Gameplay and AI Revamp: Claude × agy Discussion Conclusions (2026-10-09)
 
-討論紀錄：round1-claude.md → round1-agy.md → round2-claude.md → round2-agy.md（含合併呼叫的 Zod schema 與 system prompt 大綱）。
+Discussion log: round1-claude.md → round1-agy.md → round2-claude.md → round2-agy.md (includes Zod schema and system prompt outline for combined calls).
 
-## 診斷（雙方一致）
-1. AI 只是點綴：一場面談只在 1 次自由提問＋1 次異議回應用到 AI，其餘都是選擇題。
-2. 最佳解可以背：5 選 3、10 枚幣、卡片組合都是固定答案。
-3. 棋盤與面談脫節；面談面板把棋盤整個遮住。
-4. 配置錯了只會扣分，玩家感受不到後果。
+## Diagnosis (Consensus Between Both Parties)
+1. AI is merely decorative: Across an entire interview, AI is used only for 1 open-ended question + 1 objection response; everything else is multiple choice.
+2. Optimal solutions can be memorized: Pick 3 out of 5, 10 resource coins, and card combinations all have fixed answers.
+3. The board is disconnected from interviews; the interview panel completely conceals the board.
+4. Allocation errors only deduct points; players do not feel the consequences.
 
-## 初賽前必做
-| # | 項目 | 量 | 對應評分 |
+## Must-Dos Before Preliminary Round
+| # | Item | Scope | Relevant Scoring |
 |---|---|---|---|
-| 1 | **混合式 3 輪對話＋合規雷達（合併成一次 LLM 呼叫）**：建議問句按鈕＋自由輸入；一次回傳客戶回答、揭露線索、信任／洞察變化、合規燈號（條文與改寫建議）、教練短評。前端先用規則版關鍵字即時亮燈，AI 結果到了再覆蓋。每場面談 AI 呼叫 ≤ 3 次。 | M–L | AI 20%、體驗 40%、落地 20% |
-| 2 | **十年後的信**：由規則引擎決定結局與缺口金額，AI 只負責寫信；訪客使用模板信。 | S | 影片 10%、體驗 40% |
-| 3 | **動態人生變數**：客戶隨機掛 1 個情境 Tag，影響壓力測試門檻並寫進 AI persona；用單元測試鎖住資深電腦仍為 good。 | S | 創意、重玩性 |
-| 4 | **介面微創手術**：面談改成視覺小說式對話氣泡；任務卡平時收合、面談時自動收合；客戶卡與五力條改成一列；桌面版面談面板只佔 65%，保留棋盤縮圖；步驟條（已修）。 | M | 體驗 40% |
-| 5 | **場景插圖**：meiling、yixiang、peishan 的圖中沒有線索物件 → 重新生成，或把線索改成圖中實際有的物件；guohua 已校正。AI 圖的亂碼文字以重新生成或裁切處理。 | S–M | 體驗 40% |
-| 6 | **評審能體驗到 AI**（待使用者決定，見下方） | S | AI 20–30% |
-| 7 | 2.5 分鐘展示影片：對話 → 違規亮紅燈並修正 → 十年後的信 | — | 影片 10% |
+| 1 | **Hybrid 3-Round Dialogue + Compliance Radar (Combined into a single LLM call)**: Suggested question buttons + free-form input; returns client response, revealed clues, trust / insight changes, compliance indicator (rules citations and phrasing suggestions), and coach brief feedback in a single call. Frontend uses rules-based keywords for immediate indicator lighting, overwritten once AI results arrive. AI calls per interview ≤ 3. | M–L | AI 20%, Experience 40%, Feasibility 20% |
+| 2 | **Letter from ten years later**: Rule engine determines the outcome and shortfall amount, while AI is solely responsible for drafting the letter; guests use template letters. | S | Video 10%, Experience 40% |
+| 3 | **Dynamic Life Variables**: Clients are randomly assigned 1 scenario Tag, which affects the stress test threshold and is injected into the AI persona; unit tests lock senior bot advisor performance to remain good. | S | Creativity, Replayability |
+| 4 | **UI Keyhole Surgery**: Interviews switch to visual novel-style speech bubbles; quest cards collapsed by default and auto-collapse during interviews; client cards and Five Powers bars condensed into a single row; desktop interview panel occupies only 65%, keeping board thumbnail visible; step bar (already fixed). | M | Experience 40% |
+| 5 | **Scene Illustrations**: Illustrations for meiling, yixiang, and peishan lack clue objects → regenerate, or update clues to match objects actually present in the images; guohua already calibrated. Garbled text in AI images addressed via regeneration or cropping. | S–M | Experience 40% |
+| 6 | **Judges can experience AI** (Pending user decision; see below) | S | AI 20–30% |
+| 7 | 2.5-minute demo video: Dialogue → violation triggers red light and correction → letter from ten years later | — | Video 10% |
 
-## 複賽前再做
-Vectorize RAG（金管會裁罰案例與招攬規範）、講師後台（全班弱點熱力圖、派發對症客戶作業）、同行健檢挑錯（取代猜評級）、顧問錦囊牌、語音模式（Whisper＋TTS）。
+## Do Before Semi-Finals
+Vectorize RAG (FSC penalty cases and solicitation regulations), trainer dashboard (class-wide weakness heatmap, targeted client assignment), peer health check review (replacing rating predictions), advisor strategy cards, voice mode (Whisper + TTS).
 
-## 不做
-兩名顧問即時比稿搶同一位客戶（同步阻斷、斷線時房間會卡死）、全面重寫 UI。
+## Will Not Do
+Two advisors competing in real-time pitches for the same client (synchronous blocking; room freezes on disconnection), complete UI rewrite.
 
-## 待使用者決定
-- 目前「未登入＝無 AI」。如果評審以訪客身分試玩，會完全看不到 AI。建議加**評審體驗碼**（`DEMO_CODES` 環境變數，輸入後給約 30 次額度，仍需登入或綁定裝置）。
+## Pending User Decision
+- Currently, "Not logged in = No AI". If judges test the game as guests, they will not see any AI features. It is recommended to add a **Judge Demo Code** (`DEMO_CODES` environment variable, granting ~30 quota calls upon entry, still requiring login or device binding).

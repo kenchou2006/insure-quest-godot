@@ -1,44 +1,44 @@
 @tool
 extends Control
-## 培訓紀錄：學習檔案（成長總覽、趨勢折線圖、客戶圖鑑、歷次面談重播）與講師學員管理。
+## Training records: learning portfolio (growth overview, trend chart, client codex, historical interview replay) and trainer learner management.
 
 var main: Node
 var target_user_id: String = ""
 var target_user_name: String = ""
 
-# UI 參照
+# UI references
 var _outer_v: VBoxContainer
-var _tabs_bar: HBoxContainer
+var _tabs_bar: Container
 var _tab_buttons: Array = []
 var _body_area: Control
-var _current_tab: int = 0  # 目前分頁在 _tab_ids 中的位置
-## 分頁代號（依顯示順序）：overview 成長總覽、codex 客戶圖鑑、history 歷次紀錄、ai AI 使用、trainer 全部學員
+var _current_tab: int = 0  # Current tab position in _tab_ids
+## Tab IDs (in display order): overview (growth overview), codex (client codex), history (historical records), ai (AI usage), trainer (all learners)
 var _tab_ids: Array = []
 
-# 歷次紀錄 UI 參照
+# Historical records UI references
 var _history_list: VBoxContainer
 var _history_detail: VBoxContainer
 var _history_filter: LineEdit
 
-# 全部學員 UI 參照
+# All learners UI references
 var _trainer_list: VBoxContainer
 var _trainer_filter: LineEdit
 
-# 資料快取
+# Data cache
 var _profile: Dictionary = {}
 var _records: Array = []
 var _all_records: Array = []
 var _selected_record: Dictionary = {}
-## 伺服器提供的弱點標籤中文名稱（tag → label）
+## Chinese labels of weakness tags provided by server (tag -> label)
 var _tag_labels: Dictionary = {}
 
 
-## 分數成長趨勢折線圖元件（自繪 Control）
+## Score growth trend line chart component (custom-drawn Control)
 class TrendChart extends Control:
 	var trend_data: Array = []
 
 	func _init() -> void:
-		# 讓滾輪事件穿過圖表，交給外層 ScrollContainer
+		# Allow scroll wheel events to pass through chart to outer ScrollContainer
 		mouse_filter = Control.MOUSE_FILTER_PASS
 
 	func set_data(data: Array) -> void:
@@ -56,11 +56,11 @@ class TrendChart extends Control:
 		var plot_w: float = size.x - pad_left - pad_right
 		var plot_h: float = size.y - pad_top - pad_bottom
 
-		# 底色與邊框
+		# Background and border
 		draw_rect(Rect2(0, 0, size.x, size.y), Color("#0d2432"), true)
 		draw_rect(Rect2(0, 0, size.x, size.y), Color("#1b4052"), false, 1.0)
 
-		# 水平刻度線（0, 50, 100 分）
+		# Horizontal scale lines (0, 50, 100 points)
 		for val: int in [0, 50, 100]:
 			var y: float = pad_top + plot_h * (1.0 - float(val) / 100.0)
 			draw_line(Vector2(pad_left, y), Vector2(size.x - pad_right, y), Color("#1b4052", 0.6), 1.0)
@@ -80,13 +80,13 @@ class TrendChart extends Control:
 			var y: float = pad_top + plot_h * (1.0 - score / 100.0)
 			points.append(Vector2(x, y))
 
-		# 繪製折線
+		# Draw polyline
 		if points.size() > 1:
 			draw_polyline(points, UI.ACCENT_2, 2.5, true)
 		elif points.size() == 1:
 			draw_circle(points[0], 5.0, UI.ACCENT_2)
 
-		# 繪製節點、評級標籤與場次
+		# Draw nodes, grade labels, and match indices
 		for i: int in points.size():
 			var pt: Vector2 = points[i]
 			var item: Dictionary = trend_data[i]
@@ -122,36 +122,44 @@ func _build_ui() -> void:
 	_outer_v = UI.vbox(10)
 	m.add_child(_outer_v)
 
-	# 頂部列
-	var head := UI.hbox(10)
+	# Top bar
+	var head := UI.hbox(8 if UI.is_phone_portrait() else 10)
+	head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var title_text: String = "培訓紀錄"
 	if target_user_name != "":
 		title_text = "學員成長檔案：%s" % target_user_name
-	head.add_child(UI.label(title_text, 20 if UI.is_phone_portrait() else (24 if portrait else 28), UI.ACCENT_2))
+	var title_fs: int = 18 if UI.is_phone_portrait() else (24 if portrait else 28)
+	head.add_child(UI.label(title_text, title_fs, UI.ACCENT_2))
 
 	if target_user_id != "" and target_user_id != Net.get_user().get("id", ""):
-		head.add_child(UI.button("← 返回學員清單", func():
+		head.add_child(UI.button("← 返回" if UI.is_phone_portrait() else "← 返回學員清單", func():
 			target_user_id = ""
 			target_user_name = ""
 			_current_tab = maxi(0, _tab_ids.find("trainer"))
 			_build_ui()
-		, 14, UI.PANEL_2))
+		, 13 if UI.is_phone_portrait() else 14, UI.PANEL_2))
 
 	head.add_child(UI.spacer())
-	head.add_child(UI.button("回主選單", func(): main.show_menu(), 15))
+	head.add_child(UI.button("回主選單", func(): main.show_menu(), 13 if UI.is_phone_portrait() else 15))
 	_outer_v.add_child(head)
 
-	# 未登入且無指定學員：顯示登入引導卡
+	# Not logged in and no specified learner: display login guide card
 	if not Net.is_logged_in() and target_user_id == "":
 		_build_unauth_view()
 		return
 
-	# 分頁標籤列
-	_tabs_bar = UI.hbox(8)
+	# Tab bar (flow layout in phone portrait to prevent overflow)
+	if UI.is_phone_portrait():
+		var flow := HFlowContainer.new()
+		flow.add_theme_constant_override("h_separation", 6)
+		flow.add_theme_constant_override("v_separation", 6)
+		_tabs_bar = flow
+	else:
+		_tabs_bar = UI.hbox(8)
 	_tab_buttons.clear()
 	var tabs: Array = ["成長總覽", "客戶圖鑑", "歷次紀錄"]
 	_tab_ids = ["overview", "codex", "history"]
-	# AI 使用紀錄只看自己的（講師檢視學員時不顯示）
+	# AI usage records are only viewed for oneself (hidden when trainer views a learner)
 	if target_user_id == "" or target_user_id == str(Net.get_user().get("id", "")):
 		tabs.append("AI 使用")
 		_tab_ids.append("ai")
@@ -163,13 +171,15 @@ func _build_ui() -> void:
 	for i: int in tabs.size():
 		var idx: int = i
 		var t_name: String = tabs[idx]
-		var b: Button = UI.button(t_name, func(): _switch_tab(idx), 14, UI.ACCENT if _current_tab == idx else UI.PANEL_2)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var b: Button = UI.button(t_name, func(): _switch_tab(idx), 13 if UI.is_phone_portrait() else 14, UI.ACCENT if _current_tab == idx else UI.PANEL_2)
+		b.custom_minimum_size = Vector2(0, 36 if UI.is_phone_portrait() else 40)
+		if not UI.is_phone_portrait():
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_tab_buttons.append(b)
 		_tabs_bar.add_child(b)
 	_outer_v.add_child(_tabs_bar)
 
-	# 必須是 Container，子節點（ScrollContainer）才會填滿；一般 Control 會讓內容尺寸為 0
+	# Must be Container for children (ScrollContainer) to fill; regular Control leaves content size at 0
 	_body_area = MarginContainer.new()
 	_body_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_body_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -244,7 +254,7 @@ func _switch_tab(tab_idx: int) -> void:
 
 
 # ──────────────────────────────────────────────────────────────────
-# 分頁 0：成長總覽
+# Tab 0: Growth overview
 # ──────────────────────────────────────────────────────────────────
 
 func _render_overview_tab() -> void:
@@ -263,7 +273,7 @@ func _render_overview_tab() -> void:
 
 	_profile = res[1] if res[1] is Dictionary else {}
 
-	# 1. 關鍵數字 KPI 列
+	# 1. Key metrics KPI row
 	var kpi_flow: BoxContainer
 	if UI.is_phone_portrait():
 		kpi_flow = UI.vbox(8)
@@ -287,7 +297,7 @@ func _render_overview_tab() -> void:
 	kpi_flow.add_child(_make_kpi_card("合規測驗答對率", quiz_str, UI.INFO))
 	content.add_child(kpi_flow)
 
-	# 2. 分數趨勢折線圖卡片
+	# 2. Score trend line chart card
 	var trend_card := UI.panel(UI.PANEL, 14, 14)
 	var trend_v := UI.vbox(8)
 	trend_card.add_child(trend_v)
@@ -302,7 +312,7 @@ func _render_overview_tab() -> void:
 	trend_v.add_child(chart)
 	content.add_child(trend_card)
 
-	# 3. 最新五力分析能力指標卡片
+	# 3. Latest five-dimensional competency metric card
 	var skill_card := UI.panel(UI.PANEL, 14, 14)
 	var skill_v := UI.vbox(8)
 	skill_card.add_child(skill_v)
@@ -318,7 +328,7 @@ func _render_overview_tab() -> void:
 		skill_v.add_child(UI.metric_row(k, float(latest_skill.get(k, 0))))
 	content.add_child(skill_card)
 
-	# 4. 常見盲點與改進建議
+	# 4. Common blind spots and improvement suggestions
 	var mistakes_card := UI.panel(UI.PANEL, 14, 14)
 	var mistakes_v := UI.vbox(10)
 	mistakes_card.add_child(mistakes_v)
@@ -337,7 +347,7 @@ func _render_overview_tab() -> void:
 			mistakes_v.add_child(m_box)
 	content.add_child(mistakes_card)
 
-	# 5. 顧問成就徽章牆
+	# 5. Advisor achievement badge wall
 	var badges_card := UI.panel(UI.PANEL, 14, 14)
 	var badges_v := UI.vbox(10)
 	badges_card.add_child(badges_v)
@@ -380,7 +390,7 @@ func _make_kpi_card(title: String, val: String, val_color: Color) -> PanelContai
 
 
 # ──────────────────────────────────────────────────────────────────
-# AI 使用紀錄：今日額度、各供應者呼叫次數、近 7 天
+# AI usage records: today quota, provider call counts, last 7 days
 # ──────────────────────────────────────────────────────────────────
 
 const PROVIDER_NAMES := {
@@ -416,17 +426,17 @@ func _render_ai_tab() -> void:
 	for k in today_calls:
 		total_today += int(today_calls[k])
 
-	# 今日額度
+	# Today quota
 	var qp := UI.panel(UI.PANEL, 14, 14)
 	var qv := UI.vbox(8)
 	qp.add_child(qv)
 	qv.add_child(UI.label("今日 AI 額度（Workers AI 計次）", 17, UI.ACCENT_2))
-	var row := UI.hbox(10)
-	row.add_child(UI.label("已用 %d / %d 次" % [used, limit], 22, UI.TEXT))
+	var row := UI.hbox(8 if UI.is_phone_portrait() else 10)
+	row.add_child(UI.label("已用 %d / %d 次" % [used, limit], 17 if UI.is_phone_portrait() else 22, UI.TEXT))
 	row.add_child(UI.spacer())
-	row.add_child(UI.label("剩餘 %d 次" % remaining, 22, UI.GOOD if remaining > 10 else (UI.OK if remaining > 0 else UI.BAD)))
+	row.add_child(UI.label("剩餘 %d 次" % remaining, 17 if UI.is_phone_portrait() else 22, UI.GOOD if remaining > 10 else (UI.OK if remaining > 0 else UI.BAD)))
 	qv.add_child(row)
-	var bar := UI.bar(100.0 * float(used) / float(maxi(1, limit)), UI.GOOD if remaining > 10 else (UI.OK if remaining > 0 else UI.BAD), 400)
+	var bar := UI.bar(100.0 * float(used) / float(maxi(1, limit)), UI.GOOD if remaining > 10 else (UI.OK if remaining > 0 else UI.BAD), 120 if UI.is_phone_portrait() else 400)
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.custom_minimum_size = Vector2(0, 10)
 	qv.add_child(bar)
@@ -436,7 +446,7 @@ func _render_ai_tab() -> void:
 		qv.add_child(UI.label("※ 今日額度已用完：AI 功能改用規則版，遊戲照常進行。", 13, UI.GOLD, true))
 	content.add_child(qp)
 
-	# 今日各供應者呼叫次數
+	# Today provider call counts
 	var cp := UI.panel(UI.PANEL, 14, 14)
 	var cv := UI.vbox(6)
 	cp.add_child(cv)
@@ -444,24 +454,34 @@ func _render_ai_tab() -> void:
 	if today_calls.is_empty():
 		cv.add_child(UI.label("今天還沒有使用 AI。登入後在面談中自由提問、異議回應、教練提示都會用到 AI。", 13, UI.MUTED, true))
 	for k in today_calls:
-		var r := UI.hbox(8)
-		r.add_child(UI.label(str(PROVIDER_NAMES.get(str(k), str(k))), 14, UI.TEXT))
-		r.add_child(UI.spacer())
-		r.add_child(UI.label("%d 次" % int(today_calls[k]), 14, UI.TEXT))
-		cv.add_child(r)
+		var call_cnt: int = int(today_calls[k])
+		if UI.is_phone_portrait():
+			var r := UI.vbox(2)
+			r.add_child(UI.label(str(PROVIDER_NAMES.get(str(k), str(k))), 13, UI.TEXT, true))
+			var sub_h := UI.hbox(6)
+			sub_h.add_child(UI.spacer())
+			sub_h.add_child(UI.label("%d 次" % call_cnt, 13, UI.GOLD))
+			r.add_child(sub_h)
+			cv.add_child(r)
+		else:
+			var r := UI.hbox(8)
+			r.add_child(UI.label(str(PROVIDER_NAMES.get(str(k), str(k))), 14, UI.TEXT))
+			r.add_child(UI.spacer())
+			r.add_child(UI.label("%d 次" % call_cnt, 14, UI.TEXT))
+			cv.add_child(r)
 	if bool(d.get("nimUnmetered", false)):
 		cv.add_child(UI.label("說明：優先使用 NVIDIA NIM，失敗時改用 NIM 備援模型（DeepSeek，較慢），兩者都不扣每日額度；都失敗時才改用 Workers AI，並扣 1 次額度（失敗會退還）。", 12, UI.MUTED, true))
 	content.add_child(cp)
 
-	# 近 7 天
+	# Last 7 days
 	var hp := UI.panel(UI.PANEL, 14, 14)
 	var hv := UI.vbox(6)
 	hp.add_child(hv)
 	hv.add_child(UI.label("近 7 天", 17, UI.ACCENT_2))
 	var head := UI.hbox(8)
-	head.add_child(UI.label("日期", 13, UI.MUTED))
+	head.add_child(UI.label("日期", 12 if UI.is_phone_portrait() else 13, UI.MUTED))
 	head.add_child(UI.spacer())
-	head.add_child(UI.label("AI 呼叫　｜　計入額度", 13, UI.MUTED))
+	head.add_child(UI.label("呼叫 / 額度" if UI.is_phone_portrait() else "AI 呼叫　｜　計入額度", 12 if UI.is_phone_portrait() else 13, UI.MUTED))
 	hv.add_child(head)
 	var max_calls: int = 1
 	for h: Dictionary in history:
@@ -474,14 +494,16 @@ func _render_ai_tab() -> void:
 		var tot: int = 0
 		for k in (h.get("calls", {}) as Dictionary):
 			tot += int(h["calls"][k])
-		var r := UI.hbox(8)
+		var r := UI.hbox(6 if UI.is_phone_portrait() else 8)
 		var day: String = str(h.get("day", ""))
-		r.add_child(UI.label(day.substr(5).replace("-", "/") + ("（今天）" if i == history.size() - 1 else ""), 14, UI.TEXT))
-		var b := UI.bar(100.0 * float(tot) / float(max_calls), UI.ACCENT_2, 160)
+		var day_txt: String = (day.substr(5).replace("-", "/") + ("（今）" if i == history.size() - 1 else "")) if UI.is_phone_portrait() else (day.substr(5).replace("-", "/") + ("（今天）" if i == history.size() - 1 else ""))
+		r.add_child(UI.label(day_txt, 12 if UI.is_phone_portrait() else 14, UI.TEXT))
+		var b := UI.bar(100.0 * float(tot) / float(max_calls), UI.ACCENT_2, 50 if UI.is_phone_portrait() else 160)
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(b)
-		r.add_child(UI.label("%d 次　｜　%d 次" % [tot, int(h.get("quota", 0))], 14, UI.TEXT))
+		var cnt_txt: String = ("%d / %d 次" % [tot, int(h.get("quota", 0))]) if UI.is_phone_portrait() else ("%d 次　｜　%d 次" % [tot, int(h.get("quota", 0))])
+		r.add_child(UI.label(cnt_txt, 12 if UI.is_phone_portrait() else 14, UI.TEXT))
 		hv.add_child(r)
 	content.add_child(hp)
 
@@ -489,7 +511,7 @@ func _render_ai_tab() -> void:
 
 
 # ──────────────────────────────────────────────────────────────────
-# 分頁 1：客戶圖鑑（18 格）
+# Tab 1: Client codex (18 slots)
 # ──────────────────────────────────────────────────────────────────
 
 func _render_codex_tab() -> void:
@@ -545,7 +567,7 @@ func _render_codex_tab() -> void:
 			v.add_child(UI.label("最佳：%s 級" % best_g, 12, g_col))
 			v.add_child(UI.label("面談：%d 次" % served, 11, UI.TEXT))
 		else:
-			# 未解鎖客戶剪影
+			# Locked client silhouette
 			var mystery := CenterContainer.new()
 			mystery.custom_minimum_size = Vector2(48, 48)
 			var q_bg := UI.panel(Color("#132a36"), 24, 0)
@@ -565,34 +587,40 @@ func _render_codex_tab() -> void:
 
 
 # ──────────────────────────────────────────────────────────────────
-# 分頁 2：歷次紀錄與面談重播
+# Tab 2: Historical records and interview replay
 # ──────────────────────────────────────────────────────────────────
 
 func _render_history_tab() -> void:
 	var portrait: bool = UI.is_portrait()
 
+	var history_main := UI.vbox(8 if UI.is_phone_portrait() else 10)
+	history_main.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	history_main.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_body_area.add_child(history_main)
+
 	var top_filter := UI.hbox(8)
+	top_filter.custom_minimum_size = Vector2(0, 44)
+	top_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_history_filter = LineEdit.new()
-	_history_filter.placeholder_text = "依玩家姓名篩選（空白＝全部）"
+	_history_filter.placeholder_text = "依姓名篩選" if UI.is_phone_portrait() else "依玩家姓名篩選（空白＝全部）"
 	_history_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_history_filter.custom_minimum_size = Vector2(0, 42)
 	_history_filter.text_submitted.connect(func(_t: String): _load_history())
 	top_filter.add_child(_history_filter)
 	top_filter.add_child(UI.button("查詢", _load_history, 14))
-	_body_area.add_child(top_filter)
+	history_main.add_child(top_filter)
 
 	var split_box: BoxContainer
 	if portrait:
-		split_box = UI.vbox(10)
-		top_filter.position = Vector2(0, 0)
+		split_box = UI.vbox(8 if UI.is_phone_portrait() else 10)
 	else:
 		split_box = UI.hbox(12)
 
 	split_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	split_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body_area.add_child(split_box)
+	history_main.add_child(split_box)
 
-	# 左側（或上方）清單
+	# Left (or top) list
 	var left_p := UI.panel()
 	if not portrait:
 		left_p.custom_minimum_size = Vector2(380, 0)
@@ -602,7 +630,7 @@ func _render_history_tab() -> void:
 	left_p.add_child(UI.scroll(_history_list))
 	split_box.add_child(left_p)
 
-	# 右側（或下方）詳情
+	# Right (or bottom) details
 	var right_p := UI.panel()
 	right_p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_history_detail = UI.vbox(8)
@@ -653,7 +681,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 	UI.clear(_history_detail)
 	var d: Dictionary = rec.get("data", {})
 
-	# 1. 頂部總結
+	# 1. Top summary
 	var head_box := UI.panel(UI.PANEL_2, 12, 10)
 	var head_v := UI.vbox(4)
 	head_box.add_child(head_v)
@@ -672,7 +700,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 		head_v.add_child(UI.label(str(d.get("coach", "")), 13, UI.TEXT, true))
 	_history_detail.add_child(head_box)
 
-	# 2. 各場面談重播（sessions）
+	# 2. Per-interview replay (sessions)
 	var sessions: Array = d.get("sessions", [])
 	if not sessions.is_empty():
 		_history_detail.add_child(UI.label("各場面談實戰軌跡（共 %d 場）" % sessions.size(), 16, UI.ACCENT_2))
@@ -682,7 +710,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 			var s_v := UI.vbox(6)
 			s_panel.add_child(s_v)
 
-			# 標題行
+			# Header row
 			var r_title := UI.hbox(8)
 			r_title.add_child(UI.label("R%d｜%s（%s）" % [int(s_item.get("round", 1)), str(s_item.get("clientName", "")), str(s_item.get("job", ""))], 15, UI.ACCENT_2))
 
@@ -702,14 +730,14 @@ func _show_history_detail(rec: Dictionary) -> void:
 			r_title.add_child(UI.label(hint_text, 12, UI.MUTED))
 			s_v.add_child(r_title)
 
-			# 線索探索
+			# Clue exploration
 			var clues_dict: Dictionary = s_item.get("clues", {})
 			var clue_txt: String = "・發現線索 %d 項" % int(clues_dict.get("found", 0))
 			if bool(clues_dict.get("decoy", false)):
 				clue_txt += "（包含誤導資訊）"
 			s_v.add_child(UI.label(clue_txt, 13, UI.MUTED))
 
-			# 提問軌跡
+			# Question history
 			var qs: Array = s_item.get("questions", [])
 			if not qs.is_empty():
 				var q_str: String = "・面談提問："
@@ -723,7 +751,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 			if free_q != null and free_q is Dictionary:
 				s_v.add_child(UI.label("・自由提問：%s → %s" % [str(free_q.get("text", "")), str(free_q.get("note", ""))], 13, UI.INFO, true))
 
-			# 方案配置
+			# Plan allocation
 			var plan: Dictionary = s_item.get("plan", {})
 			var alloc: Dictionary = plan.get("alloc", {})
 			var alloc_txt: String = "・方案配置：現金預備 %d%% / 風險保障 %d%% / 目標成長 %d%%（品質：%s）" % [
@@ -736,7 +764,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 				for note_text: String in plan_notes:
 					s_v.add_child(UI.label("  → %s" % note_text, 12, UI.MUTED, true))
 
-			# 異議處理
+			# Objection handling
 			var obj: Dictionary = s_item.get("objection", {})
 			if not obj.is_empty():
 				var obj_mode_str: String = "自由回應" if str(obj.get("mode", "")) == "free" else "情境選擇"
@@ -745,7 +773,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 				if str(obj.get("text", "")) != "":
 					s_v.add_child(UI.label("  → %s" % str(obj.get("text", "")), 12, UI.TEXT, true))
 
-			# 壓力預演
+			# Stress test
 			var stress_list: Array = s_item.get("stress", [])
 			if not stress_list.is_empty():
 				var st_str: String = "・壓力預演："
@@ -756,7 +784,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 					st_parts.append("%s %s" % [icon, str(st.get("title", ""))])
 				s_v.add_child(UI.label(st_str + "　".join(st_parts), 13, UI.TEXT, true))
 
-			# 標籤
+			# Tags
 			var tags: Array = s_item.get("tags", [])
 			if not tags.is_empty():
 				var labels: Array = tags.map(func(t): return str(_tag_labels.get(str(t), str(t))))
@@ -765,7 +793,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 
 			_history_detail.add_child(s_panel)
 	else:
-		# 相容舊版決策紀錄
+		# Backward compatibility for legacy decision records
 		var ds: Array = d.get("decisions", [])
 		if not ds.is_empty():
 			_history_detail.add_child(UI.label("決策紀錄", 16, UI.ACCENT_2))
@@ -775,7 +803,7 @@ func _show_history_detail(rec: Dictionary) -> void:
 
 
 # ──────────────────────────────────────────────────────────────────
-# 分頁 3：全部學員清單（僅講師）
+# Tab 3: All learners list (trainer only)
 # ──────────────────────────────────────────────────────────────────
 
 func _render_trainer_tab() -> void:
@@ -784,8 +812,10 @@ func _render_trainer_tab() -> void:
 	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
 
 	var top_bar := UI.hbox(8)
+	top_bar.custom_minimum_size = Vector2(0, 44)
+	top_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_trainer_filter = LineEdit.new()
-	_trainer_filter.placeholder_text = "依學員姓名篩選（空白＝全部）"
+	_trainer_filter.placeholder_text = "依姓名篩選" if UI.is_phone_portrait() else "依學員姓名篩選（空白＝全部）"
 	_trainer_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_trainer_filter.custom_minimum_size = Vector2(0, 42)
 	_trainer_filter.text_submitted.connect(func(_t: String): _load_trainer_learners(content))
@@ -803,7 +833,7 @@ func _load_trainer_learners(_container: VBoxContainer) -> void:
 	UI.clear(_trainer_list)
 	_trainer_list.add_child(UI.label("載入全體學員名單中……", 14, UI.MUTED))
 
-	# 先取得全部紀錄 (scope=all)
+	# First fetch all records (scope=all)
 	var filter_text: String = _trainer_filter.text.strip_edges()
 	var res: Array = await Net.fetch_records_scope("all", filter_text)
 
@@ -817,7 +847,7 @@ func _load_trainer_learners(_container: VBoxContainer) -> void:
 		_trainer_list.add_child(UI.label("目前尚無學員紀錄。", 14, UI.MUTED))
 		return
 
-	# 按學員分組統計
+	# Aggregate statistics by learner
 	var user_map: Dictionary = {}
 	for rec_item: Dictionary in recs:
 		var uid: String = str(rec_item.get("userId", ""))
@@ -848,14 +878,15 @@ func _load_trainer_learners(_container: VBoxContainer) -> void:
 
 	_trainer_list.add_child(UI.label("全體學員清單（共 %d 位）" % u_list.size(), 16, UI.ACCENT_2))
 
+	var is_phone := UI.is_phone_portrait()
 	for learner: Dictionary in u_list:
-		var l_card := UI.panel(UI.PANEL_2, 12, 10)
-		var l_h := UI.hbox(10)
-		l_card.add_child(l_h)
+		var l_card := UI.panel(UI.PANEL_2, 12, 8 if is_phone else 10)
+		var l_box: BoxContainer = UI.vbox(6) if is_phone else UI.hbox(10)
+		l_card.add_child(l_box)
 
 		var l_v := UI.vbox(2)
 		l_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		l_h.add_child(l_v)
+		l_box.add_child(l_v)
 
 		var games_num: int = int(learner.get("games", 1))
 		var avg_num: float = float(learner.get("totalScore", 0)) / float(games_num)
@@ -864,7 +895,7 @@ func _load_trainer_learners(_container: VBoxContainer) -> void:
 		var local_ts: int = int(learner.get("lastTs", 0)) / 1000 + int(Time.get_time_zone_from_system().get("bias", 0)) * 60
 		var dt: String = Time.get_datetime_string_from_unix_time(local_ts).replace("T", " ").substr(0, 16)
 
-		l_v.add_child(UI.label(str(learner.get("name", "")), 16, UI.TEXT))
+		l_v.add_child(UI.label(str(learner.get("name", "")), 15 if is_phone else 16, UI.TEXT))
 		l_v.add_child(UI.label("培訓 %d 場・平均 %.1f 分・最佳評級 %s・最近於 %s" % [games_num, avg_num, b_grade, dt], 12, UI.MUTED, true))
 
 		var view_btn: Button = UI.button("查看學習檔案", func():
@@ -872,7 +903,9 @@ func _load_trainer_learners(_container: VBoxContainer) -> void:
 			target_user_name = str(learner.get("name", ""))
 			_current_tab = 0
 			_build_ui()
-		, 14, UI.ACCENT)
-		l_h.add_child(view_btn)
+		, 13 if is_phone else 14, UI.ACCENT)
+		if is_phone:
+			view_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+		l_box.add_child(view_btn)
 
 		_trainer_list.add_child(l_card)

@@ -1,6 +1,6 @@
 @tool
 extends Control
-## 多人大廳：房間代碼、玩家列表、加入電腦顧問、回合數、AI 客戶開關、開始。支援直向與橫向佈局切換。
+## Multiplayer lobby: room code, player list, add bot advisors, rounds, AI client toggle, start. Supports portrait/landscape layout switching.
 
 var main: Node
 var _code_label: Label
@@ -61,7 +61,7 @@ func _build_ui() -> void:
 	code_panel.add_child(ch)
 	v.add_child(code_panel)
 
-	# 內容區（直向用垂直堆疊，橫向用左右分欄）
+	# Content area (vertical stack in portrait, two-column split in landscape)
 	var body_container: Control
 	var body: BoxContainer
 	if portrait:

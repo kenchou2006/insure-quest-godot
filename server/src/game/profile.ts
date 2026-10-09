@@ -1,5 +1,5 @@
-/* INSURE QUEST｜學習檔案：把歷次培訓紀錄彙整成可行動的回饋（純函式，可單元測試）。
- * 有價值的保存重點不是「分數」，而是每場面談的決策軌跡：從中算出弱點標籤、成長趨勢、客戶圖鑑與徽章。
+/* INSURE QUEST | Learning profile: aggregates training records across matches into actionable feedback (pure functions, unit testable).
+ * The valuable preservation focus is not the "score", but decision traces of each interview: deriving weakness tags, growth trends, client pokedex, and badges.
  */
 import type { Metrics, SessionLog } from './types.ts';
 import { CLIENTS } from './data.ts';

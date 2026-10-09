@@ -1,4 +1,4 @@
-/* INSURE QUEST｜評分引擎（純函式）。移植自原型 engine.js，新增單一事件判定供棋盤事件使用。 */
+/* INSURE QUEST | Scoring engine (pure functions). Ported from prototype engine.js, added single-event evaluation for board events. */
 import type { Alloc, CardId, Changes, ClientProfile, Metric, Metrics, Quality, ResKey, StressEvent, MarketEvent } from './types.ts';
 
 export const RES: ResKey[] = ['cash', 'protect', 'growth'];
@@ -67,7 +67,7 @@ export function evaluatePlan(client: ClientProfile, alloc: Alloc, cardIds: CardI
 
 export type StressResult = 'held' | 'partial' | 'broken';
 
-/** 單一事件的承接力判定（與原型 runStress 相同公式） */
+/** Single-event absorption evaluation (same formula as prototype runStress) */
 export function stressOne(ev: Pick<StressEvent, 'absorb' | 'cards' | 'need'>, alloc: Alloc, cardIds: CardId[]) {
   const helped = ev.cards.filter(id => cardIds.includes(id));
   const protectFactor = !ev.cards.length || helped.length ? 1 : 0.35;
@@ -80,7 +80,7 @@ export function stressOne(ev: Pick<StressEvent, 'absorb' | 'cards' | 'need'>, al
   return { defense: Math.round(defense * 10) / 10, ratio: Math.max(0, Math.min(1.2, ratio)), result, helped };
 }
 
-/** 客戶全部壓力事件（平衡測試用） */
+/** All client stress events (for balance testing) */
 export function runStress(client: ClientProfile, alloc: Alloc, cardIds: CardId[]) {
   const events = client.stress.map(ev => ({ ev, ...stressOne(ev, alloc, cardIds) }));
   const pts = events.reduce((s, e) => s + (e.result === 'held' ? 2 : e.result === 'partial' ? 1 : 0), 0);
@@ -88,7 +88,7 @@ export function runStress(client: ClientProfile, alloc: Alloc, cardIds: CardId[]
   return { events, pts, quality };
 }
 
-/** 市場事件：正面行情看成長部位，負面事件看預備金是否足以避免低點賣出 */
+/** Market events: bull market checks growth position; bear market checks if emergency cash prevents selling at lows */
 export function marketOne(ev: MarketEvent, alloc: Alloc): StressResult {
   if (ev.boom) return alloc.growth >= 2 ? 'held' : alloc.growth >= 1 ? 'partial' : 'broken';
   return stressOne({ absorb: ev.absorb, cards: [], need: ev.need }, alloc, []).result;
@@ -114,7 +114,7 @@ export const STEP = {
   interviewFinish: (keyHit: number): Changes => keyHit >= 2 ? { trust: 3, insight: 6, fit: 4 } : keyHit === 1 ? { trust: 2, insight: 3, fit: 2 } : { insight: -3, fit: -4 },
 };
 
-/** 佣金代理值：保障與成長部位越多佣金越高——刻意製造「多賣」與「賣對」的張力，由稽核與客訴平衡。 */
+/** Commission proxy: more protection and growth positions yield higher commission — intentionally creates tension between "selling more" and "selling right", balanced by audits and client complaints. */
 export function commissionFor(alloc: Alloc, cards: CardId[]): number {
   return alloc.protect * 3 + alloc.growth * 2 + cards.length * 2;
 }

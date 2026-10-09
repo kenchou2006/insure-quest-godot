@@ -1,4 +1,4 @@
-// 透過本機伺服器的 Cloudflare Workers AI FLUX 生成所有缺漏的客戶場景圖
+// Generate all missing client scene images with Cloudflare Workers AI FLUX via the local server
 import { existsSync, copyFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,7 +77,7 @@ async function main() {
     }
   }
 
-  // 確保無論從專案根目錄或 server/ 目錄執行，都能精確定位 client/assets/clients
+  // Locate client/assets/clients correctly whether run from the project root or from server/
   const projectRoot = resolve(__dirname, '../..');
   const outDir = resolve(projectRoot, 'client/assets/clients');
 
@@ -99,7 +99,7 @@ async function main() {
     }
     const buf = Buffer.from(await res.arrayBuffer());
     const targetFile = resolve(outDir, `${s.id}.jpg`);
-    // 備份放在 client/ 之外：放在 assets 裡會被 Godot 匯入並打包進網頁版
+    // Keep backups outside client/: anything in assets would be imported by Godot and packed into the web build
     const backupDir = resolve(projectRoot, '.scene-backups');
     mkdirSync(backupDir, { recursive: true });
     const backupFile = resolve(backupDir, `${s.id}.${Date.now()}.jpg`);

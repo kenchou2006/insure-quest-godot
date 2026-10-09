@@ -1,7 +1,7 @@
 @tool
 extends Control
-## 遊戲主畫面：左側棋盤（面談／事件以覆蓋面板顯示），右側玩家狀態、客戶簿、動態紀錄與表情互動。
-## 支援手機直向三分頁切換、震撼擲骰過場動畫、清晰的個人／觀摩回合轉場與狀態緞帶。
+## Main game screen: left board (interviews/events shown in overlay panels), right player status, client book, activity log, and emoji reactions.
+## Supports phone portrait 3-tab switching, dynamic dice roll cutscenes, clear personal/spectator turn transitions, and status ribbons.
 
 const Board := preload("res://scripts/ui/board.gd")
 const SessionPanel := preload("res://scripts/ui/session_panel.gd")
@@ -23,7 +23,7 @@ var _dice_anim := 0.0
 var _seen_announcement_id := ""
 var _announcement_modal: Control = null
 
-# 回合與過場狀態追蹤
+# Turn and cutscene state tracking
 var _prev_last_roll: int = 0
 var _prev_turn_player_id: String = ""
 var _prev_round_num: int = -1
@@ -39,19 +39,19 @@ var _btn_pulse := 0.0
 var _actor_avatar_panel: PanelContainer = null
 var _actor_avatar_label: Label = null
 
-# 延後顯示覆蓋面板（等待擲骰與棋子動畫完畢）
+# Deferred overlay display (waiting for dice and pawn animations to complete)
 var _is_overlay_deferred: bool = false
 var _deferred_overlay_timer: float = 0.0
 
-# 本局任務卡
+# Current match quest cards
 var _quests_card: PanelContainer = null
 var _quests_content: VBoxContainer = null
 var _quests_toggle_btn: Button = null
 var _quests_title_lbl: Label = null
 var _quests_collapsed: bool = true
 
-# 響應式佈局與分頁控制
-var _current_tab: int = 0  # 直向分頁：0 遊戲（棋盤，有面談／事件時直接顯示面板）、1 狀態動態
+# Responsive layout and tab control
+var _current_tab: int = 0  # Portrait tabs: 0 game (board, directly shows interview/event panel if active), 1 status activity
 var _was_overlay: bool = false
 var _root: BoxContainer
 var _left_stack: Control
@@ -67,7 +67,7 @@ class DiceControl extends Control:
 	var dot_color: Color = Color("#f2c14e")
 
 	func _init() -> void:
-		var sz: float = 64.0 if UI.is_phone_portrait() else 84.0
+		var sz: float = 78.0 if UI.is_phone_portrait() else 84.0
 		custom_minimum_size = Vector2(sz, sz)
 		pivot_offset = Vector2(sz * 0.5, sz * 0.5)
 
@@ -132,7 +132,7 @@ func _build_ui() -> void:
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(_root)
 
-	# 內容容器
+	# Content container
 	var content_box: Control
 	if portrait:
 		content_box = Control.new()
@@ -142,11 +142,11 @@ func _build_ui() -> void:
 	else:
 		content_box = _root
 
-	# 棋盤與彈出面板容器
+	# Board and popup panel container
 	var left := MarginContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var pad: int = 8 if portrait else 14
+	var pad: int = (2 if UI.is_phone_portrait() else 8) if portrait else 14
 	for s in ["left", "top", "bottom", "right"]:
 		left.add_theme_constant_override("margin_" + s, pad)
 	if portrait:
@@ -162,7 +162,7 @@ func _build_ui() -> void:
 	_board.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_left_stack.add_child(_board)
 
-	# 畫面邊框微光提示（輪到自己時發光）
+	# Screen border subtle glow hint (glows when it's your turn)
 	_screen_glow = Panel.new()
 	_screen_glow.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_screen_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -175,7 +175,7 @@ func _build_ui() -> void:
 	_center.alignment = BoxContainer.ALIGNMENT_CENTER
 	_left_stack.add_child(_center)
 
-	# 輪到自己時的全寬醒目橫幅
+	# Prominent full-width banner when it's your turn
 	_my_turn_banner = UI.panel(Color("#133647"), 12, 6)
 	_my_turn_banner.add_theme_stylebox_override("panel", UI.box(Color("#133647"), 12, UI.GOLD, 8, false))
 	_my_turn_banner.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -185,7 +185,7 @@ func _build_ui() -> void:
 	_my_turn_banner.visible = false
 	_center.add_child(_my_turn_banner)
 
-	# 他人回合時的觀摩緞帶
+	# Spectator ribbon during other players' turns
 	_spectator_ribbon = UI.panel(Color("#0d2432"), 10, 6)
 	_spectator_ribbon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_spectator_ribbon_lbl = UI.label("觀看中：其他顧問的回合", 13 if UI.is_phone_portrait() else 14, UI.MUTED)
@@ -208,7 +208,7 @@ func _build_ui() -> void:
 	_actor_avatar_panel.add_child(_actor_avatar_label)
 	actor_row.add_child(_actor_avatar_panel)
 
-	_turn_label = UI.label("", 17 if UI.is_phone_portrait() else (19 if portrait else 22), UI.TEXT, true)
+	_turn_label = UI.label("", 19 if UI.is_phone_portrait() else (19 if portrait else 22), UI.TEXT, true)
 	actor_row.add_child(_turn_label)
 	_center.add_child(actor_row)
 
@@ -223,15 +223,16 @@ func _build_ui() -> void:
 	_roll_btn = UI.button("▶ 擲骰子", func():
 		Sound.play("dice", self)
 		Net.act({"type": "roll"})
-	, 20 if UI.is_phone_portrait() else (22 if portrait else 24), UI.ACCENT)
+	, 22 if UI.is_phone_portrait() else (22 if portrait else 24), UI.ACCENT)
 	_roll_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_roll_btn.custom_minimum_size = Vector2(170 if UI.is_phone_portrait() else (180 if portrait else 220), 50 if UI.is_phone_portrait() else (50 if portrait else 56))
+	_roll_btn.custom_minimum_size = Vector2(180 if UI.is_phone_portrait() else (180 if portrait else 220), 54 if UI.is_phone_portrait() else (50 if portrait else 56))
 	_center.add_child(_roll_btn)
 
-	var leg_text: String = "◎客戶 ✚事件 ↗市場 ✓合規\n⚠稽核 ♥介紹 ◇研討 ★結算" if UI.is_phone_portrait() else "◎客戶 ✚事件 ↗市場 ✓合規 ⚠稽核 ♥介紹 ◇研討 ★結算"
-	var legend := UI.label(leg_text, 11 if UI.is_phone_portrait() else (12 if portrait else 13), UI.MUTED, true)
-	legend.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_center.add_child(legend)
+	if not UI.is_phone_portrait():
+		var leg_text: String = "◎客戶 ✚事件 ↗市場 ✓合規 ⚠稽核 ♥介紹 ◇研討 ★結算"
+		var legend := UI.label(leg_text, 12 if portrait else 13, UI.MUTED, true)
+		legend.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_center.add_child(legend)
 
 	_session = SessionPanel.new()
 	_session.main = main
@@ -260,7 +261,7 @@ func _build_ui() -> void:
 	_event.visible = false
 	_left_stack.add_child(_event)
 
-	# 右側／第三頁：資訊欄
+	# Right side / page 2: info column
 	_side_panel = UI.panel(UI.PANEL, 0, 12 if UI.is_phone() else 14)
 	if not portrait:
 		var side_w: float = 260.0 if UI.is_phone_landscape() else 340.0
@@ -270,7 +271,7 @@ func _build_ui() -> void:
 	content_box.add_child(_side_panel)
 
 	var sv := UI.vbox(8 if UI.is_phone() else 10)
-	_side_panel.add_child(sv)
+	_side_panel.add_child(UI.scroll(sv))
 
 	var top := UI.hbox(8)
 	if Net.is_multiplayer():
@@ -287,7 +288,7 @@ func _build_ui() -> void:
 	top.add_child(UI.button("離開", func(): main.leave_to_menu(), 13, UI.PANEL_2))
 	sv.add_child(top)
 
-	# 可摺疊的本局任務卡（平常收合成一行「★ 任務 2/3 ▼」，點擊展開）
+	# Collapsible match quest card (collapsed by default into one line "★ 任務 2/3 ▼", click to expand)
 	_quests_card = UI.panel(Color("#102b3a"), 8, 8)
 	_quests_card.add_theme_stylebox_override("panel", UI.box(Color("#102b3a"), 8, UI.GOLD.darkened(0.3), 8, false))
 	var q_box := UI.vbox(4)
@@ -322,6 +323,7 @@ func _build_ui() -> void:
 	sv.add_child(UI.label("動態", 15 if UI.is_phone() else 16, UI.ACCENT_2))
 	_log_box = UI.vbox(3)
 	var ls := UI.scroll(_log_box)
+	ls.custom_minimum_size.y = 120.0 if UI.is_phone() else 160.0
 	sv.add_child(ls)
 
 	var react := UI.hbox(4 if UI.is_phone() else 6)
@@ -330,7 +332,7 @@ func _build_ui() -> void:
 		react.add_child(UI.button(emo, func(): Net.send({"t": "react", "emoji": emo}), 13 if UI.is_phone() else 15, UI.PANEL_2))
 	sv.add_child(react)
 
-	# 直向底部導覽標籤列
+	# Portrait bottom navigation tab bar
 	if portrait:
 		var tab_h: int = 46 if UI.is_phone_portrait() else 52
 		_tab_bar = UI.hbox(4 if UI.is_phone_portrait() else 6)
@@ -350,7 +352,7 @@ func _sync_center_bounds() -> void:
 	if _board == null or _center == null:
 		return
 	var r: Rect2 = _board.get_inner_rect()
-	var pad := 6.0
+	var pad := 4.0 if UI.is_phone_portrait() else 6.0
 	var avail_w := maxf(80.0, r.size.x - pad * 2.0)
 	var avail_h := maxf(80.0, r.size.y - pad * 2.0)
 	_center.position = r.position + Vector2(pad, pad)
@@ -384,15 +386,15 @@ func _sync_tabs() -> void:
 	var is_ev: bool = ev is Dictionary and not is_sess and not _is_overlay_deferred
 
 	if _current_tab == 0:
-		# 遊戲分頁：有面談或事件就直接顯示面板（不分自己或觀摩），否則顯示棋盤
+		# Game tab: displays panel directly if interview or event active (own or spectating), otherwise shows board
 		var overlay: bool = is_sess or is_ev
 		_left_stack.get_parent().visible = true
 		if overlay and UI.is_phone():
-			# 手機：面板全螢幕
+			# Phone: fullscreen panel
 			_board.visible = false
 			_board.modulate = Color.WHITE
 		else:
-			# 平板直向：面談面板約 65% 寬度，左側保留棋盤半透明可見
+			# Tablet portrait: interview panel ~65% width, left board semi-transparently visible
 			_board.visible = true
 			_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
 		_center.visible = not overlay
@@ -407,14 +409,14 @@ func _sync_tabs() -> void:
 func _process(delta: float) -> void:
 	_sync_center_bounds()
 
-	# 延遲面板倒數計時（等待擲骰與走棋結束）
+	# Deferred panel countdown timer (waiting for dice roll and pawn movement to finish)
 	if _is_overlay_deferred:
 		_deferred_overlay_timer -= delta
 		if _deferred_overlay_timer <= 0.0:
 			_is_overlay_deferred = false
 			_apply_deferred_overlay()
 
-	# 擲骰按鈕微呼吸發光（輪到自己時）
+	# Dice roll button subtle breathing glow (when it's your turn)
 	if _roll_btn != null and _roll_btn.visible:
 		_btn_pulse += delta * 4.0
 		var sc: float = 1.0 + sin(_btn_pulse) * 0.035
@@ -423,7 +425,7 @@ func _process(delta: float) -> void:
 	else:
 		_btn_pulse = 0.0
 
-	# 邊框微光呼吸（輪到自己時暖金脈動，他人時維持冷色沉穩）
+	# Border subtle breathing glow (warm gold pulse on own turn, calm cool color on others)
 	if _screen_glow != null and _screen_glow.visible:
 		if Net.is_my_turn():
 			var alpha: float = 0.5 + sin(_btn_pulse) * 0.35
@@ -471,7 +473,7 @@ func refresh(s: Dictionary) -> void:
 	var stage: String = str(s.get("turnStage", ""))
 	var last_roll_val: int = int(s.get("lastRoll", 0)) if s.get("lastRoll") != null else 0
 
-	# 回合切換偵測：播放轉場卡
+	# Turn change detection: play transition card
 	if cur_id != "" and (cur_id != _prev_turn_player_id or round_num != _prev_round_num):
 		_prev_turn_player_id = cur_id
 		_prev_round_num = round_num
@@ -481,11 +483,11 @@ func refresh(s: Dictionary) -> void:
 		if mine:
 			Sound.play("step", self)
 
-	# 擲骰過場觸發：當 stage 從 roll 變為其他或 lastRoll 改變
+	# Dice roll cutscene trigger: when stage changes from roll or lastRoll changes
 	if last_roll_val > 0 and last_roll_val != _prev_last_roll:
 		_prev_last_roll = last_roll_val
 		_play_dice_cutscene(cur_name, last_roll_val, mine)
-		# 延後顯示面談／事件面板：擲骰動畫 (1.0s) + 棋子每格 1/6s + 緩衝 (0.35s)
+		# Defer interview/event panel display: dice roll animation (1.0s) + pawn 1/6s per tile + buffer (0.35s)
 		var total_anim_time: float = 1.0 + (float(last_roll_val) * (1.0 / 6.0)) + 0.35
 		_is_overlay_deferred = true
 		_deferred_overlay_timer = total_anim_time
@@ -493,7 +495,7 @@ func refresh(s: Dictionary) -> void:
 	_board.set_data(Net.static_data.get("board", []), s.get("players", []), cur_id)
 	_top_label.text = "第 %d / %d 回合 ｜ 名單剩 %d 位" % [round_num, int(s.get("settings", {}).get("rounds", 6)), int(s.get("deckLeft", 0))]
 
-	# 自己回合 vs 觀摩他人回合標示
+	# Own turn vs spectating other player turn indicator
 	var cur_player_idx: int = int(s.get("turn", 0)) % 4
 	var player_col: Color = UI.PLAYER_COLORS[cur_player_idx]
 	if _actor_avatar_panel != null:
@@ -535,7 +537,7 @@ func refresh(s: Dictionary) -> void:
 		_show_die()
 	_prev_stage = stage
 
-	# 終局大事件 / 全域公告
+	# End-game major event / global announcement
 	var ann = s.get("announcement")
 	if ann is Dictionary and ann.has("id"):
 		var ann_id: String = str(ann.get("id", ""))
@@ -550,7 +552,7 @@ func refresh(s: Dictionary) -> void:
 	var has_overlay: bool = is_sess or is_ev
 
 	if _is_overlay_deferred:
-		# 延後顯示：擲骰與走棋期間暫不顯示面板，確保動畫與棋盤可見
+		# Deferred display: temporarily hide panel during dice roll and pawn movement to ensure animation and board visibility
 		_session.visible = false
 		_event.visible = false
 		_center.visible = true
@@ -558,8 +560,8 @@ func refresh(s: Dictionary) -> void:
 		if UI.is_portrait():
 			_current_tab = 0
 	else:
-		# 自動切換手機分頁
-		# 輪到自己的面談／事件出現時，從狀態分頁切回遊戲分頁
+		# Auto-switch phone tab
+		# When own interview/event appears, switch back from status tab to game tab
 		if UI.is_portrait() and has_overlay and not _was_overlay and mine:
 			_current_tab = 0
 		_was_overlay = has_overlay
@@ -578,11 +580,11 @@ func refresh(s: Dictionary) -> void:
 
 	_sync_tabs()
 
-	# 面談或事件開啟時自動收合任務卡
+	# Automatically collapse quest card when interview or event opens
 	if has_overlay:
 		_quests_collapsed = true
 
-	# 本局任務卡更新
+	# Match quest card update
 	var quests: Array = s.get("quests", []) if s.get("quests") != null else []
 	if quests.is_empty():
 		_quests_card.visible = false
@@ -634,7 +636,7 @@ func refresh(s: Dictionary) -> void:
 				_quests_toggle_btn.text = "收合"
 				_quests_content.visible = true
 
-	# 玩家列表
+	# Player list
 	UI.clear(_players_box)
 	var i: int = 0
 	for p: Dictionary in s.get("players", []):
@@ -709,7 +711,7 @@ func _apply_deferred_overlay() -> void:
 
 	_sync_tabs()
 
-	# 我的客戶簿
+	# My client book
 	UI.clear(_book_box)
 	var me: Dictionary = Net.me()
 	var book: Array = me.get("book", [])
@@ -722,7 +724,7 @@ func _apply_deferred_overlay() -> void:
 		h.add_child(UI.label("滿意 %d" % int(b.get("satisfaction", 0)), 12, UI.MUTED))
 		_book_box.add_child(h)
 
-	# 動態紀錄
+	# Activity log
 	UI.clear(_log_box)
 	var logs: Array = s.get("log", [])
 	for idx: int in range(logs.size() - 1, -1, -1):
@@ -730,7 +732,7 @@ func _apply_deferred_overlay() -> void:
 		_log_box.add_child(UI.label(str(l.get("text", "")), 13, UI.tone_color(str(l.get("tone", "info"))), true))
 
 
-# ───────── 動態過場：擲骰翻滾與彈跳定格 ─────────
+# ───────── Dynamic cutscene: dice tumbling and bounce freeze ─────────
 
 func _play_dice_cutscene(roller_name: String, roll_val: int, is_self: bool) -> void:
 	if _board != null and _board.has_method("freeze_movement"):
@@ -817,7 +819,7 @@ func _trigger_screen_shake() -> void:
 	tw.tween_property(_root, "position", orig_pos, 0.035)
 
 
-# ───────── 動態過場：回合切換提示卡 ─────────
+# ───────── Dynamic cutscene: turn transition card ─────────
 
 func _show_turn_transition(round_num: int, player_name: String, player_col: Color, is_self: bool) -> void:
 	if _turn_toast_layer != null and is_instance_valid(_turn_toast_layer):

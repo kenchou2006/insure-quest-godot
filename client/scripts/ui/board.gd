@@ -1,13 +1,13 @@
 @tool
 extends Control
-## 人生棋盤：24 格環狀（7×7 外圈），繪製格子與玩家棋子，棋子沿格子彈跳移動並自適應尺寸。
-## 支援中央精美羅盤主視覺、格子圖示層次辨識與擲骰過場凍結機制。
+## Life board: 24-tile ring (7x7 outer perimeter), drawing tiles and player pawns that hop along tiles with adaptive sizing.
+## Supports center compass key visual, layered tile icon recognition, and dice roll cutscene freeze mechanism.
 
 const COLS := 7
 var tiles: Array = []
 var players: Array = []
 var current_id := ""
-var _shown: Dictionary = {}   # playerId -> float 位置（沿環狀的連續值）
+var _shown: Dictionary = {}   # playerId -> float position (continuous value along the ring)
 var _target: Dictionary = {}  # playerId -> int
 var _pulse := 0.0
 var _freeze_timer := 0.0
@@ -68,20 +68,32 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 
+## Cell size follows the available area (non-square board), with the tile aspect ratio capped at MAX_CELL_ASPECT.
+const MAX_CELL_ASPECT := 1.7
+
+
+func _cell_size() -> Vector2:
+	var cw: float = size.x / COLS
+	var ch: float = size.y / COLS
+	cw = minf(cw, ch * MAX_CELL_ASPECT)
+	ch = minf(ch, cw * MAX_CELL_ASPECT)
+	return Vector2(cw, ch)
+
+
+func _board_origin(cs: Vector2) -> Vector2:
+	return Vector2((size.x - cs.x * COLS) * 0.5, (size.y - cs.y * COLS) * 0.5)
+
+
 func get_inner_rect() -> Rect2:
-	var s: float = minf(size.x, size.y)
-	var cw: float = s / COLS
-	var ox: float = (size.x - s) * 0.5
-	var oy: float = (size.y - s) * 0.5
-	return Rect2(ox + cw + 4.0, oy + cw + 4.0, cw * 5.0 - 8.0, cw * 5.0 - 8.0)
+	var cs := _cell_size()
+	var o := _board_origin(cs)
+	var inset: float = 2.0 if UI.is_phone_portrait() else 4.0
+	return Rect2(o.x + cs.x + inset, o.y + cs.y + inset, cs.x * 5.0 - inset * 2.0, cs.y * 5.0 - inset * 2.0)
 
 
 func tile_rect(i: int) -> Rect2:
-	var s: float = minf(size.x, size.y)
-	var cw: float = s / COLS
-	var ch: float = cw
-	var ox: float = (size.x - s) * 0.5
-	var oy: float = (size.y - s) * 0.5
+	var cs := _cell_size()
+	var o := _board_origin(cs)
 	var c: int = 0
 	var r: int = 0
 	if i <= 6:
@@ -92,7 +104,8 @@ func tile_rect(i: int) -> Rect2:
 		c = 6 - (i - 12); r = 6
 	else:
 		c = 0; r = 6 - (i - 18)
-	return Rect2(ox + c * cw, oy + r * ch, cw, ch).grow(-3)
+	var grow_pad: float = -1.5 if UI.is_phone_portrait() else -3.0
+	return Rect2(o.x + c * cs.x, o.y + r * cs.y, cs.x, cs.y).grow(grow_pad)
 
 
 func _point_on_ring(f: float) -> Vector2:
@@ -107,29 +120,33 @@ func _draw() -> void:
 	if tiles.is_empty():
 		return
 	var font: Font = get_theme_default_font()
-	var s: float = minf(size.x, size.y)
-	var cw: float = s / COLS
-	var fs: int = int(clampf(cw * 0.13, 9, 15))
+	var cs := _cell_size()
+	var cw: float = cs.x
+	var ch: float = cs.y
+	var c_min: float = minf(cw, ch)
 	var n: int = tiles.size()
 
-	# 1. 棋盤中央區域主視覺（底色、同心羅盤與裝飾星芒）
+	# 1. Board center key visual (background, concentric compass, and decorative star rays)
 	var inner := get_inner_rect()
 	draw_rect(inner, Color("#091a24"), true)
 	draw_rect(inner, Color("#153a4c"), false, 1.5)
 
 	if _center_texture != null:
-		var tex_s: Vector2 = inner.size * 0.88
+		# Fit inside the (possibly non-square) center area while keeping the texture's aspect ratio
+		var tex_sz: Vector2 = _center_texture.get_size()
+		var fit: float = minf(inner.size.x * 0.88 / tex_sz.x, inner.size.y * 0.88 / tex_sz.y)
+		var tex_s: Vector2 = tex_sz * fit
 		var tex_pos: Vector2 = inner.position + (inner.size - tex_s) * 0.5
 		draw_texture_rect(_center_texture, Rect2(tex_pos, tex_s), false, Color(1, 1, 1, 0.28))
 
-	# 繪製中央微光星芒羅盤
+	# Draw center subtle glowing star-ray compass
 	var center_pt: Vector2 = inner.get_center()
 	var compass_rad: float = minf(inner.size.x, inner.size.y) * 0.38
 	draw_arc(center_pt, compass_rad, 0, TAU, 48, Color("#1e4b60", 0.4), 1.5)
 	draw_arc(center_pt, compass_rad * 0.75, 0, TAU, 36, Color("#1e4b60", 0.3), 1.0)
 	draw_arc(center_pt, compass_rad * 0.35, 0, TAU, 24, Color("#f2c14e", 0.25), 1.0)
 
-	# 旋轉四向星芒
+	# Rotating four-pointed star rays
 	var star_rot: float = _pulse * 0.05
 	for arm: int in range(4):
 		var ang: float = star_rot + float(arm) * (PI * 0.5)
@@ -141,40 +158,56 @@ func _draw() -> void:
 		var tri2: PackedVector2Array = PackedVector2Array([center_pt, p_right, p_out])
 		draw_colored_polygon(tri2, Color("#2fd197", 0.10))
 
-	# 2. 繪製 24 格人生格子（含清楚色帶、圖示與地點名稱）
-	var is_compact: bool = cw < 70.0 or UI.is_phone_portrait()
+	# 2. Draw 24 life tiles (with distinct ribbons, icons, and location names)
+	var is_compact: bool = cw < 60.0 and not UI.is_phone_portrait()
 	for i: int in tiles.size():
 		var t: Dictionary = tiles[i]
 		var r: Rect2 = tile_rect(i)
 		var type_key: String = str(t.get("type", ""))
 		var col: Color = UI.TILE_COLORS.get(type_key, UI.PANEL_2)
 
-		# 格子主體底色（深色底帶圓角）
+		# Tile main background (dark base with rounded corners)
 		draw_style_box(UI.box(Color("#0d2432"), 8, col.darkened(0.35), 0), r)
 
-		# 頂部主題色帶（Ribbon）
-		var ribbon_h: float = clampf(r.size.y * (0.28 if is_compact else 0.25), 14.0, 22.0)
+		# Top category ribbon
+		var ribbon_h: float = clampf(r.size.y * (0.24 if UI.is_phone_portrait() else (0.28 if is_compact else 0.25)), 18.0 if UI.is_phone_portrait() else 14.0, 24.0 if UI.is_phone_portrait() else 22.0)
 		var ribbon_r := Rect2(r.position.x, r.position.y, r.size.x, ribbon_h)
 		draw_style_box(UI.box(col.darkened(0.15), 6, col.lightened(0.15), 0), ribbon_r)
 
-		# 色帶文字與格子序號
-		var cat_name: String = UI.tile_badge(type_key, is_compact)
+		# Ribbon text and tile index (phone portrait displays icon and category name, larger font)
+		var cat_name: String = UI.tile_badge(type_key, is_compact and not UI.is_phone_portrait())
 
-		var cat_fs: int = int(clampf(ribbon_h * 0.65, 9, 12))
-		draw_string(font, Vector2(ribbon_r.position.x + 4, ribbon_r.get_center().y + cat_fs * 0.38), cat_name, HORIZONTAL_ALIGNMENT_LEFT, int(ribbon_r.size.x - 18), cat_fs, Color.WHITE)
-		draw_string(font, Vector2(ribbon_r.end.x - 16, ribbon_r.get_center().y + cat_fs * 0.38), str(i), HORIZONTAL_ALIGNMENT_RIGHT, 14, int(cat_fs * 0.9), Color(1, 1, 1, 0.75))
+		var cat_fs: int
+		if UI.is_phone_portrait():
+			cat_fs = int(clampf(ribbon_h * 0.65, 12, 14))
+			var max_cat_w: float = ribbon_r.size.x - 18.0
+			while cat_fs > 10 and font.get_string_size(cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, cat_fs).x > max_cat_w:
+				cat_fs -= 1
+		else:
+			cat_fs = int(clampf(ribbon_h * 0.65, 9, 13))
 
-		# 格子中央向量符號繪製
+		draw_string(font, Vector2(ribbon_r.position.x + (3 if UI.is_phone_portrait() else 4), ribbon_r.get_center().y + cat_fs * 0.38), cat_name, HORIZONTAL_ALIGNMENT_LEFT, int(ribbon_r.size.x - 16), cat_fs, Color.WHITE)
+		draw_string(font, Vector2(ribbon_r.end.x - (14 if UI.is_phone_portrait() else 16), ribbon_r.get_center().y + cat_fs * 0.38), str(i), HORIZONTAL_ALIGNMENT_RIGHT, 14, int(cat_fs * 0.9), Color(1, 1, 1, 0.75))
+
+		# Draw tile center vector symbol (scaled by min(cw, ch) in phone portrait, vertically centered)
 		var body_center := Vector2(r.get_center().x, r.position.y + ribbon_h + (r.size.y - ribbon_h) * 0.42)
-		_draw_tile_symbol(type_key, body_center, cw * 0.16, col.lightened(0.35))
+		var sym_sz: float = (c_min * 0.20) if UI.is_phone_portrait() else (cw * 0.16)
+		_draw_tile_symbol(type_key, body_center, sym_sz, col.lightened(0.35))
 
-		# 格子下緣地點文字（非緊湊時顯示）
-		if not is_compact:
-			var name_str: String = str(t.get("name", ""))
-			var name_fs: int = int(clampf(cw * 0.14, 10, 13))
-			draw_string(font, Vector2(r.position.x + 3, r.end.y - 6), name_str, HORIZONTAL_ALIGNMENT_CENTER, int(r.size.x - 6), name_fs, UI.TEXT)
+		# Bottom location text (clearly displayed in both phone portrait and standard sizes, larger font)
+		var name_str: String = str(t.get("name", ""))
+		if name_str != "" and (not is_compact or UI.is_phone_portrait()):
+			var name_fs: int
+			if UI.is_phone_portrait():
+				name_fs = int(clampf(c_min * 0.21, 13, 15))
+				var max_name_w: float = r.size.x - 4.0
+				while name_fs > 9 and font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
+					name_fs -= 1
+			else:
+				name_fs = int(clampf(cw * 0.14, 10, 13))
+			draw_string(font, Vector2(r.position.x + 2, r.end.y - (4 if UI.is_phone_portrait() else 6)), name_str, HORIZONTAL_ALIGNMENT_CENTER, int(r.size.x - 4), name_fs, UI.TEXT)
 
-	# 3. 當前輪到者所在格子的外框呼吸發光提示
+	# 3. Breathing glow outline for tile of current active player
 	if current_id != "" and _shown.has(current_id):
 		var cur_tile_idx: int = int(floorf(float(_shown[current_id]) + 0.1)) % n
 		var cur_r: Rect2 = tile_rect(cur_tile_idx)
@@ -182,39 +215,39 @@ func _draw() -> void:
 		var glow_col := Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, glow_alpha)
 		draw_style_box(UI.box(Color(0, 0, 0, 0), 10, glow_col, 0, false), cur_r.grow(3))
 
-	# 4. 繪製玩家棋子（動態跳躍、落地壓縮與當前玩家呼吸光暈）
+	# 4. Draw player pawns (dynamic hopping, squash on landing, and active player aura, scaled by min(cw, ch) without distortion)
 	var idx: int = 0
 	for p: Dictionary in players:
 		var id: String = str(p.get("id", ""))
 		var f: float = float(_shown.get(id, float(p.get("pos", 0))))
 		var base: Vector2 = _point_on_ring(f)
-		var off: Vector2 = Vector2((idx % 2) * 2 - 1, int(idx / 2.0) * 2 - 1) * cw * 0.13
+		var off: Vector2 = Vector2((idx % 2) * 2 - 1, int(idx / 2.0) * 2 - 1) * c_min * 0.13
 		var c: Color = UI.PLAYER_COLORS[idx % 4]
-		var rad: float = cw * 0.13
+		var rad: float = c_min * 0.13
 
 		var frac: float = f - floorf(f)
 		var hop_sin: float = sin(frac * PI)
-		var jump_y: float = -hop_sin * (cw * 0.34)
+		var jump_y: float = -hop_sin * (c_min * 0.34)
 		var ground_pos: Vector2 = base + off
 
-		# 地面影子（越跳越高影子變小淡化，著地時展開）
+		# Ground shadow (fades and shrinks higher in air, spreads on landing)
 		var shadow_scale_x: float = clampf(1.15 - hop_sin * 0.45, 0.5, 1.25)
 		var shadow_scale_y: float = clampf(0.55 - hop_sin * 0.25, 0.25, 0.65)
 		var shadow_alpha: float = clampf(0.40 - hop_sin * 0.22, 0.12, 0.45)
-		# Godot 4.7 內建 draw_ellipse(center, 長半軸, 短半軸, color)
+		# Godot 4.7 built-in draw_ellipse(center, semi-major axis, semi-minor axis, color)
 		draw_ellipse(ground_pos + Vector2(0, rad * 0.4), rad * shadow_scale_x, rad * shadow_scale_y, Color(0, 0, 0, shadow_alpha))
 
-		# 跳躍壓縮與拉伸（落地壓縮，升空拉伸）
+		# Jump squash and stretch (squash on landing, stretch ascending)
 		var stretch_y: float = 1.0 + hop_sin * 0.25
 		var squash_x: float = 1.0 - hop_sin * 0.18
 		if hop_sin < 0.05 and _target.has(id) and absf(float(_target[id]) - f) > 0.02:
-			# 著地剎那微壓縮形變
+			# Slight squash deformation upon landing
 			stretch_y = 0.82
 			squash_x = 1.22
 
 		var pawn_pos: Vector2 = ground_pos + Vector2(0, jump_y)
 
-		# 當前玩家呼吸光暈（Breathing Aura）
+		# Active player breathing aura
 		if id == current_id:
 			var aura_rad_x: float = (rad * squash_x + 5.0) + sin(_pulse * 2.2) * 2.5
 			var aura_rad_y: float = (rad * stretch_y + 5.0) + sin(_pulse * 2.2) * 2.5
@@ -224,18 +257,18 @@ func _draw() -> void:
 		else:
 			draw_ellipse(pawn_pos, rad * squash_x + 1.8, rad * stretch_y + 1.8, Color("#0b1f2a"))
 
-		# 棋子本體（應用形變）
+		# Pawn body (applying deformation)
 		draw_ellipse(pawn_pos, rad * squash_x, rad * stretch_y, c)
 
-		# 棋子上緣琺瑯立體反光
+		# Top enamel glossy highlight
 		draw_arc(pawn_pos + Vector2(0, -rad * stretch_y * 0.15), rad * squash_x * 0.65, -PI * 0.8, -PI * 0.2, 16, Color(1, 1, 1, 0.40), 2.0)
 
-		# 玩家姓名首字頭像
+		# Player initial avatar
 		var initial_char: String = str(p.get("name", "顧")).substr(0, 1)
 		var char_fs: int = int(rad * 1.15)
-		# 陰影字
+		# Drop shadow text
 		draw_string(font, pawn_pos + Vector2(-rad, char_fs * 0.38 + 1), initial_char, HORIZONTAL_ALIGNMENT_CENTER, int(rad * 2), char_fs, Color(0, 0, 0, 0.75))
-		# 主文字
+		# Main text
 		draw_string(font, pawn_pos + Vector2(-rad, char_fs * 0.38), initial_char, HORIZONTAL_ALIGNMENT_CENTER, int(rad * 2), char_fs, Color.WHITE)
 
 		idx += 1
@@ -244,7 +277,7 @@ func _draw() -> void:
 func _draw_tile_symbol(type_key: String, c: Vector2, sz: float, col: Color) -> void:
 	match type_key:
 		"client":
-			# 客戶：人像（頭＋肩膀）
+			# Client: figure (head + shoulders)
 			draw_circle(c + Vector2(0, -sz * 0.35), sz * 0.32, col)
 			var body := PackedVector2Array()
 			for i in range(13):
@@ -252,31 +285,31 @@ func _draw_tile_symbol(type_key: String, c: Vector2, sz: float, col: Color) -> v
 				body.append(c + Vector2(cos(a) * sz * 0.7, sz * 0.75 + sin(a) * sz * 0.65))
 			draw_colored_polygon(body, col)
 		"market":
-			# 市場行情：三根長條＋底線＋上升趨勢線
+			# Market: 3 bars + baseline + upward trendline
 			draw_rect(Rect2(c.x - sz * 0.7, c.y + sz * 0.15, sz * 0.32, sz * 0.55), col, true)
 			draw_rect(Rect2(c.x - sz * 0.16, c.y - sz * 0.15, sz * 0.32, sz * 0.85), col, true)
 			draw_rect(Rect2(c.x + sz * 0.38, c.y - sz * 0.45, sz * 0.32, sz * 1.15), col, true)
 			draw_line(c + Vector2(-sz * 0.85, sz * 0.75), c + Vector2(sz * 0.85, sz * 0.75), col, 2.0)
 			draw_polyline(PackedVector2Array([c + Vector2(-sz * 0.75, -sz * 0.15), c + Vector2(-sz * 0.1, -sz * 0.5), c + Vector2(sz * 0.6, -sz * 0.85)]), col, 1.5, true)
 		"life":
-			# 人生十字防線：醫療與愛心十字
+			# Life defense: medical and heart cross
 			draw_rect(Rect2(c.x - sz * 0.2, c.y - sz * 0.7, sz * 0.4, sz * 1.4), col, true)
 			draw_rect(Rect2(c.x - sz * 0.7, c.y - sz * 0.2, sz * 1.4, sz * 0.4), col, true)
 		"training":
-			# 合規：封閉盾牌＋打勾
+			# Compliance: closed shield + checkmark
 			var shield := PackedVector2Array([c + Vector2(0, -sz * 0.8), c + Vector2(sz * 0.7, -sz * 0.55), c + Vector2(sz * 0.62, sz * 0.15), c + Vector2(0, sz * 0.85), c + Vector2(-sz * 0.62, sz * 0.15), c + Vector2(-sz * 0.7, -sz * 0.55), c + Vector2(0, -sz * 0.8)])
 			draw_polyline(shield, col, 2.0, true)
 			draw_polyline(PackedVector2Array([c + Vector2(-sz * 0.32, 0), c + Vector2(-sz * 0.05, sz * 0.28), c + Vector2(sz * 0.36, -sz * 0.25)]), col, 2.5, true)
 		"audit":
-			# 稽核放大鏡
+			# Audit: magnifying glass
 			draw_arc(c + Vector2(-sz * 0.2, -sz * 0.2), sz * 0.55, 0, TAU, 18, col, 2.0)
 			draw_line(c + Vector2(sz * 0.18, sz * 0.18), c + Vector2(sz * 0.75, sz * 0.75), col, 3.0)
 		"referral":
-			# 轉介紹連結／雙環
+			# Referral: interlinked rings
 			draw_arc(c + Vector2(-sz * 0.3, 0), sz * 0.45, 0, TAU, 16, col, 2.0)
 			draw_arc(c + Vector2(sz * 0.3, 0), sz * 0.45, 0, TAU, 16, col, 2.0)
 		"seminar":
-			# 顧問研討會：攤開的書（左右兩頁＋書脊＋頁面橫線）
+			# Advisor seminar: open book (pages + spine + page lines)
 			draw_polyline(PackedVector2Array([c + Vector2(0, -sz * 0.45), c + Vector2(-sz * 0.8, -sz * 0.65), c + Vector2(-sz * 0.8, sz * 0.5), c + Vector2(0, sz * 0.7), c + Vector2(0, -sz * 0.45)]), col, 2.0, true)
 			draw_polyline(PackedVector2Array([c + Vector2(0, -sz * 0.45), c + Vector2(sz * 0.8, -sz * 0.65), c + Vector2(sz * 0.8, sz * 0.5), c + Vector2(0, sz * 0.7), c + Vector2(0, -sz * 0.45)]), col, 2.0, true)
 			for k in range(3):
@@ -284,7 +317,7 @@ func _draw_tile_symbol(type_key: String, c: Vector2, sz: float, col: Color) -> v
 				draw_line(c + Vector2(-sz * 0.62, yy - sz * 0.05), c + Vector2(-sz * 0.18, yy + sz * 0.07), col, 1.2)
 				draw_line(c + Vector2(sz * 0.18, yy + sz * 0.07), c + Vector2(sz * 0.62, yy - sz * 0.05), col, 1.2)
 		"start":
-			# 結算四角星芒
+			# Settlement: four-pointed star
 			var sp := PackedVector2Array([
 				c + Vector2(0, -sz * 0.8), c + Vector2(sz * 0.25, -sz * 0.25),
 				c + Vector2(sz * 0.8, 0), c + Vector2(sz * 0.25, sz * 0.25),

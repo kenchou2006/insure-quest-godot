@@ -1,9 +1,9 @@
 @tool
 extends Node
-## 網頁版中文輸入（Autoload "WebText"）。
-## Godot 網頁畫布收不到輸入法（IME）組字後送出的文字，因此在網頁版：
-## 任何 LineEdit 取得焦點時，在它正上方覆蓋一個真正的 HTML <input>，
-## 輸入內容即時同步回 LineEdit，按 Enter 時觸發 LineEdit 的 text_submitted。
+## Web Chinese input (Autoload "WebText").
+## The Godot web canvas does not receive text submitted after IME composition, so on web:
+## when any LineEdit gains focus, a real HTML <input> is overlaid directly above it,
+## synchronizing input back to LineEdit in real time and triggering LineEdit text_submitted on Enter.
 
 const JS_SETUP := """
 (function () {
@@ -35,10 +35,10 @@ const JS_SETUP := """
       });
       el.addEventListener('input', function () { window.iqTextCallback(el.value, false); });
       el.addEventListener('blur', function () {
-        // 程式暫時隱藏（欄位捲出畫面、切換分頁）時不算結束輸入
+        // Programmatic temporary hiding (field scrolled out of view, tab switched) is not considered end of input
         if (el._iqHiding) return;
-        // Godot 開關輸入法（set_ime_active）時會呼叫 canvas.focus()，若晚於我們聚焦就會搶走焦點：
-        // 剛開啟的短時間內被搶走就搶回來；整個視窗失焦（切到別的程式）也不算結束輸入
+        // When Godot toggles IME (set_ime_active), it calls canvas.focus(), which steals focus if it occurs after our focus:
+        // reclaim focus if stolen shortly after opening; window-level blur (switching to another app) does not count as ending input
         if (performance.now() - (el._iqOpenedAt || 0) < 600 || !document.hasFocus()) {
           setTimeout(function () { if (el.style.display !== 'none') el.focus(); }, 30);
           return;
@@ -59,14 +59,14 @@ const JS_SETUP := """
     el.placeholder = ph;
     el.style.display = 'block';
     el._iqOpenedAt = performance.now();
-    // 稍微延後聚焦，避開 Godot 交出焦點時對 canvas 的 focus()
+    // Slightly delay focus to avoid canvas.focus() when Godot yields focus
     setTimeout(function () { el.focus(); el.select(); }, 60);
-    // 頁面剛載入時 Godot 搶焦點的時間點較晚：前 0.6 秒內被搶走就搶回來（不再全選，避免蓋掉已輸入的字）
+    // When the page first loads, Godot steals focus later: reclaim within the first 0.6s if stolen (without re-selecting to avoid overwriting typed text)
     [200, 350, 500, 650].forEach(function (ms) {
       setTimeout(function () { if (el.style.display !== 'none' && document.activeElement !== el) el.focus(); }, ms);
     });
   };
-  // 畫面重建後換到新的欄位：只移動位置，保留使用者已輸入的文字與焦點
+  // Moving to a new field after screen rebuild: only update position, preserving user input and focus
   window.iqMoveInput = function (x, y, w, h) {
     var canvas = document.getElementById('canvas');
     var c = canvas.getBoundingClientRect();
@@ -78,7 +78,7 @@ const JS_SETUP := """
     el.style.height = (h * c.height) + 'px';
     return el.value;
   };
-  // 暫時隱藏／恢復：保留文字與目標欄位
+  // Temporarily hide/restore: preserve text and target field
   window.iqSetVisible = function (v) {
     var el = document.getElementById('iq-input');
     if (!el) return;
@@ -101,7 +101,7 @@ const JS_SETUP := """
 
 var _callback: JavaScriptObject = null
 var _target: LineEdit = null
-## 覆蓋框目前的位置（每格比對，欄位移動、捲動或視窗縮放時跟著移動）
+## Current position of overlay box (checked every frame; moves with field movement, scrolling, or window resize)
 var _shown_rect := Rect2()
 var _hidden := false
 var _retargeting := false
@@ -122,7 +122,7 @@ func _process(_delta: float) -> void:
 	if not is_instance_valid(_target):
 		_target = null
 		return
-	# 欄位不在畫面上（切到其他分頁、被捲出可視範圍）時暫時隱藏覆蓋框，回來時恢復
+	# When field is not on screen (switched to another tab, scrolled out of view), temporarily hide overlay and restore upon return
 	var r := _visible_rect(_target)
 	if r.size.x <= 1.0:
 		if not _hidden:
@@ -140,12 +140,12 @@ func _process(_delta: float) -> void:
 			r.position.x / vp.x, r.position.y / vp.y, r.size.x / vp.x, r.size.y / vp.y], true)
 
 
-## 欄位實際可見的區域；不可見、尚未排版或被捲動容器裁掉時回傳空矩形
+## The actually visible area of the field; returns empty rect if invisible, not yet laid out, or clipped by scroll container
 func _visible_rect(le: LineEdit) -> Rect2:
 	if not le.is_visible_in_tree() or le.size.x <= 1.0:
 		return Rect2()
 	var r := le.get_global_rect()
-	# 以欄位中心點判斷是否可見：要求完整包含太嚴格（欄位在捲動區底部時邊框常超出 1–2 像素，會被誤判而隱藏輸入框）
+	# Check visibility using field center point: requiring full containment is too strict (field border at bottom of scroll area often exceeds by 1-2px, causing false hiding)
 	var center := r.get_center()
 	var p := le.get_parent()
 	while p != null:
@@ -165,7 +165,7 @@ func _open(le: LineEdit) -> void:
 	_target = le
 	_hidden = false
 	_shown_rect = le.get_global_rect()
-	# 畫面重建時欄位會被釋放；這時關閉 HTML 輸入框，避免輸入送到已不存在的欄位
+	# Field is freed during screen rebuild; close HTML input here to prevent sending input to non-existent field
 	if not le.tree_exiting.is_connected(_on_target_exiting):
 		le.tree_exiting.connect(_on_target_exiting.bind(le))
 	var vp := le.get_viewport().get_visible_rect().size
@@ -174,7 +174,7 @@ func _open(le: LineEdit) -> void:
 		r.position.x / vp.x, r.position.y / vp.y, r.size.x / vp.x, r.size.y / vp.y,
 		JSON.stringify(le.text), JSON.stringify(le.placeholder_text), le.max_length]
 	JavaScriptBridge.eval(js, true)
-	# 交出 Godot 焦點，下次點擊同一欄位才會再次觸發
+	# Release Godot focus so subsequent clicks on the same field will trigger again
 	le.release_focus.call_deferred()
 
 
@@ -182,7 +182,7 @@ func _on_js_text(args: Array) -> void:
 	if _target == null or not is_instance_valid(_target):
 		return
 	var text := str(args[0])
-	# 使用者點到別處結束輸入：之後不再追蹤這個欄位
+	# User clicked elsewhere to end input: stop tracking this field
 	if args.size() > 2 and bool(args[2]):
 		_target.text = text
 		_target = null
@@ -198,8 +198,8 @@ func _on_js_text(args: Array) -> void:
 func _on_target_exiting(le: LineEdit) -> void:
 	if _target == le:
 		_target = null
-		# 畫面收到新狀態時會整個重建（例如多人連線時其他玩家有動作）：
-		# 等新畫面建好後，找同一個欄位（以提示文字比對）接手，避免打到一半的字消失
+		# Screen rebuilds entirely when new state arrives (e.g. actions by other players in multiplayer):
+		# after new screen is built, find the same field (matched by placeholder) to take over, preventing typed text loss
 		_retarget.call_deferred(le.placeholder_text)
 
 
@@ -207,7 +207,7 @@ func _retarget(placeholder: String) -> void:
 	if _target != null or _retargeting:
 		return
 	_retargeting = true
-	# 版面切換（桌面↔手機）時整個畫面重建：新欄位要等幾格才排好版，最多等約半秒
+	# Screen rebuilds on layout switch (desktop <-> phone): wait a few frames for new field layout, up to ~0.5s
 	var found: LineEdit = null
 	for _i in 30:
 		await get_tree().process_frame
@@ -227,7 +227,7 @@ func _retarget(placeholder: String) -> void:
 	_target = found
 	if not found.tree_exiting.is_connected(_on_target_exiting):
 		found.tree_exiting.connect(_on_target_exiting.bind(found))
-	# 重建後捲動位置會歸零：把欄位捲進畫面，覆蓋框由 _process 跟上
+	# Scroll position resets after rebuild: scroll field into view and let _process align overlay
 	var p := found.get_parent()
 	while p != null:
 		if p is ScrollContainer:
@@ -237,5 +237,5 @@ func _retarget(placeholder: String) -> void:
 	var val: Variant = JavaScriptBridge.eval("(document.getElementById('iq-input') || {}).value || ''", true)
 	found.text = str(val) if val != null else ""
 	_shown_rect = Rect2()
-	_hidden = true  # 讓 _process 重新定位並顯示、聚焦
+	_hidden = true  # Let _process reposition, display, and focus
 

@@ -1,34 +1,34 @@
-# 第 1 輪（Claude）：遊戲性、AI 應用與介面
+# Round 1 (Claude): Gameplay, AI Application, and Interface
 
-背景：Cardif InsurHack 1-1「保險大富翁」。評分＝實作完整度與體驗 40%、AI 整合 20%（複賽 30%）、落地與商業 20%、創意 10%（初賽）、展示影片 10%。
-現況（已讀程式碼與 9 張預覽截圖 client/scenes/preview/）：
-- 大富翁棋盤 24 格；客戶格進入 4 步面談（場景找線索→5 問選 3＋1 次自由提問→10 枚資源幣＋2–3 張保障卡→異議→90 天壓力預演）。
-- 人生事件／市場快訊／合規訓練／稽核／轉介紹／研討會／季度結算；本局任務、榮譽徽章、旁觀者競猜。
-- AI（Workers AI qwen）：自由提問回答、異議自由回應評分、教練提示、結算講評、AI 生成新客戶；訪客＝規則版。
+Background: Cardif InsurHack 1-1 "Insurance Monopoly". Scoring = Implementation Completeness & Experience 40%, AI Integration 20% (Semi-finals 30%), Feasibility & Commercial 20%, Creativity 10% (Preliminary), Demo Video 10%.
+Current status (reviewed codebase and 9 preview screenshots in client/scenes/preview/):
+- Monopoly board with 24 tiles; client tiles enter a 4-step interview (scene clue search → pick 3 out of 5 questions + 1 open-ended question → 10 resource coins + 2–3 coverage cards → objection → 90-day stress simulation).
+- Life events / Market news / Compliance training / Audit / Referrals / Seminars / Quarterly settlement; current game quests, badges of honor, spectator predictions.
+- AI (Workers AI qwen): answers open-ended questions, scores free-form objection responses, coach hints, settlement critique, AI generation of new clients; guests = rules-based.
 
-## A. 我看到的遊戲性問題
-1. **AI 只是「點綴」**：一場面談 AI 只在 1 次自由提問＋1 次異議自由回應出現，其餘全是選擇題。評審看到的是「選擇題遊戲＋AI 小功能」，AI 不是解痛點的核心引擎（20–30% 的項目會吃虧）。
-2. **最佳解可背**：5 題選 3、10 枚幣配置、卡片組合是固定答案（資深電腦就是查表），玩 2–3 場就背起來，重玩價值低。
-3. **大富翁層與面談層脫節**：擲骰只決定「下一個是哪種格子」，沒有路線選擇、資源取捨或玩家互動；棋盤時間大多在等。
-4. **後果不夠戲劇化**：配置錯誤的懲罰是分數，玩家不會「感受到」客戶因為你而沒保障。
+## A. Gameplay Issues I Identified
+1. **AI is merely "decorative"**: Across an entire interview, AI appears only in 1 open-ended question + 1 objection free-form response; the rest are entirely multiple-choice questions. Judges see a "multiple-choice game + minor AI features", where AI is not the core engine solving pain points (at a disadvantage for 20–30% of the score).
+2. **Optimal solutions can be memorized**: Pick 3 out of 5, 10-coin allocation, and card combinations are fixed answers (senior bot advisors simply look up tables); players memorize them after 2–3 games, resulting in low replay value.
+3. **Monopoly board layer disconnected from interview layer**: Dice rolls only determine "which type of tile is next", with no route choices, resource trade-offs, or player interactions; board time is mostly waiting.
+4. **Consequences lack drama**: Penalties for misallocation are just numerical scores; players do not "feel" that the client is left unprotected because of them.
 
-## B. 我的提案（依投報率排序）
-1. **AI 客戶多輪對話取代「5 選 3」**（核心）：面談改為與 AI 客戶自由對話 N 輪（時間條＝面談時間），AI 客戶有隱藏需求狀態（JSON：已揭露線索、信任、情緒），每輪回傳結構化結果；保留選項按鈕當「建議問句」降低打字門檻。訪客／額度用完退回現有規則版選項。
-2. **即時合規雷達**：玩家每句話送 AI 判讀（保證收益、誇大、貶低同業、未揭露費用），即時紅黃燈＋引用條文（RAG：Vectorize 存金管會公平待客／保險業招攬規範摘要）。這是業界真正的痛點（裁罰風險），也是商業賣點。
-3. **理賠時刻（十年後）**：結算前抽每位客戶一個人生事件，AI 用客戶口吻寫一段「十年後的信」，依你的配置決定是感謝還是遺憾；影片很有感染力。
-4. **棋盤互動**：同一位客戶可被兩名顧問搶（比稿：AI 客戶聽完兩份提案選一個）；路口二選一（高風險高報酬路線）；轉介紹鏈。
-5. **講師平台**：AI 彙整全班弱點雷達＋自動派發「對症客戶」作業（例如全班都漏問收入中斷→下一週出 3 位自雇客戶）；每日挑戰（同 seed 排行榜）。
-6. **語音模式（加分）**：Workers AI Whisper 語音轉文字＋TTS 客戶聲音，展示影片可直接「跟客戶講話」。
+## B. My Proposals (Ranked by ROI)
+1. **Multi-round AI client dialogue replacing "Pick 3 of 5"** (Core): Revamp interviews into N rounds of open dialogue with the AI client (time bar = interview time). The AI client maintains hidden need state (JSON: revealed clues, trust, emotion), returning structured results each round; keep option buttons as "suggested questions" to lower typing friction. Fall back to current rules-based options for guests or when quota is exhausted.
+2. **Real-time Compliance Radar**: Every sentence spoken by the player is sent to AI for evaluation (guaranteed returns, exaggeration, disparaging competitors, undisclosed fees), providing immediate red/yellow indicators + rule citations (RAG: Vectorize storing FSC Treating Customers Fairly / Insurance Solicitation Regulations summaries). This addresses the industry's real pain point (penalty risks) and serves as a commercial selling point.
+3. **Claim Moment (Ten Years Later)**: Before final settlement, draw a life event for each client. AI writes a "letter from ten years later" in the client's voice, expressing gratitude or regret depending on your allocation; highly emotionally impactful for videos.
+4. **Board Interaction**: The same client can be contested by two advisors (pitch competition: AI client chooses after hearing two proposals); bifurcated path choices (high-risk high-reward routes); referral chains.
+5. **Trainer Platform**: AI synthesizes class-wide weakness radars + automatically assigns "targeted client" homework (e.g., if the entire class forgot to ask about income disruption → assign 3 self-employed clients next week); daily challenges (same-seed leaderboard).
+6. **Voice Mode (Bonus)**: Workers AI Whisper speech-to-text + TTS client voice; demo video can directly showcase "talking to the client".
 
-## C. 介面是否需要大改
-不建議重寫，建議「重點手術」：
-- 面談改成**視覺小說式**：左大客戶插圖/表情、右對話泡泡＋輸入框；五力條收成一列小儀表；步驟條去掉重複編號（目前「2 ② 方案配置」）。
-- 面談打開時棋盤完全被遮住、右側「本局任務」永遠佔最顯眼位置 → 任務收合為一行，面談時側欄只留客戶簿與對話紀錄。
-- 首次遊玩 60 秒互動教學（現在只有圖文說明）。
-- 場景熱點：13 張新插圖中約 4 張熱點與物件對不上（meiling、peishan、yixiang、guohua），且 AI 圖有亂碼文字；需要重新標註。
+## C. Does the Interface Need a Major Overhaul?
+Full rewrite is not recommended; "keyhole surgery" is advised:
+- Transform interviews to **visual novel style**: Large client illustration/expression on the left, speech bubbles + input field on the right; condense Five Powers into a single row of mini-gauges; remove duplicate numbering on step bars (currently 「2 ② 方案配置」("2 ② Plan Configuration")).
+- When the interview opens, the board is completely covered, and the right-hand "Current Quests" permanently occupies the most prominent spot → collapse quests into a single line; during interviews, keep only client compendium and dialogue history in the sidebar.
+- 60-second interactive tutorial for first-time play (currently text and illustrations only).
+- Scene hotspots: In ~4 of the 13 new illustrations (meiling, peishan, yixiang, guohua), hotspots do not match objects, and AI images contain garbled text; re-annotation needed.
 
-## 請 agy 回答
-1. 你同意哪些、反對哪些？理由（考慮剩餘時程與評分權重）。
-2. 你額外的遊戲性點子（至少 3 個），並評估實作量（S/M/L）。
-3. 介面：你認為要大改還是手術？具體列出前 5 個要改的畫面元素。
-4. 建議一份「初賽前必做／複賽前再做」的切分。
+## Questions for agy
+1. Which points do you agree or disagree with? Why? (Considering remaining schedule and scoring weights).
+2. Your additional gameplay ideas (at least 3), with estimated effort (S/M/L).
+3. Interface: Do you think it needs a major overhaul or surgery? List the top 5 UI elements to change.
+4. Propose a split between "Must-do before preliminary round / Defer to semi-finals".

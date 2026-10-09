@@ -1,8 +1,8 @@
 @tool
 extends Control
-## 編輯器預覽：在 Godot 2D 編輯器直接看到各畫面的設計（不必連線）。
-## 資料來自 states.json（伺服器 tools/dump-preview-states.ts 跑一場電腦對局擷取）；也可以 F6 單獨執行這個場景。
-## 這個節點同時扮演畫面需要的 main（toast、換頁等呼叫在預覽中都不做事）。
+## Editor preview: visually inspect screen designs directly in the Godot 2D editor (no connection required).
+## Data is from states.json (captured from a bot game via server tools/dump-preview-states.ts); scene can also be run standalone with F6.
+## This node also acts as the main interface required by screens (calls like toast and navigation are no-ops in preview).
 
 const MenuScreen := preload("res://scripts/ui/menu.gd")
 const LobbyScreen := preload("res://scripts/ui/lobby.gd")
@@ -11,7 +11,7 @@ const ReportScreen := preload("res://scripts/ui/report.gd")
 const STATES_PATH := "res://scenes/preview/states.json"
 const SIZES := {"desktop": Vector2i(1280, 720), "phone_portrait": Vector2i(480, 854)}
 
-## 要預覽的畫面：menu 主選單、lobby 大廳、roll 棋盤、discover／plan／objection／result 面談各階段、event 人生事件、ended 結算報告
+## Screen to preview: menu (main menu), lobby, roll (board), interview stages (discover/plan/objection/result), event (life event), ended (settlement report)
 @export_enum("menu", "lobby", "roll", "discover", "plan", "objection", "result", "event", "ended") var screen: String = "roll":
 	set(v):
 		screen = v
@@ -21,7 +21,7 @@ const SIZES := {"desktop": Vector2i(1280, 720), "phone_portrait": Vector2i(480, 
 		layout = v
 		_queue_rebuild()
 
-## 0＝頂端、1＝捲到底：預覽畫面下方的內容（對話串、信件）
+## 0 = top, 1 = scrolled to bottom: preview content at the bottom of screens (dialogue thread, letters)
 @export_range(0.0, 1.0) var scroll: float = 0.0:
 	set(v):
 		scroll = v
@@ -31,9 +31,9 @@ var _pending := false
 
 
 func _ready() -> void:
-	# 延後建構：避免父節點仍在加入子節點時，畫面 _ready 內播放音效失敗
+	# Deferred rebuild: prevents sound playback errors in screen _ready while parent node is still adding children
 	_queue_rebuild()
-	# 執行時加上 -- --capture=路徑.png：等動畫跑完後截圖並結束（用於文件與檢查）
+	# Run with -- --capture=path.png: captures screenshot after animations complete and exits (for docs and verification)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--capture="):
 			get_window().size = SIZES.get(layout, SIZES["desktop"])
@@ -76,7 +76,7 @@ func _rebuild() -> void:
 	Net.is_solo = false
 	Net.spectator = false
 	Net.state = st
-	# 主選單預覽顯示登入後的樣子（等級與頭像），其他畫面維持訪客
+	# Main menu preview displays logged-in state (level and avatar); other screens remain as guest
 	if screen == "menu":
 		Net.user_profile = {"user": {"id": "demo", "name": "王顧問", "email": "", "picture": null, "trainer": false},
 			"level": {"level": 3, "title": "專業顧問", "xp": 520, "floor": 400, "next": 800, "games": 7}}
@@ -101,7 +101,7 @@ func _rebuild() -> void:
 
 
 func _apply_scroll() -> void:
-	# 面談／事件面板會延遲顯示（等擲骰過場）且重建時會歸零：輪詢到它可見且可捲動後再捲
+	# Interview/event panels appear with a delay (waiting for dice roll cutscene) and reset on rebuild: poll until visible and scrollable before scrolling
 	for _i in 16:
 		await get_tree().create_timer(0.5).timeout
 		if not is_inside_tree():
@@ -124,7 +124,7 @@ func _load_states() -> Dictionary:
 	return d if d is Dictionary else {}
 
 
-# ───────── 畫面會呼叫的 main 介面（預覽中不做事） ─────────
+# ───────── Main interface called by screens (no-ops in preview) ─────────
 
 func toast(_text: String, _color := Color.WHITE, _secs := 3.0) -> void:
 	pass

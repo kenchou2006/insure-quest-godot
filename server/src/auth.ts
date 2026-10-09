@@ -1,7 +1,7 @@
-/* INSURE QUEST｜Google 登入（OAuth 2.0 授權碼流程，全部在 Worker 處理）。
- * - 工作階段存在 HttpOnly Cookie，Godot 的 HTTPRequest／WebSocket 同源會自動帶上，前端不接觸 token。
- * - state 參數放在短效 Cookie，回呼時比對，防止 CSRF。
- * - 兩種登入方式：FedCM／One Tap（瀏覽器取得 ID Token 後 POST 給我們）與授權碼重新導向（退路）；兩者都驗證 RS256 簽章、iss／aud／exp／email_verified，FedCM 另外檢查 nonce。
+/* INSURE QUEST | Google Login (OAuth 2.0 authorization code flow, handled entirely in Worker).
+ * - Sessions are stored in HttpOnly cookies; same-origin Godot HTTPRequest / WebSocket sends them automatically, frontend never touches tokens.
+ * - The state parameter is stored in short-lived cookies and verified on callback to prevent CSRF.
+ * - Two login modes: FedCM / One Tap (browser retrieves ID Token and POSTs to us) and authorization code redirect (fallback); both verify RS256 signature, iss/aud/exp/email_verified, and FedCM additionally verifies nonce.
  */
 import type { Env } from './index.ts';
 import { globalRecords, type User } from './records.ts';
@@ -17,7 +17,7 @@ export function googleEnabled(env: Env) { return !!(env.GOOGLE_CLIENT_ID && env.
 
 function isLocalHost(url: URL) { return ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname); }
 
-/** 本機開發專用的測試登入：必須同時設定 DEV_LOGIN=1 且請求來自 localhost */
+/** Test login for local dev only: requires both DEV_LOGIN=1 and request from localhost */
 export function devLoginEnabled(env: Env, url: URL) { return env.DEV_LOGIN === '1' && isLocalHost(url); }
 
 export function readCookie(req: Request, name: string): string | null {
@@ -34,7 +34,7 @@ function cookie(name: string, value: string, url: URL, maxAge: number, path = '/
   return `${name}=${encodeURIComponent(value)}; Path=${path}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
 
-/** 只允許站內相對路徑，避免開放重新導向 */
+/** Only allow internal relative paths to prevent open redirects */
 function safeReturn(raw: string | null): string {
   return raw && raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('\\') ? raw : '/';
 }
@@ -69,14 +69,14 @@ function userFromClaims(c: GoogleClaims): User {
   return { id: `g:${c.sub}`, email: String(c.email || ''), name: String(c.name || c.email || 'Google 使用者'), picture: c.picture ? String(c.picture) : null };
 }
 
-/** POST 請求必須同源（搭配 SameSite=Lax Cookie 防 CSRF） */
+/** POST requests must be same-origin (combined with SameSite=Lax cookie to prevent CSRF) */
 function sameOriginPost(req: Request, url: URL) {
   const origin = req.headers.get('Origin');
   if (!origin) return false;
   try { return new URL(origin).host === url.host; } catch { return false; }
 }
 
-/** 處理 /api/auth/*；不屬於登入路由時回傳 null */
+/** Handle /api/auth/*; returns null if not an auth route */
 export async function handleAuth(req: Request, env: Env, url: URL): Promise<Response | null> {
   const redirectUri = `${url.origin}/api/auth/google/callback`;
 
@@ -84,14 +84,14 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
     return Response.json({ google: googleEnabled(env), googleClientId: googleEnabled(env) ? env.GOOGLE_CLIENT_ID : null, dev: devLoginEnabled(env, url) });
   }
 
-  // FedCM／One Tap：先取一次性 nonce（綁在短效 Cookie），Google 會把它放進 ID Token
+  // FedCM / One Tap: acquire one-time nonce first (bound to short-lived cookie), Google includes it in ID Token
   if (url.pathname === '/api/auth/google/nonce') {
     if (!googleEnabled(env)) return new Response('Google 登入尚未設定', { status: 503 });
     const nonce = randomHex(16);
     return new Response(JSON.stringify({ nonce }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Set-Cookie': cookie(NONCE_COOKIE, nonce, url, 600, '/api/auth') } });
   }
 
-  // FedCM／One Tap 回傳的 ID Token：驗證簽章與 nonce 後建立工作階段
+  // ID Token returned by FedCM / One Tap: create session after verifying signature and nonce
   if (url.pathname === '/api/auth/google/credential' && req.method === 'POST') {
     if (!googleEnabled(env)) return new Response('Google 登入尚未設定', { status: 503 });
     if (!sameOriginPost(req, url)) return Response.json({ error: 'forbidden' }, { status: 403 });
@@ -148,7 +148,7 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
     });
     if (!tokenRes.ok) { console.warn('Google token exchange failed', tokenRes.status); return Response.redirect(`${url.origin}/?login=failed`, 302); }
     const { id_token } = await tokenRes.json<{ id_token?: string }>();
-    // 一併驗證簽章（縱深防禦）
+    // Verify signature as well (defense-in-depth)
     const claims = id_token ? await verifyGoogleIdToken(id_token, env.GOOGLE_CLIENT_ID!) : null;
     if (!claims) return Response.redirect(`${url.origin}/?login=failed`, 302);
     return startSession(env, url, userFromClaims(claims), safeReturn(returnTo));

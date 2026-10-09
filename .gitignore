@@ -7,3 +7,5 @@ web/
 .DS_Store
 .scene-backups/
 .wrangler-webtest/
+# Local reference screenshots (may contain personal account info)
+docs/design/tasks/mobile-shots/

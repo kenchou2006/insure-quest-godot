@@ -1,6 +1,6 @@
-/* INSURE QUEST｜電腦顧問。
- * pro：照教科書做（先問關鍵問題、理想配置、合規回應）——當作示範對手。
- * novice：常見新人錯誤（亂問、太早問預算、偏向高佣金配置、偶爾恐嚇）——讓學員看見反例。
+/* INSURE QUEST | Bot advisors.
+ * pro: follows textbook practices (asks key questions first, ideal allocation, compliant responses) — acts as demo opponent.
+ * novice: common beginner mistakes (asks randomly, asks budget too early, leans toward high commission, occasional fear-mongering) — lets learners see counterexamples.
  */
 import type { Action, Alloc, CardId, GameState, QuestionId } from './types.ts';
 import { QUESTIONS, QUIZ } from './data.ts';
@@ -83,7 +83,7 @@ export function botAction(s: GameState, rng: () => number): Action | null {
       const cards = weights.filter(([, w]) => w > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id);
       return { type: 'plan', alloc, cards: cards.length >= 2 ? cards : ['medical', 'income'] };
     }
-    // 新人：偏向多配保障（佣金高），卡片隨機
+    // Novice: leans toward allocating more protection (high commission), random cards
     const alloc: Alloc = { cash: 0, protect: 0, growth: 0 };
     for (let i = 0; i < TOTAL_COINS; i++) {
       const r = rng();

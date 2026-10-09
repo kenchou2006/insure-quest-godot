@@ -1,12 +1,12 @@
-// 把 agy 產生的 client/assets/clients/hotspots.json 驗證後寫入 server/src/game/hotspots-extra.json
-// 用法：node tools/merge-hotspots.mjs
+// Validate agy-generated client/assets/clients/hotspots.json and write to server/src/game/hotspots-extra.json
+// Usage: node tools/merge-hotspots.mjs
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 const src = '../client/assets/clients/hotspots.json';
 if (!existsSync(src)) { console.error(`找不到 ${src}`); process.exit(1); }
 const data = JSON.parse(readFileSync(src, 'utf8'));
 const okSpot = s => s && ['x', 'y', 'w', 'h'].every(k => typeof s[k] === 'number' && s[k] >= 0 && s[k] <= 100) && s.x + s.w <= 100.5 && s.y + s.h <= 100.5;
 const out = {};
-// 只收錄真的有插圖的客戶（沒有圖就沒有場景可點）
+// Only include clients with actual illustrations (no illustration means no clickable scene)
 for (const [id, v] of Object.entries(data)) {
   const facts = (v.facts || []).filter(f => f && typeof f.title === 'string' && okSpot(f.spot));
   const decoy = v.decoy && typeof v.decoy.title === 'string' && okSpot(v.decoy.spot) ? v.decoy : null;

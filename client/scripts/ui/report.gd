@@ -1,6 +1,6 @@
 @tool
 extends Control
-## 結算報告：排名、個人五力、AI 教練回饋、關鍵決策回顧。支援直向上下分欄。
+## Settlement report: ranking, individual five competencies, AI coach feedback, key decision review. Supports portrait vertical split.
 
 var main: Node
 var _v: VBoxContainer
@@ -69,7 +69,7 @@ func refresh(s: Dictionary) -> void:
 		_v.add_child(row)
 		rank += 1
 
-	# 榮譽勳章牆（終局特別獎項）
+	# Honor medal wall (endgame special awards)
 	var awards: Array = s.get("awards", []) if s.get("awards") != null else []
 	if not awards.is_empty():
 		var aw_panel := UI.panel(Color("#102b3a"), 14, 12)
@@ -94,7 +94,7 @@ func refresh(s: Dictionary) -> void:
 			var card_border: Color = UI.GOLD if is_my_award else Color("#21495e")
 			var ac := UI.panel(card_bg, 10, 10)
 			ac.add_theme_stylebox_override("panel", UI.box(card_bg, 10, card_border, 8, false))
-			# 自動換行的 Label 最小寬度為 0，格子不撐開會被擠成一字一行
+			# Autowrapped Label has min width 0; cells must expand or text gets squeezed into one character per line
 			ac.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 			var av := UI.vbox(3)
@@ -124,7 +124,7 @@ func refresh(s: Dictionary) -> void:
 	if mine.is_empty():
 		return
 
-	# 直向時五力與教練回饋上下堆疊
+	# Stack five competencies and coach feedback vertically in portrait
 	var body: BoxContainer = UI.vbox(12) if portrait else UI.hbox(16)
 	var sk := UI.panel()
 	if not portrait:
@@ -149,7 +149,7 @@ func refresh(s: Dictionary) -> void:
 	var ct := UI.vbox(6)
 	ct.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ct.add_child(UI.label("AI 教練回饋" if Net.ai_enabled else "教練回饋", 17 if portrait else 18, UI.ACCENT_2))
-	# AI 仍在撰寫時先顯示提示（只有登入、有 AI 的玩家會等到 AI 版）
+	# Show prompt while AI is still drafting (only logged-in players with AI will wait for AI version)
 	var ai_pending: bool = bool(s.get("aiPending", false)) and Net.ai_enabled
 	if ai_pending:
 		ct.add_child(UI.label("AI 教練正在撰寫你的專屬回饋……", 15 if portrait else 16, UI.GOLD, true))
@@ -160,7 +160,7 @@ func refresh(s: Dictionary) -> void:
 	body.add_child(coach)
 	_v.add_child(body)
 
-	# 十年後的信（最多 3 封，可左右切換）
+	# Letter from ten years later (up to 3 letters, navigable left/right)
 	var letters: Array = mine.get("letters", []) as Array if mine.get("letters") != null else []
 	if not letters.is_empty():
 		var l_section := UI.vbox(8)
@@ -238,26 +238,26 @@ func refresh(s: Dictionary) -> void:
 			var cv_item := UI.vbox(4)
 			var top_row := UI.hbox(6)
 
-			# 品質標籤 Chip
+			# Quality tag chip
 			var badge := UI.panel(Color(q_col.r, q_col.g, q_col.b, 0.2), 4, 3)
 			badge.add_child(UI.label(q_label, 11, q_col))
 			top_row.add_child(badge)
 
-			# 回合與客戶
+			# Round and client
 			var rnd_txt := "第 %d 回合・%s" % [int(d.get("round", 1)), str(d.get("clientName", "客戶"))]
 			top_row.add_child(UI.label(rnd_txt, 12, UI.TEXT))
 
-			# 階段標籤
+			# Stage tag
 			var stg_txt := "［%s］" % str(d.get("stage", ""))
 			top_row.add_child(UI.label(stg_txt, 11, UI.MUTED))
 
 			cv_item.add_child(top_row)
 
-			# 決策標題
+			# Decision title
 			var tit_lbl := UI.label(str(d.get("title", "")), 14 if portrait else 15, UI.GOLD if q == "good" else UI.TEXT, true)
 			cv_item.add_child(tit_lbl)
 
-			# 決策說明
+			# Decision description
 			var body_txt: String = str(d.get("body", ""))
 			if body_txt != "":
 				var body_lbl := UI.label(body_txt, 12 if portrait else 13, UI.MUTED, true)

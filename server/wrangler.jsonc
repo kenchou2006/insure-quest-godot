@@ -4,7 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
-  // Godot 網頁版匯出到 ../web；/api/* 先交給 Worker，其餘為靜態檔
+  // Export Godot web build to ../web; /api/* handled by Worker first, remainder are static assets
   "assets": {
     "directory": "../web",
     "binding": "ASSETS",
@@ -19,7 +19,7 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Room", "Records"] }
   ],
-  // Workers AI（AI_PROVIDER=workers-ai 時使用）；本機 wrangler dev 會呼叫遠端，需要 wrangler login
+  // Workers AI (used when AI_PROVIDER=workers-ai); local wrangler dev calls remote, requires wrangler login
   "ai": { "binding": "AI" },
   "vars": {
     "AI_PROVIDER": "workers-ai",
@@ -28,14 +28,14 @@
     "NVIDIA_FALLBACK_MODEL": "deepseek-ai/deepseek-v4.1-flash",
     "AI_DAILY_LIMIT": "10",
     "AI_MODEL": "claude-opus-5-5",
-    // 可查看全部學員紀錄的講師 Email（逗號分隔）
+    // Trainer emails (comma-separated) allowed to view all learner records
     "TRAINER_EMAILS": ""
   },
-  // 機密值用 wrangler secret put 設定：GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET、（選用）NVIDIA_API_KEY、（選用）ANTHROPIC_API_KEY
+  // Set secrets via wrangler secret put: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, (optional) NVIDIA_API_KEY, (optional) ANTHROPIC_API_KEY
   "observability": { "enabled": true },
-  // 本機開發環境（npm run dev = wrangler dev --env local）：Workers AI 繫結會呼叫遠端，需要 wrangler login。
-  // 不想連外時，在 .dev.vars 設 AI_PROVIDER=mock（覆寫下方 vars）。
-  // 繫結與 vars 不會被環境繼承，所以這裡重列 Durable Object 與變數。
+  // Local dev environment (npm run dev = wrangler dev --env local): Workers AI binding calls remote, requires wrangler login.
+  // When offline, set AI_PROVIDER=mock in .dev.vars (overrides vars below).
+  // Bindings and vars are not inherited by environments, so re-list Durable Objects and variables here.
   "env": {
     "local": {
       "ai": { "binding": "AI" },

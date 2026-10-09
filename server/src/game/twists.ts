@@ -74,14 +74,14 @@ export const LIFE_TWISTS: LifeTwist[] = [
 ];
 
 /**
- * 依動態情境調整客戶資料副本（不修改 CLIENTS 原始物件）。
- * 資深電腦與壓力測試評估皆以此副本進行。
+ * Adjusts client profile copy based on dynamic twist (does not mutate original CLIENTS objects).
+ * Used by pro bot and stress test evaluations.
  */
 export function applyTwist(client: ClientProfile, twist: LifeTwist | null | undefined): ClientProfile {
   if (!twist) return client;
   const clone: ClientProfile = structuredClone(client);
 
-  // 1. 若情境對特定保障卡有需求強化，微調卡片權重（僅對原本非負的卡片強化，避免將過度配置卡轉為正值）
+  // 1. If twist boosts need for a specific coverage card, slightly increase weight (only for non-negative cards to avoid turning redundant cards positive)
   if (twist.bonusCard && clone.plan.cards[twist.bonusCard] !== undefined) {
     const cur = clone.plan.cards[twist.bonusCard];
     if (cur >= 0 && cur < 3) {
@@ -89,11 +89,11 @@ export function applyTwist(client: ClientProfile, twist: LifeTwist | null | unde
     }
   }
 
-  // 2. 若情境對特定壓力事件有影響，適度調高 need，但上限不超過資深配置防線
+  // 2. If twist affects specific stress events, moderately increase need without exceeding pro allocation defense limits
   if (twist.stressTag && twist.needDelta) {
     for (const ev of clone.stress) {
       if (ev.tag.includes(twist.stressTag) || ev.title.includes(twist.stressTag)) {
-        // 微調提升需要門檻，增加壓力真實感
+        // Slightly raise need threshold to increase realism of stress
         ev.need = Math.round((ev.need + twist.needDelta) * 10) / 10;
       }
     }

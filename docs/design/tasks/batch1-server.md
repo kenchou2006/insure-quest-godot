@@ -1,104 +1,104 @@
-# 第 1 批（伺服器端）：動態人生變數、3 輪 AI 對話＋合規雷達、十年後的信
+# Batch 1 (Server): Dynamic Life Twists, 3-Round AI Dialogue + Compliance Radar, Letter from Ten Years Later
 
-依據 docs/design/README.md 與 docs/design/round2-agy.md（schema 與 prompt 大綱）。只改 server/，**不要改 client/**（第 2 批才做）。
+Based on `docs/design/README.md` and `docs/design/round2-agy.md` (schema and prompt outline). Modify only `server/`, **do not modify `client/`** (deferred to Batch 2).
 
-## 硬性規則
-- **訪客（沒有 accountId）與電腦顧問永遠不用 AI**：一律走 MeteredAI 的規則版 fallback（`server/src/ai.ts` 已有機制，新功能沿用 `MeteredAI.run`）。不要新增任何繞過登入的方式。
-- 每個新的 AI 方法：RawAI 介面、`LLMAI`（Workers AI／Claude 共用的 prompt 層）、`MockAI`、`RuleAI`／規則版函式都要實作；AI 回傳一律用 zod 驗證，驗證失敗回傳 null → 退還額度並改用規則版。
-- 玩家輸入是不可信資料：放在 `<trainee_utterance>` 區塊，system prompt 明確要求忽略其中的指令（參考 round2-agy.md）。
-- 結局、分數、壓力測試勝負**只能由規則引擎決定**；AI 只負責文字。
-- 不使用 emoji（字型沒有）；可用 ✓×★●◆※。所有文案繁體中文。
-- 既有測試（server/test/*.test.ts）必須維持通過；新功能要新增測試。不能執行指令沒關係，Claude 會跑 `npm run check` 驗證。
-- 協定變更要向下相容到 client 第 2 批完成前：保留既有 `ask`／`ask_free`／`objection_free` 動作。
+## Hard Rules
+- **Guests (no `accountId`) and bot advisors never use AI**: Always fall back to the rule-based fallback in `MeteredAI` (`server/src/ai.ts` already has this mechanism; new features reuse `MeteredAI.run`). Do not add any bypasses for login.
+- Every new AI method: `RawAI` interface, `LLMAI` (prompt layer shared between Workers AI / Claude), `MockAI`, `RuleAI` / rule-based functions must all be implemented; AI return values must always be validated with zod. On validation failure, return null -> refund quota and fall back to rule-based.
+- Player input is untrusted data: wrap inside the `<trainee_utterance>` block, and the system prompt must explicitly instruct to ignore any commands inside it (refer to `round2-agy.md`).
+- Endings, scores, and stress test outcomes **must only be decided by the rules engine**; AI is only responsible for text.
+- Do not use emojis (not available in the font); ✓×★●◆※ may be used. All copy is in Traditional Chinese.
+- Existing tests (`server/test/*.test.ts`) must continue to pass; add new tests for new features. It's fine if commands cannot be run; Claude will run `npm run check` to verify.
+- Protocol changes must be backward-compatible until client Batch 2 is complete: preserve existing `ask` / `ask_free` / `objection_free` actions.
 
-## 1. 動態人生變數（規則機制）
-- 在 `src/game/` 新增 `LIFE_TWISTS`：6–8 個情境（例：長輩確診需長照、剛換工作收入不穩、曾被不當推銷而高度防備、房貸寬限期到期、配偶失業、剛得知懷孕）。每個情境有：`id, title, hint`（客戶會透露的一句話）、對客戶的調整（例如提高某個 stress event 的 need、調整 `plan.ideal` 或 `plan.cards` 權重、初始 trust 變化）。
-- 開始面談時（`game.ts` 建立 session 處）以 ctx.rng 抽 1 個掛到 session（`session.twist`），publicView 要帶出 `twist: {id,title,hint}`。
-- 調整後的客戶要透過一個函式（例如 `applyTwist(client, twist)` 回傳新的 ClientProfile 副本）傳給 evaluatePlan／runStress，**不要修改 CLIENTS 原始資料**。
-- 電腦顧問（`bots.ts`）的資深策略要能看到調整後的客戶。
-- 測試：對每位客戶 × 每個情境，資深電腦的配置仍為 good 且通過壓力測試（仿照既有「每位客戶：資深電腦的配置判定為 good」測試）。
+## 1. Dynamic Life Twists (Rule Mechanism)
+- In `src/game/`, add `LIFE_TWISTS`: 6–8 scenarios (e.g., senior family member diagnosed needing long-term care, recently changed jobs with unstable income, highly defensive due to past aggressive sales pitch, mortgage grace period expiring, spouse unemployed, just learned pregnancy). Each scenario has: `id, title, hint` (a sentence the client will disclose), adjustments to the client (e.g., increase need for a certain stress event, adjust `plan.ideal` or `plan.cards` weights, initial trust change).
+- When starting an interview (where `game.ts` creates the session), draw 1 using `ctx.rng` and attach to session (`session.twist`); `publicView` exposes `twist: {id, title, hint}`.
+- Adjusted client should be passed to `evaluatePlan` / `runStress` via a function (e.g., `applyTwist(client, twist)` returning a new `ClientProfile` copy); **do not mutate original `CLIENTS` data**.
+- Bot advisors' (`bots.ts`) pro strategy must be able to see the adjusted client.
+- Tests: For each client × each scenario, pro bot's plan remains good and passes stress test (mirroring existing "each client: pro bot plan evaluated as good" test).
 
-## 2. 3 輪 AI 對話＋合規雷達（合併成一次呼叫）
-- 新動作 `{type:'talk', text: string, suggested?: QuestionId}`：在 discover 步驟使用，每場面談最多 3 輪（`session.talkLeft = 3`）。`suggested` 代表玩家點了建議問句按鈕（文字就是該題 QUESTIONS 的 text）。
-- 處理流程：
-  1. 先跑**規則版合規雷達**（新函式 `ruleCompliance(text)`：關鍵字／正則判斷 保證、穩賺、一定賺、比定存好、不買會後悔、出事就完了、只剩今天…等），結果寫進該輪紀錄。
-  2. 呼叫 `ai.talk(client, twist, history, text)`，回傳 round2-agy.md 的 CombinedDialogueSchema（answer、revealedFacts、trustDelta、insightDelta、emotion、compliance{level,penalty,issues[{code,quote,rule,suggestion}]}、coachTip）。數值要在伺服器端再 clamp 一次。
-  3. 規則版 fallback（訪客／額度用完／AI 失敗）：若有 `suggested` 就用既有的 `answers[qid]` 邏輯；自由輸入就用既有 `ruleFreeQuestion`；合規用 `ruleCompliance`。
-  4. 合規結果：level 取「規則版與 AI 版較嚴重者」；penalty 扣在 `m.compliance`；revealedFacts 只能對應客戶真實的 facts title（不在清單內的丟掉），命中的要計入既有線索／洞察機制（參考 `freeHits`、`ask` 的處理）。
-  5. 存入 `session.asked`（沿用欄位，新增 `compliance`、`emotion`、`coachTip`、`source:'ai'|'rule'`），讓 sessionLogs 與決策紀錄（decisions）、弱點標籤也能用到（違規要產生對應的弱點標籤，參考 `TAG_INFO`）。
-- 3 輪用完或玩家按「進入方案配置」（既有 `to_plan`）就結束 discover。舊的 `ask`／`ask_free` 先保留。
-- 電腦顧問：讓 bots 改用 `talk` 搭配 `suggested`（規則版），維持平衡。
-- 測試：ruleCompliance 的正反例、talk 的規則版流程、訪客不會呼叫 RawAI、AI 回傳不合法 JSON 會 fallback 且退額度、revealedFacts 被白名單過濾、prompt 中玩家文字被包在 `<trainee_utterance>`。
+## 2. 3-Round AI Dialogue + Compliance Radar (Merged into Single Call)
+- New action `{type: 'talk', text: string, suggested?: QuestionId}`: used in discover step, max 3 rounds per interview (`session.talkLeft = 3`). `suggested` indicates the player clicked a suggested question button (text matches that question's `QUESTIONS` text).
+- Processing flow:
+  1. First run **rule-based compliance radar** (new function `ruleCompliance(text)`: keywords/regex checking "guaranteed", "risk-free profit", "definitely profit", "better than fixed deposit", "regret not buying", "ruined if something happens", "today only", etc.), recording result into that round's record.
+  2. Call `ai.talk(client, twist, history, text)`, returning `round2-agy.md`'s `CombinedDialogueSchema` (`answer`, `revealedFacts`, `trustDelta`, `insightDelta`, `emotion`, `compliance{level, penalty, issues[{code, quote, rule, suggestion}]}`, `coachTip`). Numeric values must be clamped once more on the server.
+  3. Rule-based fallback (guest / quota exhausted / AI failure): If `suggested` is present, use existing `answers[qid]` logic; for free input, use existing `ruleFreeQuestion`; for compliance, use `ruleCompliance`.
+  4. Compliance result: `level` takes whichever is more severe between rule-based and AI; `penalty` is deducted from `m.compliance`; `revealedFacts` can only match the client's real facts title (discard any not in the list); hits are credited to the existing clue/insight mechanism (refer to handling in `freeHits` and `ask`).
+  5. Store in `session.asked` (reuse field, adding `compliance`, `emotion`, `coachTip`, `source: 'ai' | 'rule'`), so `sessionLogs`, decision logs (`decisions`), and weakness tags can use them (violations generate corresponding weakness tags, refer to `TAG_INFO`).
+- Discover ends when 3 rounds are exhausted or player clicks 「進入方案配置」 ("Enter plan configuration") (existing `to_plan`). Retain legacy `ask` / `ask_free` for now.
+- Bot advisors: have bots switch to `talk` with `suggested` (rule-based) to maintain balance.
+- Tests: positive and negative cases for `ruleCompliance`, rule-based flow for `talk`, guests do not call `RawAI`, invalid JSON returned by AI falls back and refunds quota, `revealedFacts` filtered by whitelist, player text in prompt is wrapped in `<trainee_utterance>`.
 
-## 3. 十年後的信
-- 在 result 步驟（`game.ts` 約 278–308 行 runStress 之後）由規則引擎決定 `letter`：`{ outcome:'thanks'|'regret'|'mixed', event: 十年內發生的一個 stress event 標題, gap: 缺口金額（數字，可為 0）, signed }`。
-- 規則版模板信（訪客與 fallback）：依 outcome 產生 120–200 字客戶口吻的信，內容要提到 event 與 gap。
-- AI 版：`ai.letter(client, twist, letterFacts)` 只能改寫語氣，prompt 明確給定 outcome／event／gap 不可更動；伺服器檢查 AI 文字中**不能出現與 outcome 相反的結論**（簡單規則：thanks 時不能含「沒有理賠」「後悔」等），不合格就用模板。
-- AI 寫信在背景進行，不要阻塞回合：可以先放模板，AI 回來再更新（參考 `enrichCoach` 的做法），或放在結算時批次生成。結算報告 FinalRow 帶出每位客戶的信（最多保留 3 封最具代表性的）。
-- 測試：outcome 由壓力測試決定、模板信包含 event 與 gap、AI 給出相反結論時會被換成模板。
+## 3. Letter from Ten Years Later
+- In result step (`game.ts` around lines 278–308 after `runStress`), the rules engine determines `letter`: `{ outcome: 'thanks' | 'regret' | 'mixed', event: title of a stress event occurring within 10 years, gap: gap amount (number, can be 0), signed }`.
+- Rule-based template letter (guests and fallback): generate a 120–200 character client-tone letter based on `outcome`, mentioning `event` and `gap`.
+- AI version: `ai.letter(client, twist, letterFacts)` may only polish tone; prompt explicitly gives fixed `outcome` / `event` / `gap` that cannot be altered; server checks that AI text **does not contain conclusions contradictory to outcome** (simple rule: for `thanks`, cannot contain 「沒有理賠」 ("no claim payout"), 「後悔」 ("regret"), etc.); if invalid, fall back to template.
+- AI letter writing runs in background without blocking turns: can insert template first and update when AI returns (refer to `enrichCoach` approach), or batch generate at settlement. Final settlement report `FinalRow` exposes letter for each client (retain at most 3 most representative letters).
+- Tests: outcome determined by stress test, template letter contains `event` and `gap`, AI giving contradictory conclusion replaced by template.
 
-## 完成後
-在 docs/design/tasks/batch1-server.md 最下方追加「完成紀錄」：改了哪些檔案、新的協定欄位（client 第 2 批要用）、尚未完成的項目。
+## After Completion
+Append "Completion Record" to the bottom of `docs/design/tasks/batch1-server.md`: modified files, new protocol fields (for client Batch 2), and pending items.
 
 ---
 
-## 完成紀錄
+## Completion Record
 
-### 1. 修改與新增之檔案清單
-- **新增 `server/src/game/twists.ts`**：
-  - 定義 `LIFE_TWISTS`（7 個動態人生變數情境：長輩確診需長照、剛換工作收入不穩、曾被不當推銷而高度防備、房貸寬限期到期、配偶失業待業中、剛得知懷孕喜訊、籌備副業工作室）。
-  - 實作 `applyTwist(client, twist)`：安全產生 `ClientProfile` 調整副本，不更動原始 `CLIENTS`。
-- **新增 `server/src/game/compliance.ts`**：
-  - 實作 `ruleCompliance(text)`：正規表達式與關鍵字即時偵測 `PROMISE_RETURN`（保證收益）、`FEAR_MONGERING`（恐嚇推銷）、`MISLEADING_COMPARISON`（不實比較）、`EARLY_PRESSURE`（時間/預算逼單）、`INJECTION_ATTEMPT`（指令注入攻擊）。
-  - 實作 `mergeCompliance(ruleComp, aiComp)`：整合規則版初篩與 AI 深度判讀，以較嚴重者與扣分較多者為準。
-- **新增 `server/src/game/letters.ts`**：
-  - 實作 `determineLetter(client, signed, st)`：由壓力預演與簽約狀態決定結局傾向（`thanks`／`regret`／`mixed`）、關鍵事件與缺口金額（數字，萬元）。
-  - 實作 `generateTemplateLetter(client, facts)`：120–200 字繁體中文口吻客戶模板信，內含事件與缺口數額。
-  - 實作 `validateLetterContent(content, outcome)`：伺服器端檢查 AI 改寫文字長度及相反結論禁語（thanks 禁「後悔/沒有理賠」、regret 禁「慶幸/還好有買」），不合格時自動換成模板信。
-- **修改 `server/src/game/types.ts`**：
-  - 匯入並擴充型別定義（`LifeTwist`、`ClientLetter`、`ComplianceLevel`）。
-  - `SessionState`：新增 `twist?: LifeTwist | null`、`talkLeft?: number`；`asked` 元素擴充 `compliance`、`emotion`、`coachTip`、`source`；`result` 新增 `letter?: ClientLetter | null`。
-  - `SessionLog`：新增 `twist` 與 `letter`。
-  - `FinalRow`：新增 `letters?: { clientName: string; outcome: 'thanks' | 'regret' | 'mixed'; content: string }[]`。
-  - `Action`：新增動作 `{ type: 'talk'; text: string; suggested?: QuestionId }`。
-- **修改 `server/src/ai.ts`**：
-  - 新增 zod 結構 `CombinedDialogueSchema`（依 round2-agy.md 定義，含客戶回覆、線索白名單、雙向信任與洞察變化、客戶心理狀態、合規燈號與條文、教練建議）與 `LetterSchema`。
-  - 在 `RawAI` 與 `AIService` 新增 `talk(...)` 與 `letter(...)`。
-  - `LLMAI` 實作：
-    - `talk`：玩家輸入包於 `<trainee_utterance>`，包含動態變數 Persona 與防注入指令，數值在伺服器端 clamp。
-    - `letter`：給定不可更動的事實參數，經 `validateLetterContent` 驗證合格後回傳。
-  - `RuleAI`、`MockAI`、`MeteredAI`：完整實作 `talk` 與 `letter`，訪客與額度耗盡時無縫走規則版 fallback。
-- **修改 `server/src/game/game.ts`**：
-  - `startSession`：抽 1 個 `twist` 掛到 session，套用 `initialTrustDelta`，初始化 `talkLeft = 3`。
-  - `applyActionInner`：新增 `talk` 動作處理（合規雷達、AI 呼叫、白名單過濾 `revealedFacts` 計入線索與 `freeHits`、扣減 `talkLeft`、記錄至 `asked` 與弱點決策）。
-  - `to_plan` 與 `interviewReady`：支援 3 輪對話結束後或標準題問滿時進入方案配置。
-  - `plan` 與 `finishSession`：全面改用 `applyTwist(c, sess.twist)` 進行適合度評估與壓力測試；生成十年後的信，背景非阻塞呼叫 AI 潤色。
-  - `publicView`：帶出 `session.twist`、`session.talkLeft`、`session.result.letter`。
-  - `endGame`：`FinalRow` 帶出每位顧問代表性信件（最多 3 封）。
-- **修改 `server/src/game/bots.ts`**：
-  - 電腦顧問在 discover 階段改用 `talk` 搭配 `suggested`。
-  - 資深策略（pro）在 plan 階段依據 `applyTwist(c, sess.twist)` 調整後客戶進行最優配置。
-- **新增 `server/test/batch1.test.ts`**：
-  - 覆蓋所有新增功能單元測試：每位客戶 × 每個動態情境資深電腦判定為 good 且通過壓力測試、合規雷達正反例、talk 動作規則版流程、訪客與額度退還、線索白名單過濾、十年後的信與相反結論過濾、publicView 與結算資料欄位驗證。
+### 1. List of Modified and Added Files
+- **Added `server/src/game/twists.ts`**:
+  - Defined `LIFE_TWISTS` (7 dynamic life twist scenarios: senior family member diagnosed needing long-term care, recently changed jobs with unstable income, highly defensive due to past aggressive sales pitch, mortgage grace period expiring, spouse unemployed and job-seeking, pregnancy announcement, preparing side-business studio).
+  - Implemented `applyTwist(client, twist)`: safely generates an adjusted `ClientProfile` copy without modifying original `CLIENTS`.
+- **Added `server/src/game/compliance.ts`**:
+  - Implemented `ruleCompliance(text)`: regex and keywords real-time detection for `PROMISE_RETURN` (guaranteed returns), `FEAR_MONGERING` (fear-based selling), `MISLEADING_COMPARISON` (misleading comparison), `EARLY_PRESSURE` (time/budget pressure closing), `INJECTION_ATTEMPT` (prompt injection attack).
+  - Implemented `mergeCompliance(ruleComp, aiComp)`: merges rule-based preliminary filter with AI deep interpretation, taking the more severe level and larger penalty.
+- **Added `server/src/game/letters.ts`**:
+  - Implemented `determineLetter(client, signed, st)`: determines outcome tendency (`thanks` / `regret` / `mixed`), key event, and gap amount (number, in 10,000s TWD) based on stress rehearsal and contract status.
+  - Implemented `generateTemplateLetter(client, facts)`: 120–200 character Traditional Chinese client template letter containing event and gap amount.
+  - Implemented `validateLetterContent(content, outcome)`: server-side check on AI polished text length and prohibited conflicting conclusion phrases (`thanks` forbids 「後悔/沒有理賠」 ("regret / no claim payout"), `regret` forbids 「慶幸/還好有買」 ("relieved / glad I bought it")), automatically falling back to template letter when invalid.
+- **Modified `server/src/game/types.ts`**:
+  - Imported and extended type definitions (`LifeTwist`, `ClientLetter`, `ComplianceLevel`).
+  - `SessionState`: added `twist?: LifeTwist | null`, `talkLeft?: number`; `asked` element extended with `compliance`, `emotion`, `coachTip`, `source`; `result` added `letter?: ClientLetter | null`.
+  - `SessionLog`: added `twist` and `letter`.
+  - `FinalRow`: added `letters?: { clientName: string; outcome: 'thanks' | 'regret' | 'mixed'; content: string }[]`.
+  - `Action`: added action `{ type: 'talk'; text: string; suggested?: QuestionId }`.
+- **Modified `server/src/ai.ts`**:
+  - Added zod schemas `CombinedDialogueSchema` (defined per `round2-agy.md`, including client reply, facts whitelist, bidirectional trust and insight changes, client psychological state, compliance light and rules, coach tips) and `LetterSchema`.
+  - Added `talk(...)` and `letter(...)` to `RawAI` and `AIService`.
+  - `LLMAI` implementation:
+    - `talk`: player input wrapped in `<trainee_utterance>`, includes dynamic variable Persona and anti-injection instructions, numbers clamped on server.
+    - `letter`: given immutable factual parameters, returned after validation by `validateLetterContent`.
+  - `RuleAI`, `MockAI`, `MeteredAI`: fully implemented `talk` and `letter`, seamlessly falling back to rule-based fallback for guests or when quota is exhausted.
+- **Modified `server/src/game/game.ts`**:
+  - `startSession`: draws 1 `twist` attached to session, applies `initialTrustDelta`, initializes `talkLeft = 3`.
+  - `applyActionInner`: added handling for `talk` action (compliance radar, AI call, whitelist filter `revealedFacts` credited to clues and `freeHits`, deducts `talkLeft`, records into `asked` and weakness decisions).
+  - `to_plan` and `interviewReady`: supports entering plan configuration after 3 dialogue rounds end or all standard questions are asked.
+  - `plan` and `finishSession`: fully switched to using `applyTwist(c, sess.twist)` for suitability evaluation and stress testing; generates letter from ten years later, background non-blocking AI polish call.
+  - `publicView`: exposes `session.twist`, `session.talkLeft`, `session.result.letter`.
+  - `endGame`: `FinalRow` exposes representative letters for each advisor (up to 3 letters).
+- **Modified `server/src/game/bots.ts`**:
+  - Bot advisors switch to using `talk` with `suggested` during discover phase.
+  - Pro strategy (`pro`) in plan phase optimizes configuration based on adjusted client from `applyTwist(c, sess.twist)`.
+- **Added `server/test/batch1.test.ts`**:
+  - Unit tests covering all new features: pro bot evaluated as good and passing stress test for each client × each dynamic scenario, positive/negative cases for compliance radar, `talk` action rule-based flow, guest and quota refunds, clue whitelist filtering, letter from ten years later and contradictory conclusion filtering, `publicView` and final settlement data field validations.
 
-### 2. 新的協定欄位（Client 第 2 批需對接）
-1. **動作請求 (`Action`)**：
-   - `{ type: 'talk', text: string, suggested?: QuestionId }`：
-     - `text`：受訓顧問發言文字（建議問句的文字或自由輸入）。
-     - `suggested`（可選）：點擊建議問句按鈕時帶入題目 ID（`'income' | 'goal' | 'coverage' | 'risk' | 'premium'`）。
-2. **公開狀態 (`publicView.session`)**：
-   - `twist: { id: string, title: string, hint: string } | null`：當前面談隨機抽取的動態人生變數，前端可直接展示在客戶卡上。
-   - `talkLeft: number`：剩餘對話輪數（初始為 3，降至 0 時需引導至「進入方案配置」）。
-   - `asked: Array<{ ..., compliance?: 'pass' | 'warning' | 'violation', emotion?: string, coachTip?: string, source?: 'ai' | 'rule' }>`：對話紀錄包含該輪合規燈號、客戶防備心理、教練短評與生成來源。
-   - `result.letter: { outcome: 'thanks' | 'regret' | 'mixed', event: string, gap: number, signed: boolean, content: string } | null`：十年後的信件物件，包含結局傾向、關聯事件、缺口金額（萬元）與信件全文（初始為模板信，若有登入 AI 潤色完成會即時更新）。
-3. **結算報告 (`publicView.final`)**：
-   - `letters?: Array<{ clientName: string, outcome: 'thanks' | 'regret' | 'mixed', content: string }>`：每位顧問面談中最多 3 封最具代表性的信件紀錄，用於複盤展示。
+### 2. New Protocol Fields (For Client Batch 2 Integration)
+1. **Action Request (`Action`)**:
+   - `{ type: 'talk', text: string, suggested?: QuestionId }`:
+     - `text`: text spoken by trainee advisor (suggested question text or free input).
+     - `suggested` (optional): question ID (`'income' | 'goal' | 'coverage' | 'risk' | 'premium'`) passed when clicking suggested question button.
+2. **Public State (`publicView.session`)**:
+   - `twist: { id: string, title: string, hint: string } | null`: dynamic life twist randomly drawn for current interview, frontend can display directly on client card.
+   - `talkLeft: number`: remaining dialogue rounds (initially 3, guide to "Enter plan configuration" when reaching 0).
+   - `asked: Array<{ ..., compliance?: 'pass' | 'warning' | 'violation', emotion?: string, coachTip?: string, source?: 'ai' | 'rule' }>`: dialogue record including compliance indicator for that round, client defensiveness psychology, coach short tip, and generation source.
+   - `result.letter: { outcome: 'thanks' | 'regret' | 'mixed', event: string, gap: number, signed: boolean, content: string } | null`: letter object from ten years later, including outcome tendency, associated event, gap amount (10,000s TWD), and full letter text (initially template letter; updated in real-time if logged in and AI polish completes).
+3. **Settlement Report (`publicView.final`)**:
+   - `letters?: Array<{ clientName: string, outcome: 'thanks' | 'regret' | 'mixed', content: string }>`: record of up to 3 most representative letters from each advisor's interviews, used for post-match review display.
 
-### 3. 尚未完成的項目（後續批次待辦）
-- **Client 第 2 批（Godot / Web 前端）**：
-  - 面談面板視覺小說對話氣泡化與 3 輪對話 UI。
-  - 建議問句按鈕＋自由輸入框＋即時前端正則初篩燈號。
-  - 動態人生變數 Tag 與客戶透露提示之展示。
-  - 結果階段「十年後的信」專屬信紙動態展示面板。
-- **展示與評審機制**：
-  - 評審體驗碼（`DEMO_CODES`）免登入體驗 AI 呼叫額度之介面輸入與綁定（第 2 批或後續）。
+### 3. Pending Items (Deferred to Subsequent Batches)
+- **Client Batch 2 (Godot / Web Frontend)**:
+  - Visual novel dialogue bubble styling and 3-round dialogue UI for interview panel.
+  - Suggested question buttons + free input box + real-time frontend regex preliminary filter indicators.
+  - Dynamic life twist Tag and display of client hints.
+  - Dedicated stationery animated display panel for "Letter from ten years later" in result phase.
+- **Demo and Reviewer Mechanism**:
+  - Interface input and binding for reviewer demo codes (`DEMO_CODES`) to experience AI quota without login (Batch 2 or subsequent).

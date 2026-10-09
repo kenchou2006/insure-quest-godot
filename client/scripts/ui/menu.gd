@@ -1,6 +1,6 @@
 @tool
 extends Control
-## 主選單：姓名、會員登入（Google 頭貼與顧問等級）、單人練習、建立／加入多人房間、培訓紀錄、圖文遊戲說明。支援橫向與直向適配、PWA更新檢查與音效開關。
+## Main menu: name, member login (Google avatar and advisor level), solo practice, create/join multiplayer room, training records, illustrated game guide. Supports landscape/portrait adaptation, PWA update check, and sound toggle.
 
 var main: Node
 var _name: LineEdit
@@ -14,6 +14,7 @@ var _pwa_btn: Button
 var _root: BoxContainer
 var _auth_card_container: VBoxContainer
 var _last_account_id: String = ""
+var _avatar_loading: bool = false
 
 
 func _ready() -> void:
@@ -23,8 +24,13 @@ func _ready() -> void:
 	_build_ui()
 
 
+func _exit_tree() -> void:
+	if Net.auth_changed.is_connected(_on_auth_changed):
+		Net.auth_changed.disconnect(_on_auth_changed)
+
+
 func _on_auth_changed() -> void:
-	if not is_inside_tree():
+	if not is_inside_tree() or is_queued_for_deletion():
 		return
 	var cur_id: String = str(Net.get_user().get("id", ""))
 	if cur_id != _last_account_id:
@@ -55,7 +61,7 @@ func _build_ui() -> void:
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(_root)
 
-	# 主視覺區
+	# Key visual area
 	var art := Control.new()
 	if portrait:
 		art.custom_minimum_size = Vector2(0, 175 if UI.is_phone_portrait() else 240)
@@ -96,7 +102,7 @@ func _build_ui() -> void:
 		art.add_child(title_box)
 	_root.add_child(art)
 
-	# 操作區
+	# Actions area
 	var side := UI.panel(UI.PANEL, 0, 14 if UI.is_phone_portrait() else (20 if portrait else 32))
 	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -104,7 +110,7 @@ func _build_ui() -> void:
 	side.add_child(UI.scroll(v))
 	_root.add_child(side)
 
-	# PWA 更新按鈕
+	# PWA update button
 	_pwa_btn = UI.button("★ 有新版本，點此更新", func():
 		if OS.has_feature("web"):
 			JavaScriptBridge.pwa_update()
@@ -118,8 +124,13 @@ func _build_ui() -> void:
 			_pwa_btn.visible = true
 		)
 
-	# 帳號／登入狀態卡片
+	# Account / login status card
+	for c in v.get_children():
+		if c.name == "AuthCardPanel":
+			v.remove_child(c)
+			c.queue_free()
 	var auth_card := UI.panel(UI.PANEL_2, 12, 10 if UI.is_phone_portrait() else 12)
+	auth_card.name = "AuthCardPanel"
 	_auth_card_container = UI.vbox(6)
 	auth_card.add_child(_auth_card_container)
 	v.add_child(auth_card)
@@ -160,6 +171,8 @@ func _build_ui() -> void:
 
 	v.add_child(HSeparator.new())
 	v.add_child(UI.label("多人連線（2–4 人）", 20, UI.TEXT))
+	if not Net.is_logged_in():
+		v.add_child(UI.label("多人連線需先登入", 13, UI.MUTED))
 	v.add_child(UI.button("建立多人房間", _create_multi, 18))
 	var join := UI.hbox(8)
 	_code = LineEdit.new()
@@ -208,7 +221,7 @@ func _update_auth_card() -> void:
 		var lv: Dictionary = Net.get_level()
 
 		var h := UI.hbox(8)
-		# Google 大頭貼（尚未下載完成或沒有頭貼時，先顯示姓名首字）
+		# Google avatar (displays initial before download completes or if no avatar)
 		h.add_child(UI.avatar(Net.avatar_tex, u_name, 40))
 		if Net.avatar_tex == null:
 			_load_avatar()
@@ -217,7 +230,7 @@ func _update_auth_card() -> void:
 		info_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var tag_text: String = " ［講師］" if is_trainer else ""
 		info_v.add_child(UI.label(u_name + tag_text, 15, UI.TEXT, true))
-		# 顧問等級與經驗條（經驗值＝歷次對局分數總和）
+		# Advisor level and EXP bar (EXP = sum of scores across matches)
 		if not lv.is_empty():
 			var lv_row := UI.hbox(6)
 			lv_row.add_child(UI.label("Lv.%d %s" % [int(lv.get("level", 1)), str(lv.get("title", ""))], 12, UI.GOLD))
@@ -246,14 +259,21 @@ func _update_auth_card() -> void:
 		if bool(Net.auth_config.get("dev", false)):
 			h.add_child(UI.button("測試登入", _login_dev, 14, UI.GOLD.darkened(0.3)))
 		_auth_card_container.add_child(h)
-		_auth_card_container.add_child(UI.label("訪客模式：AI 功能改用規則版、紀錄不保存，登入後可使用", 12, UI.MUTED, true))
+		var guest_note := "訪客模式：單人練習在本機執行、AI 功能改用規則版、紀錄不保存，登入後可使用" if Net.local_available() else "訪客模式：AI 功能改用規則版、紀錄不保存，登入後可使用"
+		_auth_card_container.add_child(UI.label(guest_note, 12, UI.MUTED, true))
 
 
 func _load_avatar() -> void:
 	if Engine.is_editor_hint():
 		return
+	if _avatar_loading:
+		return
+	_avatar_loading = true
 	var tex: Texture2D = await Net.fetch_avatar()
-	if tex != null and is_inside_tree():
+	_avatar_loading = false
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	if tex != null:
 		_update_auth_card()
 
 
@@ -300,6 +320,9 @@ func _start_solo() -> void:
 
 func _create_multi() -> void:
 	_save()
+	if not Net.is_logged_in():
+		main.toast("多人連線需先登入", UI.BAD)
+		return
 	main.create_and_join([], false)
 
 
@@ -308,6 +331,9 @@ func _join() -> void:
 	var c: String = _code.text.strip_edges().to_upper() if _code else ""
 	if c.length() != 5:
 		main.toast("請輸入 5 碼房間代碼", UI.BAD)
+		return
+	if not Net.is_logged_in():
+		main.toast("多人連線需先登入", UI.BAD)
 		return
 	main.join_room(c)
 
@@ -358,7 +384,7 @@ func _build_howto() -> Control:
 	var step_desc := UI.rich("", 14 if UI.is_phone_portrait() else 15)
 	body.add_child(step_desc)
 
-	# 底部翻頁導覽
+	# Bottom pagination navigation
 	var nav := UI.hbox(8)
 	var prev_btn: Button = null
 	var next_btn: Button = null

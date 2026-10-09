@@ -1,6 +1,6 @@
 @tool
 extends PanelContainer
-## 事件面板：人生事件、市場快訊、合規測驗、合規抉擇、客戶回訪、稽核、季度結算、研討會。
+## Event panel: life events, market alerts, compliance quiz, compliance dilemmas, client check-ins, audits, quarterly settlement, seminars.
 
 const CARD_INFO: Dictionary = {
 	"medical": {"title": "醫療費用分擔", "tag": "醫療支出"},
@@ -38,7 +38,7 @@ func refresh(ev: Dictionary, actor_name: String) -> void:
 	elif title == "" and review is Dictionary:
 		title = "客戶回訪：%s" % str(review.get("clientName", "已簽約客戶"))
 
-	# 只有換了一個事件才播音效與淡入；同一事件內的更新（作答、別人按繼續）直接重繪，避免畫面閃爍
+	# Only play sound and fade in on event change; updates within same event redraw directly to prevent flickering
 	var is_new_event: bool = title != _last_ev_title
 	if title != "" and is_new_event:
 		_last_ev_title = title
@@ -90,15 +90,15 @@ func refresh(ev: Dictionary, actor_name: String) -> void:
 	if body_txt != "":
 		_v.add_child(UI.label(body_txt, 15 if UI.is_portrait() else 17, UI.MUTED, true))
 
-	# ───────── 1. 合規情境抉擇（dilemma）─────────
+	# ───────── 1. Compliance dilemma (dilemma) ─────────
 	if dilemma is Dictionary:
 		_build_dilemma_ui(dilemma, actor)
 
-	# ───────── 2. 客戶生命週期回訪（review）─────────
+	# ───────── 2. Client lifecycle check-in (review) ─────────
 	elif review is Dictionary:
 		_build_review_ui(review, actor)
 
-	# ───────── 3. 合規測驗（quiz）─────────
+	# ───────── 3. Compliance quiz (quiz) ─────────
 	var quiz = ev.get("quiz")
 	if quiz is Dictionary:
 		var picked = quiz.get("picked")
@@ -117,14 +117,14 @@ func refresh(ev: Dictionary, actor_name: String) -> void:
 			_v.add_child(b)
 			i += 1
 
-	# ───────── 4. 一般事件動態回饋行 ─────────
+	# ───────── 4. Standard event feedback lines ─────────
 	var lines: Array = ev.get("lines", [])
 	for line: Dictionary in lines:
 		var p := UI.panel(UI.PANEL, 10, 10)
 		p.add_child(UI.label(str(line.get("text", "")), 15 if UI.is_portrait() else 16, UI.tone_color(str(line.get("tone", "info"))), true))
 		_v.add_child(p)
 
-	# ───────── 5. 繼續按鈕與觀看提示 ─────────
+	# ───────── 5. Continue button and spectating prompt ─────────
 	var can_continue: bool = true
 	if quiz is Dictionary:
 		can_continue = quiz.get("picked") != null
@@ -196,7 +196,7 @@ func _build_review_ui(review: Dictionary, actor: bool) -> void:
 	var change_title: String = str(change.get("title", "生活新變化"))
 	var change_body: String = str(change.get("body", ""))
 
-	# 客戶生活變化說明卡
+	# Client life changes description card
 	var chg_panel := UI.panel(Color("#133647"), 10, 10)
 	var chg_v := UI.vbox(4)
 	chg_v.add_child(UI.label("【%s 的人生轉折】%s" % [cname, change_title], 16, UI.GOLD, true))
@@ -205,7 +205,7 @@ func _build_review_ui(review: Dictionary, actor: bool) -> void:
 	chg_panel.add_child(chg_v)
 	_v.add_child(chg_panel)
 
-	# 目前配置狀況
+	# Current allocation status
 	var cur_data: Dictionary = review.get("current", {})
 	var cur_alloc: Dictionary = cur_data.get("alloc", {})
 	var cur_cards: Array = cur_data.get("cards", [])
@@ -226,7 +226,7 @@ func _build_review_ui(review: Dictionary, actor: bool) -> void:
 
 	var picked = review.get("picked")
 
-	# 6 張保障卡按鈕網格
+	# 6 coverage card button grid
 	var grid := GridContainer.new()
 	grid.columns = 1 if UI.is_phone_portrait() else 2
 	grid.add_theme_constant_override("h_separation", 6)
@@ -258,7 +258,7 @@ func _build_review_ui(review: Dictionary, actor: bool) -> void:
 
 	_v.add_child(grid)
 
-	# 額外 2 個決策選項：現有規劃已足夠、先不聯絡
+	# 2 additional decision options: current plan sufficient, hold off contacting
 	var none_picked: bool = picked != null and str(picked) == "none"
 	var none_btn := UI.option_button("✓ 聯絡客戶，確認現有規劃已充足（維持現狀）", func():
 		Net.act({"type": "review", "card": "none"})

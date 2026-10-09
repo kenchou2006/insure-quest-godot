@@ -1,7 +1,7 @@
 @tool
 extends Node
-## 網路層（Autoload "Net"）：HTTP 建房／查紀錄＋WebSocket 房間連線與自動重連。
-## 網頁版預設連回同源（Worker 同時提供網頁與 API），桌面版預設連本機 wrangler dev。
+## Network layer (Autoload "Net"): HTTP room creation / record queries + WebSocket room connection and auto-reconnect.
+## Web version connects to same origin by default (Worker serves both web and API); desktop version connects to local wrangler dev by default.
 
 signal welcomed(data: Dictionary)
 signal state_changed(state: Dictionary)
@@ -10,8 +10,10 @@ signal reaction(from_name: String, emoji: String)
 signal connection_changed(online: bool)
 signal quota_changed(used: int, limit: int, exhausted: bool)
 signal auth_changed()
-## 面談中客戶回答的串流片段（目前累積的文字）
+## Streaming fragment of client response during interview (currently accumulated text)
 signal stream_text(text: String)
+## The room no longer exists (host left, abandoned, or voided); the client should go back to the menu.
+signal room_closed(message: String)
 
 const DEFAULT_DESKTOP_URL := "http://localhost:8787"
 
@@ -23,17 +25,19 @@ var spectator := false
 var is_solo := false
 var ai_enabled := false
 var static_data: Dictionary = {}
-## 上次的座位 {room, playerId}：重新整理頁面後可以回到原本的位置（僅限多人房間）
+## Previous seat {room, playerId}: allows returning to the original seat after page refresh (multiplayer rooms only)
 var saved_seat: Dictionary = {}
 var state: Dictionary = {}
 var auth_config: Dictionary = {}
 var user_profile: Dictionary = {}
 var ai_quota: Dictionary = {"used": 0, "limit": 0}
 var welcome_me: Variant = null
-## Google 大頭貼（登入後下載一次；Google 圖片網域允許跨來源，網頁版可直接抓）
+## Google avatar (downloaded once after login; Google image domain allows cross-origin, web version can fetch directly)
 var avatar_tex: Texture2D = null
 var _avatar_url := ""
 var _avatar_tried := false
+var _avatar_in_flight := false
+signal avatar_loaded(tex: Texture2D)
 
 var _ws: WebSocketPeer = null
 var _was_open := false
@@ -41,10 +45,12 @@ var _want_connected := false
 var _retry_at := 0.0
 var _ping_at := 0.0
 var _hello_sent := false
+var _local := false
+var _local_connected_emitted := false
 
 
 func _ready() -> void:
-	# 編輯器預覽（@tool）只需要狀態容器，不讀設定也不連線
+	# Editor preview (@tool) only requires a state container, without reading settings or connecting
 	if Engine.is_editor_hint():
 		return
 	if OS.has_feature("web"):
@@ -63,6 +69,17 @@ func is_web() -> bool:
 	return OS.has_feature("web")
 
 
+func local_available() -> bool:
+	if Engine.is_editor_hint() or not OS.has_feature("web"):
+		return false
+	var res = JavaScriptBridge.eval("!!window.iqLocal", true)
+	return bool(res)
+
+
+func is_local() -> bool:
+	return _local
+
+
 func save_prefs() -> void:
 	var f := FileAccess.open("user://prefs.json", FileAccess.WRITE)
 	if f:
@@ -78,11 +95,11 @@ func _load_prefs() -> Dictionary:
 
 # ───────── HTTP ─────────
 
-## 回傳 [ok: bool, data: Variant]
+## Returns [ok: bool, data: Variant]
 func http_json(method: int, path: String, body: Variant = null) -> Array:
 	var req := HTTPRequest.new()
 	req.timeout = 15.0
-	# 網頁版由瀏覽器自動解壓，Godot 再解一次會失敗
+	# Web version is automatically decompressed by the browser; decompressing again in Godot will fail
 	req.accept_gzip = false
 	add_child(req)
 	var headers := PackedStringArray(["Content-Type: application/json"])
@@ -106,8 +123,8 @@ func http_json(method: int, path: String, body: Variant = null) -> Array:
 	return [true, data]
 
 
-func create_room() -> Array:
-	var r := await http_json(HTTPClient.METHOD_POST, "/api/rooms", {})
+func create_room(solo := false) -> Array:
+	var r := await http_json(HTTPClient.METHOD_POST, "/api/rooms", {"solo": solo})
 	if r[0]:
 		return [true, str(r[1].get("code", ""))]
 	return r
@@ -119,7 +136,7 @@ func fetch_records(name_filter: String) -> Array:
 
 func fetch_records_scope(scope: String = "", name_filter: String = "") -> Array:
 	var q := "/api/records?limit=100"
-	# scope 為 "all"＝全部學員（講師）；其他非空值視為學員 id（講師查看單一學員）
+	# scope is "all" = all learners (trainer); other non-empty values are treated as learner id (trainer viewing single learner)
 	if scope.strip_edges() == "all":
 		q += "&scope=all"
 	elif scope.strip_edges() != "":
@@ -154,21 +171,27 @@ func fetch_me() -> Array:
 	return r
 
 
-## 顧問等級 {level, title, xp, floor, next, games}；未登入為空
+## Advisor level {level, title, xp, floor, next, games}; empty if not logged in
 func get_level() -> Dictionary:
 	return user_profile.get("level", {}) if user_profile.get("level") is Dictionary else {}
 
 
-## Google 大頭貼本地快取（期效 7 天，避免頻繁請求觸發 429）
+## Google avatar local cache (7-day TTL to prevent frequent requests from triggering 429)
 const AVATAR_CACHE_TTL := 7 * 86400
 const AVATAR_IMG_PATH := "user://avatar_cache.png"
 const AVATAR_META_PATH := "user://avatar_meta.json"
 
 
-## 下載 Google 大頭貼（帶期效的本地持久化快取，失敗或沒有頭貼時回傳 null）
+## Download Google avatar (local persistent cache with TTL; returns null on failure or if no avatar)
 func fetch_avatar() -> Texture2D:
-	if avatar_tex != null or _avatar_tried or _avatar_url == "" or not _avatar_url.begins_with("https://"):
+	if avatar_tex != null:
 		return avatar_tex
+	if _avatar_in_flight:
+		await avatar_loaded
+		return avatar_tex
+	if _avatar_tried or _avatar_url == "" or not _avatar_url.begins_with("https://"):
+		return avatar_tex
+	_avatar_in_flight = true
 	_avatar_tried = true
 
 	var now := int(Time.get_unix_time_from_system())
@@ -177,14 +200,16 @@ func fetch_avatar() -> Texture2D:
 	var cached_time: int = int(meta.get("timestamp", 0))
 	var has_cached_file: bool = FileAccess.file_exists(AVATAR_IMG_PATH)
 
-	# 1. 本地有圖、網址相同，且尚未過期（< 7 天）-> 直接讀取本地快取，不發任何網路請求
+	# 1. Image exists locally, URL identical, and not expired (< 7 days) -> read directly from local cache, no network request sent
 	if has_cached_file and cached_url == _avatar_url and (now - cached_time) < AVATAR_CACHE_TTL:
 		var img := Image.load_from_file(AVATAR_IMG_PATH)
 		if img != null and not img.is_empty():
 			avatar_tex = ImageTexture.create_from_image(img)
+			_avatar_in_flight = false
+			avatar_loaded.emit(avatar_tex)
 			return avatar_tex
 
-	# 2. 已過期、網址改變，或第一次進入 -> 向 Google 下載
+	# 2. Expired, URL changed, or first visit -> download from Google
 	var url := _avatar_url
 	var req := HTTPRequest.new()
 	req.timeout = 10.0
@@ -192,14 +217,20 @@ func fetch_avatar() -> Texture2D:
 	add_child(req)
 	if req.request(url) != OK:
 		req.queue_free()
-		return _fallback_to_cached_or_null(has_cached_file)
+		var res_fb: Texture2D = _fallback_to_cached_or_null(has_cached_file)
+		_avatar_in_flight = false
+		avatar_loaded.emit(res_fb)
+		return res_fb
 
 	var res: Array = await req.request_completed
 	req.queue_free()
 
-	# 3. 請求失敗（例如 429、離線）-> 觸發舊圖兜底，有舊圖就繼續用舊圖
+	# 3. Request failed (e.g. 429, offline) -> fallback to cached image if available
 	if res[0] != HTTPRequest.RESULT_SUCCESS or int(res[1]) != 200 or url != _avatar_url:
-		return _fallback_to_cached_or_null(has_cached_file)
+		var res_fb: Texture2D = _fallback_to_cached_or_null(has_cached_file)
+		_avatar_in_flight = false
+		avatar_loaded.emit(res_fb)
+		return res_fb
 
 	var buf: PackedByteArray = res[3]
 	var img := Image.new()
@@ -212,17 +243,22 @@ func fetch_avatar() -> Texture2D:
 		err = img.load_webp_from_buffer(buf)
 
 	if err != OK:
-		return _fallback_to_cached_or_null(has_cached_file)
+		var res_fb: Texture2D = _fallback_to_cached_or_null(has_cached_file)
+		_avatar_in_flight = false
+		avatar_loaded.emit(res_fb)
+		return res_fb
 
-	# 4. 下載成功，寫入本地快取與時間戳
+	# 4. Download succeeded, write to local cache and timestamp
 	img.save_png(AVATAR_IMG_PATH)
 	_save_avatar_meta({"url": _avatar_url, "timestamp": now})
 
 	avatar_tex = ImageTexture.create_from_image(img)
+	_avatar_in_flight = false
+	avatar_loaded.emit(avatar_tex)
 	return avatar_tex
 
 
-## 失敗時兜底：若有過期舊圖繼續使用，無舊圖則回傳 null
+## Fallback on failure: continue using expired cached image if available, otherwise return null
 func _fallback_to_cached_or_null(has_cached_file: bool) -> Texture2D:
 	if has_cached_file:
 		var img := Image.load_from_file(AVATAR_IMG_PATH)
@@ -256,12 +292,12 @@ func logout() -> Array:
 	return r
 
 
-## Google 登入：FedCM／One Tap 優先，失敗自動退回重新導向（實作在 GoogleAuth autoload）
+## Google sign-in: FedCM / One Tap priority, automatically falls back to redirect on failure (implemented in GoogleAuth autoload)
 func google_sign_in() -> void:
 	GoogleAuth.sign_in()
 
 
-## 直接走 OAuth 重新導向（FedCM 被關閉進入冷卻期時的備用入口）
+## Direct OAuth redirect (fallback entry point when FedCM is disabled and in cooldown)
 func google_sign_in_redirect() -> void:
 	GoogleAuth.sign_in_redirect()
 
@@ -296,7 +332,7 @@ func get_ai_remaining() -> int:
 # ───────── WebSocket ─────────
 
 func join(code: String, resume_seat := false) -> void:
-	# leave() 會清掉單人標記；保留下來，單人練習才不會被記成可回去的房間
+	# leave() clears the solo flag; preserve it so solo practice is not remembered as a resumable room
 	var solo := is_solo
 	leave(false)
 	is_solo = solo
@@ -307,7 +343,36 @@ func join(code: String, resume_seat := false) -> void:
 	_open_socket()
 
 
+func join_local() -> void:
+	var solo := is_solo
+	leave(false)
+	is_solo = solo
+	_local = true
+	_local_connected_emitted = false
+	room_code = "LOCAL"
+	player_id = ""
+	state = {}
+	if OS.has_feature("web") and not Engine.is_editor_hint():
+		var local_iface = JavaScriptBridge.get_interface("iqLocal")
+		if local_iface:
+			local_iface.open()
+	_send_local_hello()
+
+
+func _send_local_hello() -> void:
+	await get_tree().process_frame
+	if _local:
+		send({"t": "hello", "playerId": player_id, "name": player_name})
+
+
 func leave(forget_seat := true) -> void:
+	if _local:
+		if OS.has_feature("web") and not Engine.is_editor_hint():
+			var local_iface = JavaScriptBridge.get_interface("iqLocal")
+			if local_iface:
+				local_iface.close()
+		_local = false
+		_local_connected_emitted = false
 	if forget_seat and not saved_seat.is_empty():
 		saved_seat = {}
 		save_prefs()
@@ -319,6 +384,34 @@ func leave(forget_seat := true) -> void:
 	room_code = ""
 	is_solo = false
 	state = {}
+
+
+func _close_room(message: String) -> void:
+	leave()
+	room_closed.emit(message)
+
+
+var _checking_room := false
+
+## Asks the server whether the room still exists; a 404 means it was deleted, so stop reconnecting.
+func _check_room_gone(code: String) -> void:
+	if _checking_room:
+		return
+	_checking_room = true
+	var req := HTTPRequest.new()
+	req.timeout = 10.0
+	req.accept_gzip = false
+	add_child(req)
+	var err := req.request(base_url + "/api/rooms/%s/info" % code)
+	if err != OK:
+		req.queue_free()
+		_checking_room = false
+		return
+	var res: Array = await req.request_completed
+	req.queue_free()
+	_checking_room = false
+	if res[0] == HTTPRequest.RESULT_SUCCESS and int(res[1]) == 404 and room_code == code and _want_connected:
+		_close_room("房間已不存在")
 
 
 func _ws_url() -> String:
@@ -337,6 +430,12 @@ func _open_socket() -> void:
 
 
 func send(msg: Dictionary) -> void:
+	if _local:
+		if OS.has_feature("web") and not Engine.is_editor_hint():
+			var local_iface = JavaScriptBridge.get_interface("iqLocal")
+			if local_iface:
+				local_iface.send(JSON.stringify(msg))
+		return
 	if _ws and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
 		_ws.send_text(JSON.stringify(msg))
 
@@ -346,11 +445,27 @@ func act(action: Dictionary) -> void:
 
 
 func is_online() -> bool:
+	if _local:
+		return true
 	return _ws != null and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN
 
 
 func _process(_delta: float) -> void:
 	if Engine.is_editor_hint():
+		return
+	if _local:
+		if not _local_connected_emitted:
+			_local_connected_emitted = true
+			connection_changed.emit(true)
+		if OS.has_feature("web"):
+			var local_iface = JavaScriptBridge.get_interface("iqLocal")
+			if local_iface:
+				var raw = local_iface.drain()
+				if typeof(raw) == TYPE_STRING and raw != "":
+					var arr = JSON.parse_string(raw)
+					if arr is Array:
+						for item in arr:
+							_handle(JSON.stringify(item))
 		return
 	var now := Time.get_ticks_msec() / 1000.0
 	if _ws == null:
@@ -372,11 +487,15 @@ func _process(_delta: float) -> void:
 		while _ws.get_available_packet_count() > 0:
 			_handle(_ws.get_packet().get_string_from_utf8())
 	elif st == WebSocketPeer.STATE_CLOSED:
+		var opened := _was_open
 		if _was_open:
 			connection_changed.emit(false)
 		_was_open = false
 		_ws = null
 		_retry_at = now + 2.0
+		# A socket that never opened may mean the room was deleted; stop retrying if so.
+		if not opened and _want_connected and room_code != "":
+			_check_room_gone(room_code)
 
 
 func _handle(text: String) -> void:
@@ -388,8 +507,8 @@ func _handle(text: String) -> void:
 			if m.get("playerId") != null:
 				player_id = str(m["playerId"])
 			spectator = bool(m.get("spectator", false))
-			# 記住座位；房間代號僅用於多人連線，單人練習或旁觀者不記憶房間代號
-			saved_seat = {} if (spectator or is_solo) else {"room": room_code, "playerId": player_id}
+			# Remember seat; room code is only for multiplayer, solo practice or spectators do not remember room code
+			saved_seat = {} if (spectator or is_solo or _local) else {"room": room_code, "playerId": player_id}
 			save_prefs()
 			ai_enabled = bool(m.get("ai", false)) and is_logged_in()
 			static_data = m.get("static", {})
@@ -409,6 +528,8 @@ func _handle(text: String) -> void:
 			state_changed.emit(state)
 		"error":
 			server_error.emit(str(m.get("message", "錯誤")))
+		"closed":
+			_close_room(str(m.get("message", "房間已關閉")))
 		"react":
 			reaction.emit(str(m.get("from", "")), str(m.get("emoji", "")))
 		"stream":
@@ -421,7 +542,7 @@ func _handle(text: String) -> void:
 			quota_changed.emit(used, limit, exhausted)
 
 
-# ───────── 狀態輔助 ─────────
+# ───────── State Helpers ─────────
 
 func me() -> Dictionary:
 	for p in state.get("players", []):
@@ -445,7 +566,7 @@ func is_host() -> bool:
 
 
 func is_multiplayer() -> bool:
-	if is_solo:
+	if is_solo or _local:
 		return false
 	var human_count := 0
 	for p in state.get("players", []):

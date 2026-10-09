@@ -1,55 +1,55 @@
-# 第 2 輪（Antigravity）回覆：技術規格收斂與熱點校準
+# Round 2 (Antigravity) Response: Technical Specification Convergence and Hotspot Calibration
 
-你好 Claude，針對你在第 2 輪提出的收斂意見與問題，我非常贊同整體務實收斂的方向。以下依照你的 3 項要求進行逐一回覆：
-
----
-
-### 一、對 5 項修正的同意／反對（各一句話）
-
-1. **合規雷達與對話合併單次 LLM 呼叫（＋前端正則 0 延遲初篩）**：
-   **【完全同意】** 合併呼叫現省 50% 額度與延遲，前端正則即時亮燈給予零延遲反饋、AI 結果到達後覆蓋修正，是平衡體感與深度的完美解法。
-
-2. **評審體驗碼／展示帳號（`DEMO_CODES`）**：
-   **【同意且至關重要】** 保留「訪客預設走規則版」，但在面談入口或主畫面右上角提供顯眼的「評審體驗碼輸入框」（如預設輸入 `INSURHACK2026` 獲得 30 次額度），確保現場評審 100% 體驗到 AI 亮點，避免 20–30% 配分失守。
-
-3. **動態人生變數界定與平衡鎖定**：
-   **【同意你的嚴謹界定】** 簡報中定位為「隨機變數注入驅動 AI Persona」，將動態 Tag 寫進客戶 System Prompt 改變對話防備心，並嚴格以單元測試鎖住資深電腦策略維持在 Good 及壓力測試通過門檻。
-
-4. **熱點座標重新精準標註（取代無腦放大 Hitbox）**：
-   **【完全同意精準校準】** 我已親自檢視四張圖片並重新提取 Bounding Box，徹底解決先前標記漂移至窗外、車輪與背景啞鈴架的離譜 Bug；圖片亂碼則在複賽前修圖或裁切。
-
-5. **十年後的信：規則引擎定結局，AI 專注感性潤稿**：
-   **【完全同意】** 由後端確定性邏輯（Deterministic Engine）依保障卡與預備金計算勝負與缺口金額，AI 僅根據該結果生成感性書信（訪客走靜態模板），杜絕 AI 幻覺導致勝負誤判。
+Hello Claude, regarding the convergence suggestions and questions you raised in Round 2, I completely agree with the overall pragmatic direction of convergence. Below are my point-by-point responses to your 3 requirements:
 
 ---
 
-### 二、「混合 3 輪對話＋即時合規雷達」合併呼叫架構
+### I. Agree / Disagree on the 5 Amendments (One Sentence Each)
 
-#### 1. JSON 回應 Schema（TypeScript Zod 定義）
+1. **Combining Compliance Radar and Dialogue into a Single LLM Call (+ Frontend Regex 0-Latency Pre-Screening)**:
+   **[Completely Agree]** A combined call immediately saves 50% on quota and latency; frontend regex provides zero-latency feedback with immediate indicator lighting, overwritten and corrected once AI results arrive—a perfect solution balancing feel and depth.
+
+2. **Judge Demo Code / Demo Account (`DEMO_CODES`)**:
+   **[Agree and Crucial]** Retain "guests default to rules-based", but provide an eye-catching "judge demo code input field" at the interview entrance or upper-right of the main screen (e.g., entering `INSURHACK2026` by default grants a quota of 30 calls), ensuring on-site judges 100% experience the AI highlights to prevent forfeiting the 20–30% scoring category.
+
+3. **Defining Dynamic Life Variables and Locking Balance**:
+   **[Agree with Your Rigorous Definition]** Positioned in presentations as "random variable injection driving AI persona"; dynamic tags will be written into the client's system prompt to adjust dialogue guardedness, and unit tests will strictly lock senior bot advisor strategy to remain at Good alongside the stress test passing threshold.
+
+4. **Precise Re-annotation of Hotspot Coordinates (Replacing Blindly Enlarging Hitboxes)**:
+   **[Completely Agree with Precise Calibration]** I have personally inspected the four images and re-extracted bounding boxes, completely resolving the egregious bugs where markers previously drifted outside windows, onto wheels, and into background dumbbell racks; garbled image text will be touched up or cropped before the semi-finals.
+
+5. **Letter from Ten Years Later: Rule Engine Determines Outcome, AI Focuses on Emotional Polishing**:
+   **[Completely Agree]** The backend deterministic engine calculates win/loss and shortfall amounts based on coverage cards and emergency funds, and AI solely generates emotional letters based on that outcome (guests use static templates), preventing AI hallucinations from misjudging win/loss results.
+
+---
+
+### II. Combined Architecture for "Hybrid 3-Round Dialogue + Real-Time Compliance Radar"
+
+#### 1. JSON Response Schema (TypeScript Zod Definition)
 
 ```typescript
 import { z } from 'zod';
 
 export const CombinedDialogueSchema = z.object({
-  // 1. 客戶模擬回應
+  // 1. Client simulated response
   answer: z.string().describe('客戶以第一人稱繁體中文口語回答，用「」包起來，40–90 字'),
   revealedFacts: z.array(z.string()).describe('此輪提問成功探詢出的客戶真實痛點或線索標題清單；若無則為空陣列'),
   trustDelta: z.number().int().min(-15).max(12).describe('顧問此輪發言對客戶信任度的增減；問出關鍵需求為正，推銷或突兀問錢為負'),
   insightDelta: z.number().int().min(0).max(15).describe('顧問此輪獲得的需求洞察分'),
   emotion: z.enum(['receptive', 'neutral', 'defensive', 'impatient']).describe('客戶當前的心理防備狀態'),
 
-  // 2. 即時合規雷達判讀
+  // 2. Real-time compliance radar assessment
   compliance: z.object({
     level: z.enum(['pass', 'warning', 'violation']).describe('合規燈號：pass 綠燈（合規）、warning 黃燈（話術瑕疵）、violation 紅燈（違規招攬）'),
     penalty: z.number().int().min(-25).max(0).describe('合規扣分；綠燈為 0，黃燈 -5~-10，紅燈 -15~-25'),
     issues: z.array(z.object({
       code: z.enum([
-        'PROMISE_RETURN',        // 保證收益/穩賺不賠
-        'FEAR_MONGERING',       // 恐嚇推銷/詛咒出事
-        'MISLEADING_COMPARISON',// 不實比較/貶低同業或定存
-        'UNDISCLOSED_RISK',     // 未揭露費用或風險
-        'EARLY_PRESSURE',       // 未探詢需求即強推商品或逼問預算
-        'INJECTION_ATTEMPT'     // 偵測到 Prompt 注入攻擊
+        'PROMISE_RETURN',        // Guaranteed returns / risk-free profit
+        'FEAR_MONGERING',       // Fear-mongering sales / cursing accidents
+        'MISLEADING_COMPARISON',// Misleading comparison / disparaging competitors or fixed deposits
+        'UNDISCLOSED_RISK',     // Undisclosed fees or risks
+        'EARLY_PRESSURE',       // Pushing products or probing budget before discovering needs
+        'INJECTION_ATTEMPT'     // Detected prompt injection attack
       ]),
       quote: z.string().describe('顧問話語中觸發合規問題的原句摘錄（15 字以內）'),
       rule: z.string().describe('違反之規範依據，例如：《保險業招攬廣告自律規範》第 4 條或《金融消費者保護法》適合度原則'),
@@ -57,12 +57,12 @@ export const CombinedDialogueSchema = z.object({
     })).describe('違規項目清單；合規時為空陣列')
   }),
 
-  // 3. 教練回饋
+  // 3. Coach feedback
   coachTip: z.string().describe('培訓講師給顧問的一句短評，30 字以內')
 });
 ```
 
-#### 2. System Prompt 大綱與防 Prompt Injection 機制
+#### 2. System Prompt Outline and Prompt Injection Defense Mechanism
 
 ```markdown
 [System Role Definition]
@@ -95,52 +95,52 @@ export const CombinedDialogueSchema = z.object({
 
 ---
 
-### 三、四張插圖熱點座標校準（3 Facts ＋ 1 Decoy）
+### III. Recalibration of Hotspot Coordinates for Four Illustrations (3 Facts + 1 Decoy)
 
-經調閱實際圖片檔案逐一比對視覺標記，先前資料的主要問題在於：**誤把儀表板方向盤當成車貸單、誤把背景啞鈴架當成工作室估價、以及多個物件座標漂移至黑夜窗外虛空**。
+After retrieving and comparing visual markers in the actual image files one by one, the main issues with previous data were: **mistaking the dashboard steering wheel for a car loan bill, mistaking background dumbbell racks for a studio estimate, and multiple object coordinates drifting into the void outside dark night windows**.
 
-重新校準後的百分比座標（0–100，無重疊）如下：
+Recalibrated percentage coordinates (0–100, non-overlapping) are as follows:
 
-#### 1. 張美玲 (`meiling.jpg`)
-*桌前夜景、檯燈與活頁簿場景。原 (2, 78) 落在左側黑夜窗框虛空，現精確校準至桌面上實體物件。*
+#### 1. Chang Mei-ling (`meiling.jpg`)
+*Scene with desk night view, desk lamp, and loose-leaf notebook. Original (2, 78) fell into the void of the night window frame on the left; now precisely calibrated to physical objects on the desk.*
 
-| 類別 | 名稱 | x | y | w | h | 視覺物件對應與校正理由 |
+| Category | Name | x | y | w | h | Visual Object Mapping & Calibration Rationale |
 |---|---|---|---|---|---|---|
-| **Fact 1** | **女兒的作業簿** | 24 | 67 | 35 | 16 | 活頁筆記本上半部，印有大字練習標題與紅色「301」批改痕跡。 |
-| **Fact 2** | **兩份工作的班表** | 28 | 83 | 33 | 16 | 活頁筆記本下半部，排有綠色「500」時段排程與工作班次清單。 |
-| **Fact 3** | **教育基金存摺** | 9 | 89 | 18 | 11 | 活頁筆記本左下角邊緣露出的白色存摺／文件（修正原先 (2,78) 飄在窗框外的錯誤）。 |
-| **Decoy** | **辦公室文具盒** | 74 | 55 | 22 | 44 | 檯燈右側筆筒，裝滿各式原子筆、鉛筆與直尺的兼職文具組。 |
+| **Fact 1** | **女兒的作業簿** (Daughter's workbook) | 24 | 67 | 35 | 16 | Upper half of loose-leaf notebook, with large-character exercise title and red "301" grading marks. |
+| **Fact 2** | **兩份工作的班表** (Shift schedule for two jobs) | 28 | 83 | 33 | 16 | Lower half of loose-leaf notebook, with green "500" time schedule and work shift list. |
+| **Fact 3** | **教育基金存摺** (Education fund passbook) | 9 | 89 | 18 | 11 | White passbook/document exposed at the lower-left edge of the loose-leaf notebook (corrects the previous error where (2, 78) hovered outside the window frame). |
+| **Decoy** | **辦公室文具盒** (Office stationery box) | 74 | 55 | 22 | 44 | Pen holder to the right of the desk lamp, filled with various ballpoint pens, pencils, and rulers for part-time work stationery. |
 
-#### 2. 何佩珊 (`peishan.jpg`)
-*護理師輪班辦公桌場景。原「夜班表」位於 (51, 15) 嚴重誤指窗外大樓，現校準至牆面備忘與桌前書冊。*
+#### 2. Ho Pei-shan (`peishan.jpg`)
+*Nurse shift desk scene. Original 「夜班表」(Night Shift Schedule) at (51, 15) severely pointed at buildings outside the window; now calibrated to wall memos and desk books.*
 
-| 類別 | 名稱 | x | y | w | h | 視覺物件對應與校正理由 |
+| Category | Name | x | y | w | h | Visual Object Mapping & Calibration Rationale |
 |---|---|---|---|---|---|---|
-| **Fact 1** | **護腰** | 23 | 63 | 20 | 32 | 何佩珊腰部與高背椅貼合處（修正原先 (19,38) 偏向椅背上方的位移，正中腰椎支撐區）。 |
-| **Fact 2** | **夜班表** | 2 | 0 | 9 | 12 | 左上方牆面張貼的明黃色排班備忘便籤（徹底修正原先指向窗外黑夜的荒謬座標）。 |
-| **Fact 3** | **留學簡章** | 58 | 91 | 28 | 9 | 桌面正前方攤開的英文進修與留學手冊。 |
-| **Decoy** | **護理識別證** | 51 | 62 | 8 | 15 | 制服左袖垂掛的醫療十字伸縮識別名牌。 |
+| **Fact 1** | **護腰** (Lumbar support belt) | 23 | 63 | 20 | 32 | Junction between Ho Pei-shan's waist and high-back chair (corrects previous (19, 38) displacement toward upper chair back, hitting lumbar support zone). |
+| **Fact 2** | **夜班表** (Night shift schedule) | 2 | 0 | 9 | 12 | Bright yellow scheduling memo note posted on upper-left wall (completely corrects absurd coordinates previously pointing out the window into dark night). |
+| **Fact 3** | **留學簡章** (Study abroad brochure) | 58 | 91 | 28 | 9 | English further education and study abroad manual spread directly in front of desk. |
+| **Decoy** | **護理識別證** (Nursing ID badge) | 51 | 62 | 8 | 15 | Medical cross retractable identification name badge hanging from left uniform sleeve. |
 
-#### 3. 高奕翔 (`yixiang.jpg`)
-*健身房前台與重訓區場景。原「工作室估價」離譜標在背景啞鈴架 (69, 28)，現將桌上手冊左／右頁精確切分。*
+#### 3. Kao Yi-hsiang (`yixiang.jpg`)
+*Gym front desk and weight training area scene. Original 「工作室估價」(Studio Estimate) was absurdly marked on background dumbbell rack (69, 28); now left and right pages of desk manual are precisely separated.*
 
-| 類別 | 名稱 | x | y | w | h | 視覺物件對應與校正理由 |
+| Category | Name | x | y | w | h | Visual Object Mapping & Calibration Rationale |
 |---|---|---|---|---|---|---|
-| **Fact 1** | **膝蓋護具** | 35 | 56 | 23 | 24 | 背景中央重訓椅黑色墊面（修正原先半空座標，對準訓練椅承重護墊區）。 |
-| **Fact 2** | **學員預約表** | 36 | 85 | 22 | 15 | 桌上手冊的「左頁」，包含預約排課時段與學員表格。 |
-| **Fact 3** | **工作室估價** | 63 | 85 | 27 | 15 | 桌上手冊的「右頁」，條列裝潢與器材採購清單（徹底修正原先落在背景啞鈴架的錯誤！）。 |
-| **Decoy** | **乳清蛋白搖搖杯** | 20 | 33 | 16 | 60 | 桌面左側橘色杯蓋、帶縫線保護套的運動搖搖杯。 |
+| **Fact 1** | **膝蓋護具** (Knee brace) | 35 | 56 | 23 | 24 | Black cushion surface of weight bench in central background (corrects previous mid-air coordinates, targeting training bench load cushion area). |
+| **Fact 2** | **學員預約表** (Learner appointment sheet) | 36 | 85 | 22 | 15 | "Left page" of manual on desk, containing appointment schedule slots and learner table. |
+| **Fact 3** | **工作室估價** (Studio estimate) | 63 | 85 | 27 | 15 | "Right page" of manual on desk, listing decor and equipment procurement list (completely fixes previous error landing on background dumbbell rack!). |
+| **Decoy** | **乳清蛋白搖搖杯** (Whey protein shaker cup) | 20 | 33 | 16 | 60 | Sports shaker bottle with orange lid and stitched protective sleeve on left side of desk. |
 
-#### 4. 楊國華 (`guohua.jpg`)
-*計程車內部視角場景。原「車貸單」標在方向盤儀表板 (5, 69)，現校準至副駕椅背上的真實帳單。*
+#### 4. Yang Kuo-hua (`guohua.jpg`)
+*Taxi interior perspective scene. Original 「車貸單」(Car Loan Bill) was marked on steering wheel dashboard (5, 69); now calibrated to actual bill on passenger seat back.*
 
-| 類別 | 名稱 | x | y | w | h | 視覺物件對應與校正理由 |
+| Category | Name | x | y | w | h | Visual Object Mapping & Calibration Rationale |
 |---|---|---|---|---|---|---|
-| **Fact 1** | **車貸單** | 81 | 37 | 8 | 20 | 副駕椅背三張卡片中的「左上張」，清楚印有繳款金額與期數表格（修正原先標在方向盤上的錯誤）。 |
-| **Fact 2** | **女兒的學生證** | 89 | 37 | 8 | 20 | 副駕椅背三張卡片中的「右上張」，附有證件照與身份證明。 |
-| **Fact 3** | **痠痛貼布** | 41 | 47 | 16 | 28 | 儀表板中央計程車計費表（TAAXII AAI）後方露出的粉紅格紋外包裝痠痛貼布。 |
-| **Decoy** | **後視鏡** | 38 | 18 | 22 | 20 | 前擋風玻璃上方懸掛的車內後視鏡。 |
+| **Fact 1** | **車貸單** (Car loan bill) | 81 | 37 | 8 | 20 | "Top-left card" among three cards on passenger seat back, clearly displaying payment amount and installment schedule (fixes previous error marked on steering wheel). |
+| **Fact 2** | **女兒的學生證** (Daughter's student ID) | 89 | 37 | 8 | 20 | "Top-right card" among three cards on passenger seat back, with ID photo and proof of identity. |
+| **Fact 3** | **痠痛貼布** (Pain relief patch) | 41 | 47 | 16 | 28 | Pink plaid packaged pain relief patch exposed behind taxi meter (TAAXII AAI) in center dashboard. |
+| **Decoy** | **後視鏡** (Rearview mirror) | 38 | 18 | 22 | 20 | Interior rearview mirror hanging above front windshield. |
 
 ---
 
-以上回覆已完全收斂架構細節與熱點座標，可直接作為程式碼與設定檔（`hotspots.json`）更新依據！
+The above response completely converges architectural details and hotspot coordinates, serving directly as the basis for updating code and configuration files (`hotspots.json`)!

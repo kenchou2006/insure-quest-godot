@@ -109,7 +109,7 @@ test('動作防護：非當前玩家、錯誤階段、無效配置都會被拒�
   startGame(g, ctx);
   assert.match((await applyAction(g, 'b', { type: 'roll' }, ctx))!, /還沒輪到你/);
   assert.match((await applyAction(g, 'a', { type: 'continue' }, ctx))!, /面談|事件/);
-  // 強制進入面談
+  // Force enter interview
   g.session = { playerId: 'a', clientId: CLIENTS[0].id, referral: false, step: 'discover', asked: [], freeLeft: 1, freeHits: [], clues: [], observed: [], m: { trust: 50, insight: 20, fit: 50, risk: 30, compliance: 100 }, objectionOrder: [0, 1, 2, 3], predictions: {} };
   g.turnStage = 'session';
   assert.match((await applyAction(g, 'a', { type: 'to_plan' }, ctx))!, /3 個/);
@@ -128,7 +128,7 @@ test('動作防護：非當前玩家、錯誤階段、無效配置都會被拒�
   assert.equal(g.session!.step, 'result');
   assert.equal(await applyAction(g, 'a', { type: 'continue' }, ctx), null);
   assert.equal(g.turn, 1);
-  // 公開狀態不洩漏答案與理想配置
+  // Public state does not reveal answers or ideal allocation
   const view = JSON.stringify(publicView(g));
   assert.ok(!view.includes('keyQuestions') && !view.includes('"ideal"'));
 });
@@ -174,9 +174,9 @@ test('合規測驗：選項會打亂，正確位置不固定，作答前不洩�
     const g = createGame('Q');
     addPlayer(g, { id: 'a', name: 'A' });
     startGame(g, ctx);
-    g.players[0].pos = 1; // 擲出 1 點會到第 2 格（合規訓練）
+    g.players[0].pos = 1; // Rolling 1 lands on tile 2 (compliance training)
     const rest = seeded(seed * 7);
-    const fixed = [0, 0.9]; // 骰子點數 1、合規訓練格選測驗（≥ 0.5）
+    const fixed = [0, 0.9]; // Dice roll 1, compliance training tile selects quiz (>= 0.5)
     ctx.rng = () => (fixed.length ? fixed.shift()! : rest());
     await applyAction(g, 'a', { type: 'roll' }, ctx);
     assert.equal(g.event?.kind, 'quiz');
@@ -219,14 +219,14 @@ test('AI 計量：扣額度、失敗退還、用完或訪客改用規則版', as
   const ai = new MeteredAI(new MockAI(), meter);
   assert.match((await ai.marketNews({ id: 'x', tag: '', title: 'T', body: '', absorb: {}, need: 1, lesson: '' })) ?? "", /模擬/);
   assert.equal(used, 1);
-  // 供應者失敗（回傳 null）→ 退還並改用規則版
+  // Provider failure (returns null) -> refund and fall back to rule-based
   const failing = { ...new MockAI(), provider: 'fail', hint: async () => null } as unknown as RawAI;
   const ai2 = new MeteredAI(failing, meter);
   const h = await ai2.hint(c, { step: 'objection', asked: [], freeHits: [], observed: [] } as never);
   assert.ok(h.length > 5 && refunds === 1 && used === 1);
   await ai.coachTip({} as never); // used → 2
   assert.equal(used, 2);
-  assert.equal(await ai.marketNews({ id: 'x', tag: '', title: 'T', body: '', absorb: {}, need: 1, lesson: '' }), null); // 用完 → 規則版
+  assert.equal(await ai.marketNews({ id: 'x', tag: '', title: 'T', body: '', absorb: {}, need: 1, lesson: '' }), null); // Exhausted -> rule-based
   assert.equal(used, 2);
   const guest = new MeteredAI(new MockAI(), null);
   assert.equal(guest.enabled, false);
@@ -246,7 +246,7 @@ test('FallbackRawAI：支援 NVIDIA NIM 優先並在失敗/未配置時切換至
     provider: 'primary-nim',
     marketNews: async () => {
       primaryCalls++;
-      return null; // 模擬連線失敗或回傳空值
+      return null; // Simulate connection failure or returning empty value
     },
     coachTip: async () => {
       primaryCalls++;
@@ -268,25 +268,25 @@ test('FallbackRawAI：支援 NVIDIA NIM 優先並在失敗/未配置時切換至
   const chained = new FallbackRawAI([primary, secondary]);
   assert.equal(chained.provider, 'primary-nim -> secondary-workers');
 
-  // 1. primary 成功時，不呼叫 secondary
+  // 1. When primary succeeds, secondary is not called
   const tip = await chained.coachTip({} as never);
   assert.equal(tip, 'NVIDIA 建議');
   assert.equal(primaryCalls, 1);
   assert.equal(secondaryCalls, 0);
 
-  // 2. primary 失敗 (回傳 null) 時，自動 fallback 至 secondary
+  // 2. When primary fails (returns null), fall back to secondary
   const news = await chained.marketNews({ id: '1', title: 'T' } as never);
   assert.equal(news, '備援 Workers 快訊');
   assert.equal(primaryCalls, 2);
   assert.equal(secondaryCalls, 1);
 
-  // 3. makeAI 與 detectProvider 組合行為
+  // 3. Combined behavior of makeAI and detectProvider
   const envBoth = { NVIDIA_API_KEY: 'nvapi-test', AI: {} as never };
   assert.equal(detectProvider(envBoth), 'nvidia-nim (fallback: nvidia-nim-backup -> workers-ai)');
   const aiBoth = makeAI(envBoth);
   assert.ok(aiBoth instanceof FallbackRawAI);
   assert.equal(aiBoth.provider, 'nvidia-nim -> nvidia-nim-backup -> workers-ai');
-  // 關閉 NIM 備援模型
+  // Disable NIM backup model
   assert.equal(makeAI({ ...envBoth, NVIDIA_FALLBACK_MODEL: 'none' })!.provider, 'nvidia-nim -> workers-ai');
 
   const envWorkersOnly = { AI: {} as never };
@@ -310,7 +310,7 @@ test('MeteredAI 容錯計量：走 unmetered（如 NVIDIA NIM）不扣次數，�
     provider: 'nvidia-nim',
     unmetered: true,
     coachTip: async () => 'NIM 成功回答',
-    hint: async () => null, // 故意失敗
+    hint: async () => null, // Intentionally fail
   });
 
   const workers: RawAI = Object.assign(new MockAI(), {
@@ -323,22 +323,22 @@ test('MeteredAI 容錯計量：走 unmetered（如 NVIDIA NIM）不扣次數，�
   const chained = new FallbackRawAI([nim, workers]);
   const ai = new MeteredAI(chained, meter);
 
-  // 1. NIM 成功回答 -> 不扣除額度
+  // 1. NIM succeeds -> quota not deducted
   const tip1 = await ai.coachTip({} as never);
   assert.equal(tip1, 'NIM 成功回答');
   assert.equal(used, 0, '走 NVIDIA NIM 不應計入 AI 次數');
 
-  // 2. NIM 失敗 -> fallback 到 Workers AI -> 成功時扣 1 次
+  // 2. NIM fails -> fallback to Workers AI -> deducts 1 on success
   const h1 = await ai.hint(CLIENTS[0], { step: 'objection', asked: [], freeHits: [], observed: [] } as never);
   assert.equal(h1, 'Workers 提示');
   assert.equal(used, 1, 'fallback 到 Workers AI 需計入 1 次額度');
 
-  // 3. 此時 Workers AI 額度已用完 (used=1, limit=1)，但 NIM 仍可正常服務且不被擋
+  // 3. Workers AI quota exhausted (used=1, limit=1), but NIM continues serving unblocked
   const tip2 = await ai.coachTip({} as never);
   assert.equal(tip2, 'NIM 成功回答');
   assert.equal(used, 1);
 
-  // 4. 若額度用完且 NIM 失敗 -> Workers 額度被擋 -> 退回規則版
+  // 4. Quota exhausted and NIM fails -> Workers quota blocked -> fallback to rule-based
   const h2 = await ai.hint(CLIENTS[0], { step: 'objection', asked: [], freeHits: [], observed: [] } as never);
   assert.ok(h2.length > 0 && h2 !== 'Workers 提示', '應退回規則版提示');
   assert.equal(used, 1);
@@ -372,7 +372,7 @@ test('旁觀者預測、專屬結局、面談紀錄標籤、終局大事件', as
   assert.ok(r.epilogue.headline.includes('<br>') && r.epilogue.noPlan.length === 3);
   const log = g.players[0].sessionLogs![0];
   for (const t of ['early_premium', 'missed_key', 'over_cards', 'low_cash', 'growth_heavy', 'non_compliant', 'stress_broken']) assert.ok(log.tags.includes(t), t);
-  // 推進到最後一回合 → 觸發終局公告
+  // Advance to final round -> trigger end-game announcement
   g.players[0].book.push({ clientId: 'yuqing', name: '林雨晴', alloc: { cash: 4, protect: 4, growth: 2 }, cards: ['income'], satisfaction: 70, planQuality: 'good', compliance: 100, stressUsed: 0, signedRound: 1, mis: false });
   g.round = 2; g.session = null; g.turnStage = 'event'; g.event = { kind: 'info', playerId: 'b', title: '', body: '', lines: [] }; g.turn = 1;
   await applyAction(g, 'b', { type: 'continue' }, ctx);
@@ -429,7 +429,7 @@ test('情境抉擇、保單健檢、季度任務、終局榮譽榜', async () =>
   addPlayer(g, { id: 'a', name: 'A' });
   startGame(g, ctx);
   assert.equal(g.quests!.length, 3);
-  // 情境抉擇：選好的答案 → 聲望 +4、選項品質不外洩
+  // Dilemma: picking good choice -> reputation +4, option quality not leaked
   const d = DILEMMAS[0];
   g.turnStage = 'event';
   g.event = { kind: 'dilemma', playerId: 'a', title: d.title, body: d.prompt, lines: [], dilemma: { id: d.id, title: d.title, prompt: d.prompt, choices: d.choices.map((c, i) => ({ id: `${'ABC'[i]}:${c.id}`, text: c.text })), picked: null, outcome: null } };
@@ -441,21 +441,21 @@ test('情境抉擇、保單健檢、季度任務、終局榮譽榜', async () =>
   assert.equal(g.players[0].reputation, rep + 4);
   assert.equal(g.event!.dilemma!.outcome!.tone, 'good');
   assert.match((await applyAction(g, 'a', { type: 'choose_dilemma', choice: 'B:B' }, ctx))!, /沒有待選擇/);
-  // 保單健檢：補對缺口、確認已足夠、亂加保、不聯絡
+  // Policy review: fill correct gap, confirm already sufficient, add wrong card, skip contact
   const entry = { clientId: 'yuqing', name: '林雨晴', alloc: { cash: 4, protect: 4, growth: 2 }, cards: ['income' as const], satisfaction: 70, planQuality: 'good' as const, compliance: 100, stressUsed: 0, signedRound: 1, mis: false };
   const cards = CLIENTS.find(c => c.id === 'yuqing')!.plan.cards;
   assert.equal(reviewOutcome(entry, 'accident', 'accident', cards).quality, 'good');
   assert.equal(reviewOutcome(entry, 'income', 'none', cards).quality, 'good');
   assert.equal(reviewOutcome(entry, 'accident', 'none', cards).quality, 'bad');
-  assert.equal(reviewOutcome(entry, 'accident', 'legacy', cards).quality, 'bad'); // 雨晴的家庭責任為過度配置
+  assert.equal(reviewOutcome(entry, 'accident', 'legacy', cards).quality, 'bad'); // Yuqing's family responsibility is over-coverage
   assert.equal(reviewOutcome(entry, 'accident', 'skip', cards).sat, -10);
-  // 回訪公開狀態不洩漏答案
+  // Review public state does not leak answer
   g.event = { kind: 'review', playerId: 'a', title: '', body: '', lines: [], review: { clientId: 'yuqing', clientName: '林雨晴', change: { title: 't', body: 'b' }, current: { alloc: entry.alloc, cards: entry.cards }, needCard: 'accident', picked: null, outcome: null } };
   g.players[0].book.push({ ...entry });
   assert.ok(!JSON.stringify(publicView(g)).includes('needCard'));
   assert.equal(await applyAction(g, 'a', { type: 'review', card: 'accident' }, ctx), null);
   assert.ok(g.players[0].book[0].cards.includes('accident') && g.players[0].book[0].reviewed);
-  // 任務：統計達標即完成並加聲望
+  // Quest: completing stat target finishes quest and adds reputation
   g.quests = [{ id: 'quiz', title: '合規小尖兵', desc: '', reward: 4, progress: {} }];
   g.players[0].stats!.quizCorrect = 2;
   const before = g.players[0].reputation;

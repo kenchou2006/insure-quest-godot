@@ -1,5 +1,5 @@
-/* 產生 Godot 編輯器預覽用的假資料：跑一場電腦對局，擷取各階段的 publicView（以 p1 視角）。
- * 用法：node tools/dump-preview-states.ts → ../client/scenes/preview/states.json */
+/* Generate mock data for Godot editor preview: run a bot game, capture publicView of each stage (p1 perspective).
+ * Usage: node tools/dump-preview-states.ts -> ../client/scenes/preview/states.json */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { addPlayer, applyAction, createGame, publicView, startGame, type Ctx } from '../src/game/game.ts';
 import { botAction } from '../src/game/bots.ts';
@@ -26,10 +26,10 @@ const want = new Set(['discover', 'plan', 'objection', 'result', 'event']);
 let guard = 0;
 while (g.phase === 'playing' && guard++ < 5000) {
   const actor = g.players[g.turn].id;
-  // 只擷取「輪到你」的畫面，預覽才會出現可操作的按鈕
+  // Only capture "your turn" screens so actionable buttons appear in preview
   if (actor === VIEWER) {
     const key = g.turnStage === 'session' ? g.session?.step : g.turnStage === 'event' ? 'event' : null;
-    // 面談對話擷取「已對話兩輪」的時刻，預覽才看得到對話泡泡與合規燈號
+    // Interview dialog captures moment after two dialogue rounds, so bubbles and compliance indicators are visible
     const ready = key !== 'discover' || (g.session?.asked.length ?? 0) >= 2;
     if (key && ready && want.has(key)) { out[key] = publicView(g, VIEWER); want.delete(key); }
   }

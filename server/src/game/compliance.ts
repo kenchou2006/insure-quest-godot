@@ -1,16 +1,16 @@
-/* INSURE QUEST｜合規雷達規則引擎。
- * 依台灣保險招攬規範與金融消保法，即時偵測業務員話術中的違規或瑕疵。
+/* INSURE QUEST | Compliance radar rule engine.
+ * Real-time detection of violations or flaws in advisor pitches based on Taiwan insurance solicitation regulations and the Financial Consumer Protection Act.
  */
 
 export type ComplianceLevel = 'pass' | 'warning' | 'violation';
 
 export type ComplianceCode =
-  | 'PROMISE_RETURN'        // 保證收益/穩賺不賠
-  | 'FEAR_MONGERING'       // 恐嚇推銷/詛咒出事
-  | 'MISLEADING_COMPARISON'// 不實比較/貶低同業或定存
-  | 'UNDISCLOSED_RISK'     // 未揭露費用或風險
-  | 'EARLY_PRESSURE'       // 未探詢需求即強推商品或逼問預算
-  | 'INJECTION_ATTEMPT';   // 偵測到 Prompt 注入攻擊
+  | 'PROMISE_RETURN'        // Guaranteed return / zero risk
+  | 'FEAR_MONGERING'       // Fear-mongering sales / misfortune cursing
+  | 'MISLEADING_COMPARISON'// Misleading comparison / disparaging competitors or time deposits
+  | 'UNDISCLOSED_RISK'     // Undisclosed fees or risks
+  | 'EARLY_PRESSURE'       // Pushing products or probing budget before discovering needs
+  | 'INJECTION_ATTEMPT';   // Prompt injection attack detected
 
 export interface ComplianceIssue {
   code: ComplianceCode;
@@ -47,7 +47,7 @@ const COMPLIANCE_PATTERNS: RulePattern[] = [
     code: 'PROMISE_RETURN',
     level: 'violation',
     penalty: -20,
-    // 否定語境（「無法保證收益」「不能說穩賺」）是正確的揭露，不算違規
+    // Negative contexts ("cannot guarantee returns", "cannot claim guaranteed profit") are proper disclosures, not violations
     pattern: /(?<!(不|無法|不能|沒辦法|沒有人能|不敢|不會)(說|講|承諾|給你|跟你說)?)(保證(獲利|收益|賺|理賠|保本|不賠|報酬|回本)|穩賺(不賠)?|一定賺|絕(對|不會)虧|比定存(好|高))/u,
     rule: '保險業招攬廣告自律規範：不得為保證獲利或保本之宣傳',
     suggestion: '說明各商品之風險屬性與條款，避免保證用語',
@@ -78,7 +78,7 @@ const COMPLIANCE_PATTERNS: RulePattern[] = [
   },
 ];
 
-/** 規則版合規雷達分析 */
+/** Rule-based compliance radar analysis */
 export function ruleCompliance(text: string): ComplianceData {
   const issues: ComplianceIssue[] = [];
   let worstLevel: ComplianceLevel = 'pass';
@@ -117,7 +117,7 @@ const LEVEL_SEVERITY: Record<ComplianceLevel, number> = {
   violation: 2,
 };
 
-/** 合併規則版與 AI 版的合規判讀：取較嚴重者與扣分較多者 */
+/** Merges rule-based and AI compliance evaluations: takes the more severe level and larger penalty */
 export function mergeCompliance(ruleComp: ComplianceData, aiComp?: ComplianceData | null): ComplianceData {
   if (!aiComp) return ruleComp;
 
@@ -127,7 +127,7 @@ export function mergeCompliance(ruleComp: ComplianceData, aiComp?: ComplianceDat
 
   const penalty = Math.min(ruleComp.penalty, aiComp.penalty);
 
-  // 合併 issues，依 code 去重
+  // Merge issues, deduplicating by code
   const seenCodes = new Set<string>();
   const mergedIssues: ComplianceIssue[] = [];
   for (const issue of [...ruleComp.issues, ...aiComp.issues]) {
@@ -144,7 +144,7 @@ export function mergeCompliance(ruleComp: ComplianceData, aiComp?: ComplianceDat
   };
 }
 
-/** AI 只能引用這些真實存在的規範名稱（不寫條號，避免引用錯誤條文） */
+/** AI can only reference these real regulatory names (omitting article numbers to avoid erroneous citations) */
 export const RULE_BY_CODE: Record<ComplianceCode, string> = {
   PROMISE_RETURN: '保險業招攬廣告自律規範：不得為保證獲利或保本之宣傳',
   FEAR_MONGERING: '金融消費者保護法：不得以誇大、恐嚇方式招攬',

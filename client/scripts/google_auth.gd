@@ -1,9 +1,9 @@
 @tool
 extends Node
-## Google 登入（Autoload "GoogleAuth"）。
-## 網頁版優先使用原生 FedCM（W3C Federated Credential Management API，Active / Button Mode）：
-## 不離開遊戲頁面，瀏覽器原生彈出強制帳號選擇視窗取得 ID Token → POST 給伺服器驗證 → 重新載入。
-## 若瀏覽器不支援 FedCM（如 Safari、Firefox）或驗證失敗，自動退回標準 OAuth 2.0 重新導向流程。
+## Google sign-in (Autoload "GoogleAuth").
+## On web, prioritizes native FedCM (W3C Federated Credential Management API, Active / Button Mode):
+## stays on the game page, browser natively pops up modal account chooser to obtain ID Token -> POST to server for verification -> reload.
+## If the browser does not support FedCM (e.g. Safari, Firefox) or verification fails, automatically falls back to standard OAuth 2.0 redirect flow.
 
 const JS_SETUP := """
 (function () {
@@ -13,19 +13,19 @@ const JS_SETUP := """
     window.location.href = '/api/auth/google/start?return=/';
   }
 
-  // 真正的原生 FedCM 流程（Active / Button Mode）
+  // True native FedCM flow (Active / Button Mode)
   async function runFedCM(clientId) {
     if (!('IdentityCredential' in window) || !navigator.credentials || !navigator.credentials.get) {
       return false;
     }
 
-    // 1. 先向伺服器取得安全 nonce
+    // 1. First fetch secure nonce from server
     var nonceRes = await fetch('/api/auth/google/nonce', { credentials: 'same-origin' });
     if (!nonceRes.ok) throw new Error('nonce_fetch_failed');
     var nonceData = await nonceRes.json();
     var nonce = nonceData.nonce;
 
-    // 2. 檢測瀏覽器支援的 FedCM 模式（支援 active 或 button）
+    // 2. Detect browser-supported FedCM mode (supports active or button)
     var mode = 'active';
     try {
       var modeSupported = false;
@@ -39,7 +39,7 @@ const JS_SETUP := """
       mode = 'button';
     }
 
-    // 3. 呼叫瀏覽器原生 FedCM（直接呼叫 Google FedCM Provider）
+    // 3. Invoke browser native FedCM (call Google FedCM Provider directly)
     var cred = await navigator.credentials.get({
       identity: {
         context: 'signin',
@@ -59,7 +59,7 @@ const JS_SETUP := """
       throw new Error('no_token');
     }
 
-    // 解析 Google FedCM 回傳的 token（可能為 JSON 字串 {"id_token": "..."} 或直接為 JWT）
+    // Parse token returned by Google FedCM (may be JSON string {"id_token": "..."} or raw JWT)
     var rawToken = cred.token;
     var idToken = rawToken;
     if (typeof rawToken === 'string') {
@@ -75,7 +75,7 @@ const JS_SETUP := """
       idToken = rawToken.id_token || rawToken.token || rawToken.credential || '';
     }
 
-    // 4. 將 ID Token 送交後端驗證並寫入工作階段 Cookie
+    // 4. Submit ID Token to backend for verification and write session cookie
     var authRes = await fetch('/api/auth/google/credential', {
       method: 'POST',
       credentials: 'same-origin',
@@ -101,11 +101,11 @@ const JS_SETUP := """
       }
     } catch (err) {
       console.warn('FedCM error:', err);
-      // 使用者手動取消 (AbortError / 取消對話框) 則停留在原畫面，不強制跳轉
+      // User manual cancellation (AbortError / cancelled dialog) stays on current screen without forced redirect
       if (err && (err.name === 'AbortError' || (err.name === 'NotAllowedError' && !String(err.message).toLowerCase().includes('disabled')))) {
         return;
       }
-      // 其他錯誤（如瀏覽器限制、網路失敗等）則退回 OAuth 重新導向流程
+      // Other errors (e.g. browser restrictions, network failure) fall back to OAuth redirect flow
       redirect();
     }
   };
@@ -118,7 +118,7 @@ func _ready() -> void:
 		JavaScriptBridge.eval(JS_SETUP, true)
 
 
-## FedCM 優先的 Google 登入
+## Google sign-in with FedCM priority
 func sign_in() -> void:
 	var client_id: String = str(Net.auth_config.get("googleClientId", "")) if Net.auth_config is Dictionary else ""
 	if OS.has_feature("web") and client_id != "":
@@ -127,7 +127,7 @@ func sign_in() -> void:
 		sign_in_redirect()
 
 
-## 退路：OAuth 重新導向流程（非 Chromium 瀏覽器或 FedCM 失敗時使用）
+## Fallback: OAuth redirect flow (used on non-Chromium browsers or when FedCM fails)
 func sign_in_redirect() -> void:
 	var login_url: String = Net.base_url + "/api/auth/google/start?return=/"
 	if OS.has_feature("web"):

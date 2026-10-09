@@ -1,7 +1,7 @@
 @tool
 class_name Sound
-## 音效管理器：使用 AudioStreamWAV 程式合成音效，無須任何外部音檔。
-## 支援靜音開關與網頁版延遲播放保護。
+## Sound manager: synthesizes sound effects programmatically with AudioStreamWAV without external audio files.
+## Supports mute toggle and web-version delayed playback protection.
 
 static var muted: bool = false
 static var _player: AudioStreamPlayer = null
@@ -87,7 +87,7 @@ static func _gen_dice(duration: float, volume: float) -> AudioStreamWAV:
 	for i in range(samples):
 		var t: float = float(i) / float(mix_rate)
 		var env: float = 1.0 - (float(i) / float(samples))
-		# 快速隨機脈衝模擬骰子撞擊
+		# Fast random impulses simulate dice impacts
 		var noise: float = (randf() * 2.0 - 1.0) * 0.5
 		var f: float = 300.0 + sin(t * 80.0) * 150.0
 		var tone: float = sin(2.0 * PI * f * t) * 0.5
@@ -141,7 +141,7 @@ static func _gen_slide(start_f: float, end_f: float, duration: float, volume: fl
 		var freq: float = lerpf(start_f, end_f, frac)
 		phase += 2.0 * PI * freq / float(mix_rate)
 		var env: float = 1.0 - frac
-		# 帶有一點方波諧波，製造下墜感
+		# Adds square wave harmonics to create a falling sensation
 		var wave: float = (sin(phase) + 0.3 * sin(phase * 2.0)) * env * volume
 		var val: int = clampi(int(wave * 32767.0), -32768, 32767)
 		var idx: int = i * 2

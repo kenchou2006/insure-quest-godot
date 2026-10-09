@@ -1,6 +1,6 @@
 @tool
 class_name UI
-## 介面工具：配色、主題與常用元件的建構函式。所有畫面都以程式碼建構，方便團隊修改與審閱。
+## UI utilities: color palette, theme, and factory functions for common components. All screens are constructed in code for team maintainability and review.
 
 const BG := Color("#0b1f2a")
 const PANEL := Color("#13303f")
@@ -65,7 +65,7 @@ static func set_layout_profile(profile: String, sz: Vector2i) -> void:
 	content_size = sz
 
 
-## 依版型取值：手機用第一個值，其餘用第二個值
+## Value based on layout profile: first value for phone, second value for others
 static func scale_val(phone_value: int, normal_value: int) -> int:
 	return phone_value if is_phone() else normal_value
 
@@ -126,7 +126,7 @@ static func make_theme() -> Theme:
 	t.set_stylebox("normal", "OptionButton", box(PANEL_2, 10, Color(0, 0, 0, 0), 12))
 	t.set_stylebox("hover", "OptionButton", box(PANEL_2.lightened(0.1), 10, Color(0, 0, 0, 0), 12))
 	t.set_stylebox("normal", "SpinBox", box(PANEL_2))
-	# VScrollBar 自訂樣式（寬度 12px，高對比度防隱形，含懸停與按下狀態）
+	# VScrollBar custom style (12px width, high-contrast visibility protection, including hover and pressed states)
 	var sb_scroll := StyleBoxFlat.new()
 	sb_scroll.bg_color = Color("#0b1f2b", 0.85)
 	sb_scroll.set_corner_radius_all(6)
@@ -205,7 +205,7 @@ static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> B
 	return b
 
 
-## 多行文字選項按鈕（長句子會自動換行）
+## Multi-line text option button (long sentences wrap automatically)
 static func option_button(text: String, cb: Callable, color := PANEL_2) -> Button:
 	var b := Button.new()
 	b.text = text
@@ -224,7 +224,7 @@ static func option_button(text: String, cb: Callable, color := PANEL_2) -> Butto
 	return b
 
 
-## 彈出動畫效果
+## Pop-in animation effect
 static func pop_in(node: CanvasItem, duration := 0.25) -> void:
 	node.modulate.a = 0.0
 	node.scale = Vector2(0.95, 0.95)
@@ -234,10 +234,10 @@ static func pop_in(node: CanvasItem, duration := 0.25) -> void:
 	tw.tween_property(node, "scale", Vector2.ONE, duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
-## 淡入向上飄動動畫
+## Fade-in float-up animation
 static func fade_in(node: CanvasItem, duration := 0.25, offset_y := 16.0) -> void:
 	node.modulate.a = 0.0
-	# Container 的子節點位置由容器決定；若補間 position 會寫回過期座標，造成與上方元素重疊
+	# Container child positions are managed by container; tweening position writes stale coords, causing overlap with elements above
 	if node.get_parent() is Container:
 		node.create_tween().tween_property(node, "modulate:a", 1.0, duration)
 		return
@@ -251,7 +251,7 @@ static func fade_in(node: CanvasItem, duration := 0.25, offset_y := 16.0) -> voi
 static func panel(color := PANEL, radius := 14, pad := 14) -> PanelContainer:
 	var p := PanelContainer.new()
 	p.add_theme_stylebox_override("panel", box(color, radius, Color(0, 0, 0, 0), pad))
-	# 讓滑鼠滾輪穿過卡片，交給外層 ScrollContainer 捲動
+	# Allow mouse wheel to pass through card to outer ScrollContainer for scrolling
 	p.mouse_filter = Control.MOUSE_FILTER_PASS
 	return p
 
@@ -310,7 +310,7 @@ static func scroll(child: Control) -> ScrollContainer:
 	return s
 
 
-## 讓捲動區內的非輸入元件不吃滾輪（STOP 會阻止事件傳到外層 ScrollContainer）
+## Make non-input controls inside scroll areas pass wheel events (STOP blocks events from propagating to outer ScrollContainer)
 static func pass_wheel(n: Node) -> void:
 	for c in n.get_children():
 		if c is Control and not (c is LineEdit or c is TextEdit or c is ScrollContainer):
@@ -325,24 +325,24 @@ static func clear(n: Node) -> void:
 		c.queue_free()
 
 
-## 備用場景對照（所有客戶均已有專屬插圖；此對照僅作為極端異常時之最後回退）
+## Fallback scene mapping (all clients have dedicated illustrations; this mapping is only an ultimate fallback for extreme anomalies)
 const FALLBACK_SCENES: Dictionary = {
-	"junhao": "zhiming",   # 王俊豪（外送騎手）：交通載具與街頭
-	"meiling": "wanting",  # 張美玲（單親行政助理）：溫馨公寓書桌
-	"jiahao": "boting",    # 劉家豪（軟體工程師・新手爸爸）：居家科技辦公桌
-	"shufen": "shufen",    # 吳淑芬（會計主管）：主管辦公桌
-	"wenjie": "ziyuan",    # 鄭文傑（國中教師）：沉穩書桌與教案
-	"yiting": "wanting",   # 蔡依婷（行銷專員）：年輕小資租屋書桌
-	"zhiwei": "yuqing",    # 林志偉（小吃店老闆）：廚房與餐飲工作台
-	"peishan": "ziyuan",   # 何佩珊（醫院護理師）：醫療值班工作桌
-	"chengen": "boting",   # 李承恩（資深科技工程師）：科技多螢幕辦公桌
-	"jiaming": "wanting",  # 許家銘（設計公司合夥人）：創意設計工作室
-	"guohua": "zhiming",   # 楊國華（計程車司機）：計程車駕駛座
-	"yijun": "shufen",     # 陳怡君（外商業務經理）：主管辦公室與市景
-	"yixiang": "boting",   # 高奕翔（健身教練）：現代專業活動空間
+	"junhao": "zhiming",   # 王俊豪 (delivery rider): vehicle and street
+	"meiling": "wanting",  # 張美玲 (single-parent admin assistant): cozy apartment desk
+	"jiahao": "boting",    # 劉家豪 (software engineer, new father): home tech workstation
+	"shufen": "shufen",    # 吳淑芬 (accounting manager): executive desk
+	"wenjie": "ziyuan",    # 鄭文傑 (middle school teacher): steady desk and lesson plans
+	"yiting": "wanting",   # 蔡依婷 (marketing specialist): young budget rental desk
+	"zhiwei": "yuqing",    # 林志偉 (diner owner): kitchen and food prep counter
+	"peishan": "ziyuan",   # 何佩珊 (hospital nurse): hospital duty desk
+	"chengen": "boting",   # 李承恩 (senior tech engineer): tech multi-monitor desk
+	"jiaming": "wanting",  # 許家銘 (design firm partner): creative design studio
+	"guohua": "zhiming",   # 楊國華 (taxi driver): taxi driver seat
+	"yijun": "shufen",     # 陳怡君 (MNC sales manager): executive office and city view
+	"yixiang": "boting",   # 高奕翔 (fitness coach): modern professional fitness space
 }
 
-## 尋找客戶場景或插圖路徑：優先使用專屬插圖，若無則回退至主題契合之備用場景
+## Find client scene or illustration path: prioritize dedicated illustration; fallback to thematically matched scene if none
 static func client_scene_path(client_or_id) -> String:
 	var id := ""
 	var scene_name := ""
@@ -359,21 +359,21 @@ static func client_scene_path(client_or_id) -> String:
 		id = client_or_id
 		scene_name = id
 
-	# 1. 優先嘗試專屬名稱（或指定 scene 名稱）
+	# 1. First try dedicated name (or specified scene name)
 	if scene_name != "" and scene_name != "null":
 		for ext in ["webp", "png", "jpg"]:
 			var p := "res://assets/clients/%s.%s" % [scene_name, ext]
 			if ResourceLoader.exists(p):
 				return p
 
-	# 2. 次要嘗試以 id 尋找
+	# 2. Second try searching by id
 	if id != "" and id != "null" and id != scene_name:
 		for ext in ["webp", "png", "jpg"]:
 			var p := "res://assets/clients/%s.%s" % [id, ext]
 			if ResourceLoader.exists(p):
 				return p
 
-	# 3. 若無獨立插圖，依職業情境退回風格契合的備用場景
+	# 3. If no standalone illustration, fall back to style-matched scene based on occupation context
 	var fb: String = str(FALLBACK_SCENES.get(id, ""))
 	if fb == "" and scene_name != "":
 		fb = str(FALLBACK_SCENES.get(scene_name, ""))
@@ -397,7 +397,7 @@ void fragment() {
 """
 static var _circle_mat: ShaderMaterial = null
 
-## 圓形頭像：有圖片就裁成圓形，沒有就顯示名字第一個字
+## Circular avatar: crops image to circle if present, otherwise displays first character of name
 static func avatar(tex: Texture2D, name_text: String, size := 40) -> Control:
 	if tex != null:
 		if _circle_mat == null:
@@ -436,11 +436,11 @@ static func portrait(client: Dictionary, size := 96) -> Control:
 		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		tr.set_anchors_preset(Control.PRESET_FULL_RECT)
 		clip_box.add_child(tr)
-		# 放在水平排列裡時預設會被撐滿整列高度（旁邊泡泡越長頭貼越長）：固定尺寸、靠上
+		# In horizontal layouts default stretches to full row height (longer bubble = longer avatar): fixed size, top-aligned
 		clip_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		clip_box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		return clip_box
-	# 沒有插圖的客戶：以姓氏頭像代替
+	# Clients without illustrations: fallback to surname avatar
 	var p := panel(Color.from_hsv(fmod(str(client.get("name", "?")).hash() / 1000.0, 1.0), 0.45, 0.55), int(size / 2.0), 0)
 	p.custom_minimum_size = Vector2(size, size)
 	p.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -452,7 +452,7 @@ static func portrait(client: Dictionary, size := 96) -> Control:
 	return p
 
 
-## 評級與結果印章（含輕微傾斜與撞擊動畫）
+## Grade and result stamp (with slight tilt and impact animation)
 static func stamp(text: String, col := GOLD, font_size := 22) -> Control:
 	var p := panel(Color(0, 0, 0, 0), 8, 4)
 	p.add_theme_stylebox_override("panel", box(Color(col.r, col.g, col.b, 0.15), 10, col, 8, false))
@@ -467,11 +467,11 @@ static func stamp(text: String, col := GOLD, font_size := 22) -> Control:
 	return p
 
 
-## S 級與簽約慶祝彩帶碎屑粒子（程式碼繪製與動態下落，<= 1.3 秒完成且不卡死遊戲）
+## S-grade and deal-signing celebration confetti particles (code-drawn dynamic fall, finishes <= 1.3s without freezing game)
 static func spawn_confetti(parent: Control) -> void:
 	if not parent or not parent.is_inside_tree():
 		return
-	# 碎屑放在 top_level 的普通 Control 裡：若直接加進 Container（如 PanelContainer），會被撐成整個面板大
+	# Confetti is in a top_level regular Control: if added directly to a Container (e.g. PanelContainer), it expands to full panel size
 	var layer := Control.new()
 	layer.top_level = true
 	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -500,7 +500,7 @@ static func spawn_confetti(parent: Control) -> void:
 	layer.get_tree().create_timer(longest + 0.1).timeout.connect(layer.queue_free)
 
 
-## 文字輸入列：LineEdit＋送出（高度至少 44 方便觸控點選）
+## Text input row: LineEdit + submit (height at least 44 for comfortable touch targeting)
 static func text_input(placeholder: String, on_submit: Callable, max_len := 120) -> HBoxContainer:
 	var h := hbox(8)
 	var le := LineEdit.new()
@@ -519,12 +519,12 @@ static func text_input(placeholder: String, on_submit: Callable, max_len := 120)
 	return h
 
 
-## 十年後的信件卡片（信紙風格：米白底、深色字、手寫感留白）
+## Letter from ten years later card (letter paper style: off-white base, dark text, handwritten-feel margins)
 static func letter_card(letter: Dictionary, client_name: String) -> PanelContainer:
 	var outcome: String = str(letter.get("outcome", "mixed"))
 	var is_phone := is_phone_portrait()
 
-	# 色調：thanks 暖金、regret 灰藍、mixed 中性
+	# Tone: thanks warm gold, regret grayish-blue, mixed neutral
 	var accent_col: Color = Color("#c48b23") if outcome == "thanks" else (Color("#4c6d8c") if outcome == "regret" else Color("#6d6961"))
 	var bg_col: Color = Color("#fbf8ee") if outcome == "thanks" else (Color("#f2f5f8") if outcome == "regret" else Color("#f5f2eb"))
 	var tag_text: String = "★ 暖心感謝" if outcome == "thanks" else ("▲ 遺憾與感慨" if outcome == "regret" else "● 百感交集")
@@ -537,7 +537,7 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 	var v := vbox(8 if is_phone else 10)
 	p.add_child(v)
 
-	# 標題列
+	# Header row
 	var head := hbox(8)
 	var title_lbl := label("十年後，%s 寄來的信" % client_name, 16 if is_phone else 18, Color("#2b2219"), true)
 	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -549,7 +549,7 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 	head.add_child(tag_p)
 	v.add_child(head)
 
-	# 事件與缺口小結
+	# Event and gap summary
 	var ev_text: String = str(letter.get("event", ""))
 	var gap_val: int = int(letter.get("gap", 0))
 	if ev_text != "" or letter.has("gap") or gap_val > 0:
@@ -565,13 +565,13 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 		summary_box.add_child(sv)
 		v.add_child(summary_box)
 
-	# 信件內文
+	# Letter body
 	var content: String = str(letter.get("content", ""))
 	if content != "":
 		var body_lbl := label(content, 14 if is_phone else 15, Color("#2c241d"), true)
 		v.add_child(body_lbl)
 
-	# 落款
+	# Signature
 	var sign_row := hbox(8)
 	sign_row.add_child(spacer())
 	var sign_lbl := label("—— %s 敬上" % client_name, 12 if is_phone else 13, Color("#5e564c"))

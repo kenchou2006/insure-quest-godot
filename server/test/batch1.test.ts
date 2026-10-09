@@ -106,7 +106,7 @@ test('ruleCompliance 合規雷達：正確辨識違規、警告與合規語句',
   assert.equal(r5.level, 'violation');
   assert.ok(r5.issues.some(i => i.code === 'INJECTION_ATTEMPT'));
 
-  // 合規語句 pass
+  // compliant sentence passes
   const rPass = ruleCompliance('請問如果收入中斷一個月，家裡有哪些固定支出是必須支付的？');
   assert.equal(rPass.level, 'pass');
   assert.equal(rPass.penalty, 0);
@@ -151,7 +151,7 @@ test('talk 動作：規則版流程、扣 talkLeft、合規扣分、記錄至 as
   };
   g.turnStage = 'session';
 
-  // 輪次 1：點選建議問句（suggested = income）
+  // Turn 1: pick a suggested question (suggested = income)
   const err1 = await applyAction(g, 'p1', { type: 'talk', text: '如果收入中斷一個月，哪些支出仍然必須支付？', suggested: 'income' }, ctx);
   assert.equal(err1, null);
   assert.equal(g.session.talkLeft, 2);
@@ -159,7 +159,7 @@ test('talk 動作：規則版流程、扣 talkLeft、合規扣分、記錄至 as
   assert.equal(g.session.asked[0].qid, 'income');
   assert.equal(g.session.asked[0].compliance, 'pass');
 
-  // 輪次 2：自由輸入並踩到違規（保證獲利）
+  // Turn 2: free input that hits a violation (guaranteed profit)
   const compBefore = g.session.m.compliance;
   const err2 = await applyAction(g, 'p1', { type: 'talk', text: '這份方案我保證穩賺不賠，一定賺大錢' }, ctx);
   assert.equal(err2, null);
@@ -167,16 +167,16 @@ test('talk 動作：規則版流程、扣 talkLeft、合規扣分、記錄至 as
   assert.ok(g.session.m.compliance < compBefore, 'compliance should be penalized');
   assert.equal(g.session.asked[1].compliance, 'violation');
 
-  // 輪次 3：自由輸入正常提問
+  // Turn 3: free input, normal question
   const err3 = await applyAction(g, 'p1', { type: 'talk', text: '您目前最在乎的人生成就是什麼？' }, ctx);
   assert.equal(err3, null);
   assert.equal(g.session.talkLeft, 0);
 
-  // 第 4 輪應被拒絕
+  // Turn 4 should be rejected
   const err4 = await applyAction(g, 'p1', { type: 'talk', text: '第四次對話' }, ctx);
   assert.match(err4!, /對話輪數已用完/);
 
-  // 3 輪結束後，進入方案配置 to_plan 應成功
+  // After 3 turns, moving to plan allocation (to_plan) should succeed
   const errPlan = await applyAction(g, 'p1', { type: 'to_plan' }, ctx);
   assert.equal(errPlan, null);
   assert.equal(g.session.step, 'plan');
@@ -223,7 +223,7 @@ test('revealedFacts 白名單過濾：不在客戶 facts 清單的偽造線索�
   g.turnStage = 'session';
 
   await applyAction(g, 'p1', { type: 'talk', text: '請問您的生活狀況？' }, ctx);
-  // 偽造的線索不應加入 observed
+  // Forged clues must not be added to observed
   assert.equal(g.session.observed.length, 0);
 });
 
@@ -234,7 +234,7 @@ test('訪客（沒有 accountId）永遠不用 AI，且電腦顧問永遠不用 
     letter: async () => { rawCalled = true; return null; },
   });
 
-  // 訪客沒有 meter（傳入 null）
+  // Guests have no meter (pass null)
   const guestAI = new MeteredAI(spyRaw, null);
   assert.equal(guestAI.enabled, false);
 
@@ -257,7 +257,7 @@ test('AI 回傳不合法 / null 會退還額度並 fallback 至規則版', async
   };
 
   const failingRaw: RawAI = Object.assign(new MockAI(), {
-    talk: async () => null, // 模擬格式錯誤或 API 失敗回傳 null
+    talk: async () => null, // Simulate malformed output or API failure returning null
   });
 
   const metered = new MeteredAI(failingRaw, meter);
@@ -272,7 +272,7 @@ test('AI 回傳不合法 / null 會退還額度並 fallback 至規則版', async
 test('十年後的信：規則引擎定結局、模板信包含 event 與 gap、相反結論被替換', () => {
   const c = CLIENTS[0];
 
-  // 1. 全部守住（strong） -> thanks, gap = 0
+  // 1. All held (strong) -> thanks, gap = 0
   const strongStress = {
     quality: 'strong',
     events: [
@@ -289,7 +289,7 @@ test('十年後的信：規則引擎定結局、模板信包含 event 與 gap、
   assert.ok(strongText.includes('沒有留下任何財務缺口'));
   assert.ok(strongText.length >= 100 && strongText.length <= 250);
 
-  // 2. 擊穿（weak） -> regret, gap > 0
+  // 2. Broken through (weak) -> regret, gap > 0
   const weakStress = {
     quality: 'weak',
     events: [
@@ -305,15 +305,15 @@ test('十年後的信：規則引擎定結局、模板信包含 event 與 gap、
   assert.ok(weakText.includes(fWeak.event));
   assert.ok(weakText.includes(String(fWeak.gap)));
 
-  // 3. 驗證相反結論過濾器 validateLetterContent
-  // thanks 信件中含有「後悔」或「沒有理賠」 -> 判定不合格 (false)
+  // 3. Verify the contradictory-conclusion filter validateLetterContent
+  // A thanks letter containing「後悔」or「沒有理賠」-> rejected (false)
   assert.equal(validateLetterContent('雖然謝謝您，但我真的很後悔當初買了這個，完全沒有理賠到！', 'thanks'), false);
-  // thanks 合格信件 -> true
+  // Valid thanks letter -> true
   assert.equal(validateLetterContent(strongText, 'thanks'), true);
 
-  // regret 信件中含有「慶幸」「還好有買」 -> 判定不合格 (false)
+  // A regret letter containing「慶幸」「還好有買」-> rejected (false)
   assert.equal(validateLetterContent('雖然有些損失，但我還是很慶幸當初有買，還好有買！', 'regret'), false);
-  // regret 合格信件 -> true
+  // Valid regret letter -> true
   assert.equal(validateLetterContent(weakText, 'regret'), true);
 });
 
@@ -323,7 +323,7 @@ test('publicView 與結算報告 FinalRow 帶出信件與動態變數資訊', as
   addPlayer(g, { id: 'p1', name: '顧問' });
   startGame(g, ctx);
 
-  // 模擬觸發面談
+  // Simulate triggering an interview
   g.players[0].pos = 1;
   const yuqing = CLIENTS.find(c => c.id === 'yuqing')!;
   g.session = {
@@ -349,7 +349,7 @@ test('publicView 與結算報告 FinalRow 帶出信件與動態變數資訊', as
   assert.equal(view.session.twist.id, LIFE_TWISTS[0].id);
   assert.equal(view.session.talkLeft, 3);
 
-  // 完成面談流程
+  // Complete the interview flow
   await applyAction(g, 'p1', { type: 'talk', text: '請問生活必要支出？', suggested: 'income' }, ctx);
   await applyAction(g, 'p1', { type: 'talk', text: '您最在乎的人生目標是什麼？', suggested: 'goal' }, ctx);
   await applyAction(g, 'p1', { type: 'talk', text: '遇到困難時有何現有資源？', suggested: 'coverage' }, ctx);
@@ -361,7 +361,7 @@ test('publicView 與結算報告 FinalRow 帶出信件與動態變數資訊', as
   assert.ok(g.session.result?.letter, 'session result should contain letter');
   assert.ok(g.session.result.letter.content.length > 50);
 
-  // 結束面談
+  // End the interview
   await applyAction(g, 'p1', { type: 'continue' }, ctx);
   assert.equal(g.session, null);
   assert.ok(g.players[0].sessionLogs![0].letter, 'session log should contain letter');
@@ -398,7 +398,7 @@ test('LLM 對話把關：違規需在原話找到引用、線索每輪最多 1 �
     async ask() { return this.reply; }
   }
   const base = { revealedFacts: titles, trustDelta: 3, insightDelta: 4, emotion: 'neutral', coachTip: '' };
-  // 合規揭露被模型誤判為違規（沒有可對應的引用）→ 不採信；回固定句時交給備援
+  // Compliant disclosure misjudged as a violation by the model (no matching quote) -> ignored; a canned reply falls back to the backup
   const fp = await new Stub({ ...base, answer: '你在說什麼奇怪的話？', compliance: { level: 'violation', penalty: 0, issues: [] } })
     .talk(c, null, [], '這類商品無法保證收益，先看你的需求。');
   assert.equal(fp, null);
@@ -407,13 +407,13 @@ test('LLM 對話把關：違規需在原話找到引用、線索每輪最多 1 �
   assert.equal(fp2.compliance.level, 'pass');
   assert.equal(fp2.compliance.penalty, 0);
   assert.equal(fp2.revealedFacts.length, 1);
-  // 真的違規但模型給 0 分、回固定句 → 最低扣 15 分，回答換成防備語氣
+  // Real violation but the model scores 0 with a canned reply -> deduct at least 15, answer switches to a defensive tone
   const v = await new Stub({ ...base, answer: '你在說什麼奇怪的話？', compliance: { level: 'violation', penalty: 0, issues: [{ code: 'PROMISE_RETURN', quote: '保證收益', rule: '', suggestion: '' }] } })
     .talk(c, null, [], '這張保單保證收益，比定存好。');
   assert.equal(v.compliance.level, 'violation');
   assert.equal(v.compliance.penalty, -15);
   assert.ok(!v.answer.includes('奇怪的話'));
-  // 一般違規同時被標「注入」（網頁實測情況）：丟掉注入判定、回答不用固定句、短評代碼換中文
+  // Ordinary violation also tagged as injection (seen on the web): drop the injection flag, no canned reply, map codes to Chinese labels
   const both = await new Stub({ ...base, answer: '你在說什麼奇怪的話？', coachTip: '違反 PROMISE_RETURN 與 FEAR_MONGERING',
     compliance: { level: 'violation', penalty: -25, issues: [
       { code: 'PROMISE_RETURN', quote: '保證收益', rule: '', suggestion: '' },
@@ -422,7 +422,7 @@ test('LLM 對話把關：違規需在原話找到引用、線索每輪最多 1 �
   assert.deepEqual(both.compliance.issues.map((i: { code: string }) => i.code), ['PROMISE_RETURN']);
   assert.ok(!both.answer.includes('奇怪的話'));
   assert.equal(both.coachTip, '違反 保證收益 與 恐嚇推銷');
-  // 只標注入（Workers AI 實測）：規則版雷達認得是保證收益 → 不採信注入、不回固定句（違規由規則版合併）
+  // Only tagged as injection (seen with Workers AI): rule radar recognizes guaranteed returns -> ignore injection, no canned reply (violation merged from rules)
   const onlyInj = await new Stub({ ...base, answer: '你在說什麼奇怪的話？',
     compliance: { level: 'violation', penalty: -15, issues: [{ code: 'INJECTION_ATTEMPT', quote: '保證收益', rule: '', suggestion: '' }] } })
     .talk(c, null, [], '這張保單保證收益，不買一定會後悔。');

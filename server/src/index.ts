@@ -1,4 +1,4 @@
-/* INSURE QUEST｜Worker 入口：API 路由；其他路徑由 Workers Static Assets 提供 Godot 網頁版。 */
+/* INSURE QUEST | Worker entry: API routing; other paths serve Godot web export via Workers Static Assets. */
 import { Buffer } from 'node:buffer';
 import { Room, ACCOUNT_HEADER, type AccountHeader } from './room.ts';
 import { Records, globalRecords, userRecords } from './records.ts';
@@ -13,25 +13,25 @@ export interface Env {
   ROOM: DurableObjectNamespace<Room>;
   RECORDS: DurableObjectNamespace<Records>;
   ASSETS?: Fetcher;
-  /** Workers AI 繫結 */
+  /** Workers AI binding */
   AI?: Ai;
-  /** workers-ai（預設）｜claude｜mock｜rules */
+  /** workers-ai (default) | claude | mock | rules */
   AI_PROVIDER?: string;
   WORKERS_AI_MODEL?: string;
-  /** 每個帳號每日 AI 呼叫上限（預設 10，台北時間午夜重置） */
+  /** Daily AI call quota per account (default 10, resets at Taipei midnight) */
   AI_DAILY_LIMIT?: string;
   ANTHROPIC_API_KEY?: string;
   AI_MODEL?: string;
-  /** NVIDIA NIM 設定（有填寫且連線正常時優先使用） */
+  /** NVIDIA NIM configuration (preferred when filled and connected normally) */
   NVIDIA_API_KEY?: string;
   NVIDIA_MODEL?: string;
   NVIDIA_FALLBACK_MODEL?: string;
   NVIDIA_BASE_URL?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
-  /** 可查看全部學員紀錄的講師 Email，逗號分隔 */
+  /** Trainer emails allowed to view all learner records, comma-separated */
   TRAINER_EMAILS?: string;
-  /** 本機測試登入（只在 .dev.vars 設定 1，且僅限 localhost） */
+  /** Local dev test login (set to 1 in .dev.vars only, localhost only) */
   DEV_LOGIN?: string;
 }
 
@@ -113,7 +113,7 @@ export default {
         const gUsed = await globalRecords(env).aiUsage(user.id);
         if (gUsed > 0) used = gUsed;
       }
-      // 等級：優先讀個人切片；舊資料只在全域實例時退回全域
+      // Level: read personal shard first; fall back to global instance only for legacy data
       let xp = await userRecords(env, user.id).xpSummary(user.id);
       if (xp.games === 0) xp = await globalRecords(env).xpSummary(user.id);
       return Response.json({
@@ -123,14 +123,14 @@ export default {
       });
     }
 
-    // AI 使用紀錄頁：今日額度（Workers AI 計次）、各供應者實際呼叫次數、近 7 天
+    // AI usage history page: today's quota (Workers AI counted), actual call counts per provider, past 7 days
     if (url.pathname === '/api/ai-usage' && req.method === 'GET') {
       const user = await currentUser(req, env);
       if (!user) return Response.json({ error: '請先登入才能查看 AI 使用紀錄' }, { status: 401 });
       const stub = userRecords(env, user.id);
       const limit = Math.max(0, Number(env.AI_DAILY_LIMIT) || 10);
       const used = await stub.aiUsage(user.id);
-      // 台北時間下一個午夜（UTC+8）
+      // Next midnight in Taipei time (UTC+8)
       const now = Date.now();
       const resetAt = Math.floor((now + 8 * 3600_000) / 86_400_000 + 1) * 86_400_000 - 8 * 3600_000;
       return Response.json({
@@ -140,10 +140,14 @@ export default {
     }
 
     if (url.pathname === '/api/rooms' && req.method === 'POST') {
+      // Multiplayer rooms require login; guests may only create solo practice rooms.
+      let solo = false;
+      try { solo = !!(await req.json<{ solo?: boolean }>())?.solo; } catch { solo = false; }
+      if (!solo && !(await currentUser(req, env))) return json({ error: '多人連線需先登入' }, 401);
       for (let i = 0; i < 5; i++) {
         const code = newCode();
         const stub = env.ROOM.get(env.ROOM.idFromName(code));
-        const r = await stub.fetch('https://room/init', { method: 'POST', body: JSON.stringify({ code }) });
+        const r = await stub.fetch('https://room/init', { method: 'POST', body: JSON.stringify({ code, solo }) });
         if (r.ok) return json({ code });
       }
       return json({ error: '無法建立房間' }, 500);
@@ -157,12 +161,12 @@ export default {
       const fwd = new Request(`https://room/${m[2]}`, req);
       fwd.headers.delete(ACCOUNT_HEADER);
       if (m[2] === 'ws') {
-        // 只有同源的 WebSocket 才帶入登入身分（防止跨站 WebSocket 劫持）
+        // Only same-origin WebSockets carry login identity (prevents cross-site WebSocket hijacking)
         const origin = req.headers.get('Origin');
         let sameOrigin = !origin;
         try { if (origin) sameOrigin = new URL(origin).host === url.host; } catch { sameOrigin = false; }
         const user = sameOrigin ? await currentUser(req, env) : null;
-        // 標頭只能放 ASCII，中文姓名先編碼
+        // Headers only accept ASCII, encode Chinese name first
         if (user) fwd.headers.set(ACCOUNT_HEADER, encodeURIComponent(JSON.stringify({ id: user.id, name: user.name } satisfies AccountHeader)));
       }
       const res = await stub.fetch(fwd);
@@ -179,17 +183,17 @@ export default {
       const limit = Number(url.searchParams.get('limit')) || 50;
       let recordsList;
       if (all) {
-        // 講師查詢全體學員紀錄：由全域 DO 提供輕量摘要（不跨切片 Fan-out，極速回應）
+        // Trainer queries all learner records: lightweight summary from global DO (no cross-shard fan-out, fast response)
         recordsList = await globalRecords(env).list(null, limit);
       } else {
         const targetId = target || user.id;
-        // 個人紀錄：優先由個人獨立 DO 切片讀取完整遊戲決策軌跡
+        // Personal records: read full gameplay decision history from personal standalone DO shard first
         recordsList = await userRecords(env, targetId).list(targetId, limit);
         if (recordsList.length === 0) {
           recordsList = await globalRecords(env).list(targetId, limit);
         }
       }
-      // 弱點標籤的中文名稱與建議，供紀錄重播顯示
+      // Weakness tag Chinese labels and suggestions for record replay display
       const tagInfo = Object.fromEntries(Object.entries(TAG_INFO).map(([k, v]) => [k, v.label]));
       return Response.json({ records: recordsList, tagInfo });
     }
@@ -200,7 +204,7 @@ export default {
       const target = url.searchParams.get('user');
       if (target && target !== user.id && !isTrainer(env, user)) return Response.json({ error: '只有講師可以查看其他學員' }, { status: 403 });
       const targetId = target || user.id;
-      // 個人學習檔案：優先由個人獨立 DO 切片計算
+      // Personal learning profile: computed from personal standalone DO shard first
       let prof = await userRecords(env, targetId).profile(targetId);
       if (prof.games === 0) {
         const gProf = await globalRecords(env).profile(targetId);
@@ -212,7 +216,7 @@ export default {
     if (url.pathname === '/api/learners' && req.method === 'GET') {
       const user = await currentUser(req, env);
       if (!isTrainer(env, user)) return Response.json({ error: '只有講師可以查看學員清單' }, { status: 403 });
-      // 講師學員清單：由全域 DO 提供聚合清單
+      // Trainer learner list: aggregated list provided by global DO
       return Response.json({ learners: await globalRecords(env).learners() });
     }
 

@@ -2,7 +2,7 @@ import type { Award, QuestState, QuestStats } from './extras.ts';
 import type { LifeTwist } from './twists.ts';
 import type { ClientLetter } from './letters.ts';
 import type { ComplianceLevel } from './compliance.ts';
-/* INSURE QUEST｜共用型別。伺服器權威狀態、客戶資料與訊息協定都在這裡定義。 */
+/* INSURE QUEST | Shared types. Authoritative server state, client profiles, and message protocols are defined here. */
 
 export type Metric = 'trust' | 'insight' | 'fit' | 'risk' | 'compliance';
 export type Metrics = Record<Metric, number>;
@@ -13,7 +13,7 @@ export type Alloc = Record<ResKey, number>;
 export type QuestionId = 'income' | 'goal' | 'coverage' | 'risk' | 'premium';
 export type CardId = 'medical' | 'income' | 'accident' | 'tools' | 'legacy' | 'care';
 
-/** 場景插圖上的熱點（百分比 0–100） */
+/** Hotspots on scene illustrations (percentage 0-100) */
 export interface Spot { x: number; y: number; w: number; h: number }
 
 export interface Answer { text: string; trust: number; insight: number; key: string | null }
@@ -32,10 +32,10 @@ export interface ClientProfile {
   goal: string; amount: string; incomeInfo: string; family: string;
   intro: string; quote: string;
   facts: { title: string; detail: string; fact: string; spot?: Spot }[];
-  /** 有場景插圖的客戶（原型五位）：插圖 id 與專屬干擾物，用於熱點找線索 */
+  /** Clients with scene illustrations (prototype 5 clients): illustration id and dedicated decoy, used for finding clue hotspots */
   scene?: string | null;
   decoy?: { title: string; detail: string; spot?: Spot };
-  /** 專屬結局文案（依壓力預演強／中／弱）與「沒有規劃」的後果 */
+  /** Dedicated ending copy (by stress rehearsal strong / medium / weak) and consequences of "no plan" */
   outcomes?: Record<'strong' | 'medium' | 'weak', { headline: string; title: string; list: string[] }>;
   noPlan?: string[];
   answers: Record<QuestionId, Answer>;
@@ -56,10 +56,10 @@ export interface Tile { type: TileType; name: string }
 
 export interface MarketEvent {
   id: string; title: string; body: string; tag: string;
-  /** 每枚資源幣的承接力（負值＝暴露）。 */
+  /** Absorption power per resource coin (negative value = exposure). */
   absorb: Partial<Record<ResKey, number>>;
   need: number;
-  /** 正面行情：成長部位帶來滿意度，不是測試防線 */
+  /** Bull market: growth position generates satisfaction rather than testing defenses */
   boom?: boolean;
   lesson: string;
 }
@@ -72,7 +72,7 @@ export interface BookEntry {
   clientId: string; name: string; alloc: Alloc; cards: CardId[];
   satisfaction: number; planQuality: Quality; compliance: number;
   stressUsed: number; signedRound: number; mis: boolean;
-  /** 是否已做過生命週期回訪 */
+  /** Whether lifecycle review has been conducted */
   reviewed?: boolean;
 }
 
@@ -80,7 +80,7 @@ export interface Decision { round: number; clientName: string; stage: string; qu
 
 export interface PlayerState {
   id: string; name: string; isBot: boolean; botLevel: BotLevel | null;
-  /** 登入帳號（Google）；訪客與電腦顧問為 null */
+  /** Login account (Google); null for guests and bot advisors */
   accountId?: string | null;
   connected: boolean; disconnectedAt: number | null;
   pos: number; reputation: number; commission: number;
@@ -88,9 +88,9 @@ export interface PlayerState {
   book: BookEntry[];
   decisions: Decision[];
   quizCorrect: number; quizTotal: number;
-  /** 每場面談的完整紀錄（保存到培訓紀錄、計算弱點標籤） */
+  /** Complete log of each interview (saved to training records, used to calculate weakness tags) */
   sessionLogs?: SessionLog[];
-  /** 季度任務統計與合規連擊 */
+  /** Quarterly quest stats and compliance streak */
   stats?: QuestStats;
   complianceStreak?: number;
   finalTurn?: boolean;
@@ -113,18 +113,18 @@ export interface SessionState {
   freeLeft: number;
   talkLeft?: number;
   twist?: LifeTwist | null;
-  /** 自由提問命中的標準題目（計入關鍵問題覆蓋） */
+  /** Standard questions matched by free-form asking (counted toward key question coverage) */
   freeHits: QuestionId[];
-  /** 場景線索（3 真 1 干擾），observed 為已調查的索引 */
+  /** Scene clues (3 real, 1 decoy); observed contains indices already investigated */
   clues: { title: string; detail: string; fact: string; real: boolean; spot?: Spot }[];
-  /** 旁觀者預測：playerId → 評級 */
+  /** Spectator predictions: playerId -> grade */
   predictions: Record<string, string>;
   observed: number[];
   m: Metrics;
   objectionOrder: number[];
   objectionReply?: { text: string; title: string; body: string; quality: Quality };
   objectionMode?: 'choice' | 'free';
-  /** AI 教練提示：每場面談限用一次 */
+  /** AI coach hint: limited to once per interview */
   hintUsed?: boolean;
   hint?: string;
   plan?: { alloc: Alloc; cards: CardId[]; quality: Quality; notes: string[] };
@@ -142,15 +142,15 @@ export interface PendingEvent {
   kind: 'life' | 'market' | 'quiz' | 'audit' | 'settlement' | 'seminar' | 'info' | 'dilemma' | 'review';
   playerId: string; title: string; body: string;
   lines: { text: string; tone: 'good' | 'ok' | 'bad' | 'info' }[];
-  /** order[顯示位置] = 題庫原始選項索引；只存在伺服器，不送給客戶端 */
+  /** order[display position] = question bank original option index; server-only, not sent to client */
   quiz?: { id: string; q: string; options: string[]; order: number[]; picked?: number; answer?: number; explain?: string };
-  /** 情境抉擇卡（選項品質只在伺服器端，用 id 對照 DILEMMAS） */
+  /** Dilemma cards (option quality is server-only, matched by id to DILEMMAS) */
   dilemma?: { id: string; title: string; prompt: string; choices: { id: string; text: string }[]; picked: string | null; outcome: { title: string; body: string; tone: 'good' | 'ok' | 'bad'; effects: string } | null };
-  /** 客戶生命週期回訪；needCard 只在伺服器端，送出前移除 */
+  /** Client lifecycle review; needCard is server-only, removed before sending */
   review?: { clientId: string; clientName: string; change: { title: string; body: string }; current: { alloc: Alloc; cards: CardId[] }; needCard: CardId; picked: string | null; outcome: { title: string; body: string; tone: 'good' | 'ok' | 'bad' } | null };
 }
 
-/** 一場面談的可回顧紀錄 */
+/** Reviewable record of an interview */
 export interface SessionLog {
   clientId: string; clientName: string; job: string; round: number;
   grade: string; score: number; signed: boolean; referral: boolean; hintUsed: boolean;
@@ -165,7 +165,7 @@ export interface SessionLog {
   tags: string[];
 }
 
-/** 全體公告（例如終局大事件），客戶端每個 id 顯示一次 */
+/** Server-wide announcement (e.g. endgame major event), displayed once per id on client */
 export interface Announcement { id: string; title: string; body: string; lines: { text: string; tone: 'good' | 'ok' | 'bad' | 'info' }[] }
 
 export interface LogLine { ts: number; text: string; tone?: 'good' | 'ok' | 'bad' | 'info' }
@@ -182,6 +182,8 @@ export interface GameState {
   code: string; phase: 'lobby' | 'playing' | 'ended';
   hostId: string | null;
   settings: { rounds: number; aiClients: boolean };
+  /** Solo practice room: guests may create it, but no other human can join or spectate. */
+  solo?: boolean;
   players: PlayerState[];
   turn: number; round: number;
   turnStage: 'roll' | 'session' | 'event' | 'done';
@@ -196,7 +198,7 @@ export interface GameState {
   announcement?: Announcement | null;
   quests?: QuestState[];
   awards?: Award[] | null;
-  /** 結算後 AI 仍在撰寫教練回饋與十年後的信（報告先顯示規則版，完成後更新） */
+  /** AI still writing coach feedback and letter from ten years later after settlement (report shows rule-based first, updated upon completion) */
   aiPending?: boolean;
   version: number;
 }
