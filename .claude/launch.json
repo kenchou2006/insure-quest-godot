@@ -1,0 +1,31 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "insure-quest-godot",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd server && npm run build:web && npx wrangler dev --env local --port ${PORT:-8787} --ip 127.0.0.1 --persist-to ../.wrangler-webtest"
+      ],
+      "port": 8787,
+      "autoPort": true
+    },
+    {
+      "name": "insure-quest-web-test",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "server",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "8788",
+        "--ip",
+        "127.0.0.1"
+      ],
+      "port": 8788
+    }
+  ]
+}
