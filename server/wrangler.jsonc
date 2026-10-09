@@ -26,12 +26,9 @@
     "WORKERS_AI_MODEL": "@cf/qwen/qwen3.8-27b",
     "NVIDIA_MODEL": "nvidia/nemotron-3-super-120b-a12b",
     "NVIDIA_FALLBACK_MODEL": "deepseek-ai/deepseek-v4.1-flash",
-    "AI_DAILY_LIMIT": "10",
-    "AI_MODEL": "claude-opus-5-5",
-    // Trainer emails (comma-separated) allowed to view all learner records
-    "TRAINER_EMAILS": ""
+    "AI_DAILY_LIMIT": "10"
   },
-  // Set secrets via wrangler secret put: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, (optional) NVIDIA_API_KEY, (optional) ANTHROPIC_API_KEY
+  // Set secrets via wrangler secret put: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, (optional) NVIDIA_API_KEY, (optional) ANTHROPIC_API_KEY, TRAINER_EMAILS (comma-separated trainer emails allowed to view all learner records)
   "observability": { "enabled": true },
   // Local dev environment (npm run dev = wrangler dev --env local): Workers AI binding calls remote, requires wrangler login.
   // When offline, set AI_PROVIDER=mock in .dev.vars (overrides vars below).
@@ -50,9 +47,7 @@
         "WORKERS_AI_MODEL": "@cf/qwen/qwen3.8-27b",
         "NVIDIA_MODEL": "nvidia/nemotron-3-super-120b-a12b",
         "NVIDIA_FALLBACK_MODEL": "deepseek-ai/deepseek-v4.1-flash",
-        "AI_DAILY_LIMIT": "10",
-        "AI_MODEL": "claude-opus-5-5",
-        "TRAINER_EMAILS": ""
+        "AI_DAILY_LIMIT": "10"
       }
     }
   }
