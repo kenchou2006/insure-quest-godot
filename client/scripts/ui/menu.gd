@@ -235,7 +235,10 @@ func _build_ui() -> void:
 func _update_auth_card() -> void:
 	if _auth_card_container == null or not is_instance_valid(_auth_card_container):
 		return
-	UI.clear(_auth_card_container)
+	# Free immediately (not queue_free) so a rebuild within the same frame can never leave a stale second card
+	for c in _auth_card_container.get_children():
+		_auth_card_container.remove_child(c)
+		c.free()
 	if Net.is_logged_in():
 		var u: Dictionary = Net.get_user()
 		var u_name: String = str(u.get("name", "顧問"))
@@ -246,12 +249,17 @@ func _update_auth_card() -> void:
 		# Google avatar (displays initial before download completes or if no avatar)
 		h.add_child(UI.avatar(Net.avatar_tex, u_name, 40))
 		if Net.avatar_tex == null:
-			_load_avatar()
+			# Deferred: a cached avatar loads synchronously and would re-enter this function mid-build, adding a second card
+			_load_avatar.call_deferred()
 
 		var info_v := UI.vbox(2)
 		info_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var tag_text: String = " ［講師］" if is_trainer else ""
-		info_v.add_child(UI.label(u_name + tag_text, 15, UI.TEXT, true))
+		# No autowrap: before the first layout pass a zero-width wrapping label renders as a tall multi-line block
+		var name_lbl := UI.label(u_name + tag_text, 15, UI.TEXT)
+		name_lbl.text_overflow_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name_lbl.custom_minimum_size.x = 0
+		info_v.add_child(name_lbl)
 		# Advisor level and EXP bar (EXP = sum of scores across matches)
 		if not lv.is_empty():
 			var lv_row := UI.hbox(6)
