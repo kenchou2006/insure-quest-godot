@@ -5,7 +5,7 @@
  */
 import { DurableObject } from 'cloudflare:workers';
 import type { Action, BotLevel, GameState, PlayerState } from './game/types.ts';
-import { addPlayer, applyAction, createGame, enrichCoach, injectClient, log, predict, publicView, removePlayer, startGame, type Ctx } from './game/game.ts';
+import { addPlayer, applyAction, createGame, enrichCoach, injectClient, log, mulberry32, predict, publicView, removePlayer, startGame, type Ctx } from './game/game.ts';
 import { botAction } from './game/bots.ts';
 import { BOARD, CARDS, QUESTIONS } from './game/data.ts';
 import { makeAI, MeteredAI, type AIService, type Meter, type RawAI } from './ai.ts';
@@ -25,7 +25,7 @@ type ClientMsg =
   | { t: 'hello'; playerId?: string; name?: string }
   | { t: 'add_bot'; level?: BotLevel }
   | { t: 'remove_player'; id: string }
-  | { t: 'settings'; rounds?: number; aiClients?: boolean }
+  | { t: 'settings'; rounds?: number; aiClients?: boolean; demo?: string }
   | { t: 'start' }
   | { t: 'action'; action: Action }
   | { t: 'react'; emoji: string }
@@ -46,23 +46,33 @@ export class Room extends DurableObject<Env> {
   private queue: Promise<unknown> = Promise.resolve();
   /** AI provider (Workers AI / Claude / mock); null means rule-based only */
   private raw: RawAI | null;
+  private demoRng: (() => number) | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.raw = makeAI(env);
     ctx.blockConcurrencyWhile(async () => {
       this.game = (await ctx.storage.get<GameState>('game')) ?? null;
+      if (this.game?.demo) {
+        this.demoRng = mulberry32(20261106);
+      }
     });
   }
 
-  private get aiLimit() { return Math.max(0, Number(this.env.AI_DAILY_LIMIT) || 10); }
+  private aiLimitFor(accountId?: string | null): number {
+    if (accountId && accountId.startsWith('demo:')) {
+      return Math.max(0, Number(this.env.DEMO_AI_LIMIT) || 30);
+    }
+    return Math.max(0, Number(this.env.AI_DAILY_LIMIT) || 10);
+  }
+
   private globalRecords() { return globalRecords(this.env); }
   private userRecords(accountId: string) { return userRecords(this.env, accountId); }
 
   /** AI quota metering per account; handled independently by personal DO shard, broadcasts to connection on change */
   private meterFor(accountId: string | null | undefined): Meter | null {
     if (!accountId || !this.raw) return null;
-    const limit = this.aiLimit;
+    const limit = this.aiLimitFor(accountId);
     const userStub = this.userRecords(accountId);
     return {
       consume: async () => {
@@ -96,7 +106,8 @@ export class Room extends DurableObject<Env> {
       else if (!timer) timer = setTimeout(flush, wait);
     };
     const endStream = () => { if (timer) clearTimeout(timer); timer = null; pending = null; };
-    return { ai: this.aiFor(actor), rng: Math.random, now: Date.now, onStream, endStream };
+    const rng = this.game?.demo && this.demoRng ? this.demoRng : Math.random;
+    return { ai: this.aiFor(actor), rng, now: Date.now, onStream, endStream };
   }
 
   private sendToAccount(accountId: string, msg: unknown) {
@@ -214,7 +225,7 @@ export class Room extends DurableObject<Env> {
         const p = id ? g.players.find(x => x.id === id) : null;
         if (p) { p.connected = true; p.disconnectedAt = null; }
         const meInfo = att.accountId
-          ? { name: att.accountName, ai: { used: this.raw ? await this.userRecords(att.accountId).aiUsage(att.accountId) : 0, limit: this.aiLimit } }
+          ? { name: att.accountName, ai: { used: this.raw ? await this.userRecords(att.accountId).aiUsage(att.accountId) : 0, limit: this.aiLimitFor(att.accountId) } }
           : null;
         ws.send(JSON.stringify({ t: 'welcome', playerId: id, spectator: !id, static: { board: BOARD, questions: QUESTIONS.map(q => ({ id: q.id, text: q.text, coach: q.coach })), cards: CARDS }, ai: !!this.raw && !!att.accountId, me: meInfo }));
         break;
@@ -238,6 +249,15 @@ export class Room extends DurableObject<Env> {
         if (msg.aiClients !== undefined) {
           const host = g.players.find(p => p.id === g.hostId);
           g.settings.aiClients = !!msg.aiClients && !!this.raw && !!host?.accountId;
+        }
+        if (g.solo && typeof msg.demo === 'string') {
+          const target = msg.demo === '1' ? 'jiahao' : msg.demo;
+          if (g.clients[target]) {
+            g.demo = target;
+            g.demoFirstRoll = true;
+            g.demoFirstSession = true;
+            this.demoRng = mulberry32(20261106);
+          }
         }
         break;
       }
@@ -410,10 +430,18 @@ export class Room extends DurableObject<Env> {
       // 1. Write to personal standalone DO shard (10 GB dedicated capacity, isolated data, never overflows)
       await this.userRecords(p.accountId).add(record)
         .catch(e => console.warn('user record save failed', e));
+      const sessionLogs = p.sessionLogs ?? [];
+      const gameTags = sessionLogs.flatMap(s => s.tags || []);
+      const totalViolations = sessionLogs.reduce((acc, s) => acc + (s.violations || 0), 0);
+      const totalWarnings = sessionLogs.reduce((acc, s) => acc + (s.warnings || 0), 0);
       // 2. Write to global lightweight summary (for trainer backend high-efficiency aggregation)
       await this.globalRecords().addSummary({
         name: record.name, ts: record.ts, score: record.score, grade: record.grade,
-        players: record.players, userId: record.userId, room: record.room
+        players: record.players, userId: record.userId, room: record.room,
+        tags: gameTags,
+        sessions: sessionLogs.length,
+        violations: totalViolations,
+        warnings: totalWarnings,
       }).catch(e => console.warn('global summary save failed', e));
     }
     await this.ctx.storage.setAlarm(Date.now() + ENDED_SWEEP_MS);

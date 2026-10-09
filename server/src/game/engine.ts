@@ -94,12 +94,13 @@ export function marketOne(ev: MarketEvent, alloc: Alloc): StressResult {
   return stressOne({ absorb: ev.absorb, cards: [], need: ev.need }, alloc, []).result;
 }
 
-export function finalScore(m: Metrics, flags: { overCards?: boolean; plan?: Quality } = {}) {
+export function finalScore(m: Metrics, flags: { overCards?: boolean; plan?: Quality; violation?: boolean } = {}) {
   const score = Math.round(METRICS.reduce((s, k) => s + clamp(m[k]) * WEIGHTS[k], 0));
   let grade = score >= 90 ? 'S' : score >= 80 ? 'A' : score >= 68 ? 'B' : 'C';
   const caps: string[] = [];
   const order = ['C', 'B', 'A', 'S'];
   const cap = (g: string, reason: string) => { if (order.indexOf(grade) > order.indexOf(g)) grade = g; caps.push(reason); };
+  if (flags.violation) cap('C', '面談中出現違規招攬說法（紅燈）');
   if (m.compliance < 70) cap('B', '合規表達低於 70：出現恐嚇或保證式說法');
   if (flags.overCards) cap('A', '方案含有過度配置的保障卡');
   else if (flags.plan === 'bad') cap('A', '資源配置與客戶需求落差過大');

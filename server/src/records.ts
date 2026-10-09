@@ -7,10 +7,49 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './index.ts';
 import { buildProfile, type RecordRow } from './game/profile.ts';
+import { TAG_INFO } from './game/game.ts';
 
 export interface RecordInput { name: string; ts: number; score: number; grade: string; players: number; data: unknown; userId: string; room?: string }
-export interface RecordSummary { name: string; ts: number; score: number; grade: string; players: number; userId: string; room?: string }
+export interface RecordSummary {
+  name: string;
+  ts: number;
+  score: number;
+  grade: string;
+  players: number;
+  userId: string;
+  room?: string;
+  tags?: string[];
+  sessions?: number;
+  violations?: number;
+  warnings?: number;
+}
 export interface User { id: string; email: string; name: string; picture: string | null }
+
+export interface TagInsight {
+  tag: string;
+  label: string;
+  count: number;
+  learners: number;
+}
+
+export interface LearnerMatrixRow {
+  userId: string;
+  name: string;
+  sessions: number;
+  tags: Record<string, number>;
+}
+
+export interface InsightsResult {
+  learners: number;
+  sessions: number;
+  tags: TagInsight[];
+  matrix: LearnerMatrixRow[];
+  compliance: {
+    violations: number;
+    warnings: number;
+    sessions: number;
+  };
+}
 
 const SESSION_DAYS = 30;
 /** AI usage rows (quota and per-provider calls) are only shown for the last 7 days, so older rows are deleted. */
@@ -37,9 +76,13 @@ export class Records extends DurableObject<Env> {
     const sql = ctx.storage.sql;
     sql.exec(`CREATE TABLE IF NOT EXISTS records (
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, ts INTEGER, score INTEGER, grade TEXT, players INTEGER, data TEXT, user_id TEXT)`);
-    // Backfill user_id column if legacy table lacks it
+    // Backfill columns if legacy table lacks them
     const cols = sql.exec('PRAGMA table_info(records)').toArray().map(r => String(r.name));
     if (!cols.includes('user_id')) sql.exec('ALTER TABLE records ADD COLUMN user_id TEXT');
+    if (!cols.includes('tags')) sql.exec('ALTER TABLE records ADD COLUMN tags TEXT');
+    if (!cols.includes('sessions')) sql.exec('ALTER TABLE records ADD COLUMN sessions INTEGER DEFAULT 0');
+    if (!cols.includes('violations')) sql.exec('ALTER TABLE records ADD COLUMN violations INTEGER DEFAULT 0');
+    if (!cols.includes('warnings')) sql.exec('ALTER TABLE records ADD COLUMN warnings INTEGER DEFAULT 0');
     sql.exec('CREATE INDEX IF NOT EXISTS records_user ON records(user_id, ts)');
     sql.exec(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT, name TEXT, picture TEXT, created_at INTEGER, last_login INTEGER)`);
@@ -47,6 +90,10 @@ export class Records extends DurableObject<Env> {
     sql.exec(`CREATE TABLE IF NOT EXISTS ai_usage (user_id TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (user_id, day))`);
     // Track each successful AI call (including unmetered NVIDIA NIM) separated by provider
     sql.exec(`CREATE TABLE IF NOT EXISTS ai_calls (user_id TEXT NOT NULL, day TEXT NOT NULL, provider TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (user_id, day, provider))`);
+    sql.exec(`CREATE TABLE IF NOT EXISTS demo_attempts (ip TEXT, ts INTEGER)`);
+    sql.exec('CREATE INDEX IF NOT EXISTS demo_attempts_ip ON demo_attempts(ip, ts)');
+    sql.exec(`CREATE TABLE IF NOT EXISTS demo_accounts (code TEXT, user_id TEXT, ts INTEGER)`);
+    sql.exec('CREATE INDEX IF NOT EXISTS demo_accounts_code ON demo_accounts(code)');
     // Runs on every wake-up of this DO, so stale rows never accumulate (also covers rows left in the global DO before sharding).
     this.pruneAiHistory();
     sql.exec('DELETE FROM sessions WHERE expires_at < ?', Date.now());
@@ -70,12 +117,34 @@ export class Records extends DurableObject<Env> {
     return u;
   }
 
-  createSession(userId: string): string {
+  createSession(userId: string, days = SESSION_DAYS): string {
     const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('');
-    this.ctx.storage.sql.exec('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)', token, userId, Date.now() + SESSION_DAYS * 86400_000);
+    this.ctx.storage.sql.exec('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)', token, userId, Date.now() + days * 86400_000);
     // Clean up expired sessions opportunistically
     this.ctx.storage.sql.exec('DELETE FROM sessions WHERE expires_at < ?', Date.now());
     return token;
+  }
+
+  /* ───────── Demo Auth & Rate Limiting ───────── */
+
+  checkDemoRateLimit(ip: string): boolean {
+    const hourAgo = Date.now() - 3600_000;
+    this.ctx.storage.sql.exec('DELETE FROM demo_attempts WHERE ts < ?', hourAgo);
+    const row = this.ctx.storage.sql.exec('SELECT COUNT(*) AS c FROM demo_attempts WHERE ip = ? AND ts >= ?', ip, hourAgo).toArray()[0];
+    return (Number(row?.c) || 0) < 10;
+  }
+
+  recordDemoAttempt(ip: string) {
+    this.ctx.storage.sql.exec('INSERT INTO demo_attempts (ip, ts) VALUES (?, ?)', ip, Date.now());
+  }
+
+  demoAccountCount(code: string): number {
+    const row = this.ctx.storage.sql.exec('SELECT COUNT(*) AS c FROM demo_accounts WHERE code = ?', code).toArray()[0];
+    return Number(row?.c) || 0;
+  }
+
+  recordDemoAccount(code: string, userId: string) {
+    this.ctx.storage.sql.exec('INSERT INTO demo_accounts (code, user_id, ts) VALUES (?, ?, ?)', code, userId, Date.now());
   }
 
   getSessionUser(token: string): User | null {
@@ -143,8 +212,131 @@ export class Records extends DurableObject<Env> {
 
   /** Lightweight summary write (called by global DO, omits bulky data, for trainer backend rapid stats) */
   addSummary(r: RecordSummary) {
-    this.ctx.storage.sql.exec('INSERT INTO records (name, ts, score, grade, players, data, user_id) VALUES (?, ?, ?, ?, ?, NULL, ?)',
-      r.name.slice(0, 24), r.ts, r.score, r.grade, r.players, r.userId);
+    this.ctx.storage.sql.exec(
+      'INSERT INTO records (name, ts, score, grade, players, data, user_id, tags, sessions, violations, warnings) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)',
+      r.name.slice(0, 24), r.ts, r.score, r.grade, r.players, r.userId,
+      r.tags ? JSON.stringify(r.tags) : null,
+      r.sessions ?? 0,
+      r.violations ?? 0,
+      r.warnings ?? 0,
+    );
+  }
+
+  /** Trainer insights: aggregated metrics, top weakness tags, matrix, and compliance for the last 30 days */
+  insights(): InsightsResult {
+    const since = Date.now() - 30 * 86_400_000;
+    const rows = this.ctx.storage.sql.exec(
+      `SELECT r.id, r.user_id, r.name, r.ts, r.tags, r.sessions, r.violations, r.warnings, r.data, u.name AS u_name
+       FROM records r
+       LEFT JOIN users u ON u.id = r.user_id
+       WHERE r.ts >= ?`,
+      since
+    ).toArray();
+
+    const userIds = new Set<string>();
+    let totalSessions = 0;
+    let totalViolations = 0;
+    let totalWarnings = 0;
+
+    const tagTotalCounts = new Map<string, number>();
+    const tagLearners = new Map<string, Set<string>>();
+
+    const userMap = new Map<string, {
+      name: string;
+      sessions: number;
+      tags: Record<string, number>;
+    }>();
+
+    for (const row of rows) {
+      const uid = String(row.user_id || '');
+      if (uid) userIds.add(uid);
+
+      let sCount = Number(row.sessions) || 0;
+      let rViolations = Number(row.violations) || 0;
+      let rWarnings = Number(row.warnings) || 0;
+      let tagList: string[] = [];
+
+      if (row.tags) {
+        try {
+          const parsed = JSON.parse(String(row.tags));
+          if (Array.isArray(parsed)) tagList = parsed;
+        } catch {}
+      } else if (row.data) {
+        try {
+          const d = JSON.parse(String(row.data));
+          if (Array.isArray(d.sessions)) {
+            tagList = d.sessions.flatMap((s: any) => s.tags || []);
+            if (!sCount) sCount = d.sessions.length;
+            if (!rViolations) rViolations = d.sessions.reduce((acc: number, s: any) => acc + (Number(s.violations) || 0), 0);
+            if (!rWarnings) rWarnings = d.sessions.reduce((acc: number, s: any) => acc + (Number(s.warnings) || 0), 0);
+          }
+        } catch {}
+      }
+
+      if (sCount === 0) sCount = 1;
+      totalSessions += sCount;
+      totalViolations += rViolations;
+      totalWarnings += rWarnings;
+
+      if (uid) {
+        let uEntry = userMap.get(uid);
+        if (!uEntry) {
+          uEntry = {
+            name: String(row.u_name || row.name || '學員'),
+            sessions: 0,
+            tags: {},
+          };
+          userMap.set(uid, uEntry);
+        }
+        uEntry.sessions += sCount;
+        for (const t of tagList) {
+          uEntry.tags[t] = (uEntry.tags[t] || 0) + 1;
+        }
+      }
+
+      for (const t of tagList) {
+        tagTotalCounts.set(t, (tagTotalCounts.get(t) || 0) + 1);
+        if (uid) {
+          let set = tagLearners.get(t);
+          if (!set) {
+            set = new Set();
+            tagLearners.set(t, set);
+          }
+          set.add(uid);
+        }
+      }
+    }
+
+    const tags: TagInsight[] = Array.from(tagTotalCounts.entries())
+      .map(([tag, count]) => ({
+        tag,
+        label: TAG_INFO[tag]?.label ?? tag,
+        count,
+        learners: tagLearners.get(tag)?.size ?? 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const matrix: LearnerMatrixRow[] = Array.from(userMap.entries())
+      .map(([userId, entry]) => ({
+        userId,
+        name: entry.name,
+        sessions: entry.sessions,
+        tags: entry.tags,
+      }))
+      .sort((a, b) => b.sessions - a.sessions)
+      .slice(0, 30);
+
+    return {
+      learners: userIds.size,
+      sessions: totalSessions,
+      tags,
+      matrix,
+      compliance: {
+        violations: totalViolations,
+        warnings: totalWarnings,
+        sessions: totalSessions,
+      },
+    };
   }
 
   /** Learning profile: trends, weaknesses, client catalog, badges (computes only records with full data) */

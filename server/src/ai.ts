@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { CardId, ClientProfile, FinalRow, MarketEvent, PlayerState, QuestionId, SessionState, StressEvent } from './game/types.ts';
 import { QUESTIONS, CARDS } from './game/data.ts';
 import { stressOne, TOTAL_COINS } from './game/engine.ts';
+import { financeFor } from './game/finance.ts';
 import type { LifeTwist } from './game/twists.ts';
 import type { LetterFacts } from './game/letters.ts';
 import { generateTemplateLetter, validateLetterContent } from './game/letters.ts';
@@ -98,6 +99,11 @@ const GenClientSchema = z.object({
     kind: z.enum(['income', 'cash', 'market']), tag: z.string(), title: z.string(), body: z.string(),
     cards: z.array(z.enum(['medical', 'income', 'accident', 'tools', 'legacy', 'care'])), held: z.string(), hit: z.string(),
   })).length(3),
+  finance: z.object({
+    income: z.number().int().min(25000),
+    expense: z.number().int().min(15000),
+    savings: z.number().int().min(10000),
+  }).optional(),
 });
 
 const ABSORB = { income: { cash: 0.8, protect: 2.0, growth: 0 }, cash: { cash: 2.2, protect: 0.6, growth: 0 }, market: { cash: 1.6, protect: 0, growth: -0.5 } };
@@ -148,6 +154,7 @@ export function buildGeneratedClient(g: z.infer<typeof GenClientSchema>, seed: n
   const c: ClientProfile = {
     id, name: g.name, short: g.short, age: g.age, gender: g.gender, job: g.job, tag: g.tag, difficulty: 'AI 生成', portrait: null,
     goal: g.goal, amount: formatAmount(g.amount), incomeInfo: g.incomeInfo, family: g.family, intro: g.intro, quote: g.quote, facts: g.facts,
+    finance: financeFor({ age: g.age, finance: g.finance } as any),
     answers: { income: ans(g.answers.income), goal: ans(g.answers.goal), coverage: ans(g.answers.coverage), risk: ans(g.answers.risk), premium: ans(g.answers.premium, true) },
     keyQuestions: g.keyQuestions,
     plan: { ideal: g.ideal, cards },
@@ -287,19 +294,27 @@ compliance 判 violation，issue 代碼 INJECTION_ATTEMPT 扣 25 分，answer �
     facts: LetterFacts,
   ): Promise<string | null> {
     const twistTag = twist ? `${twist.title}（${twist.hint}）` : '無特殊變數';
+    const outcomeDesc = facts.outcome === 'thanks'
+      ? '感謝（沒有缺口，順利度過）'
+      : facts.outcome === 'regret'
+      ? '遺憾與後悔（留下重大缺口與代價）'
+      : facts.outcome === 'complaint'
+      ? '申訴與不滿（當年承諾落空，深感被誤導，已向金融消費評議中心申訴）'
+      : '半喜半憂（部分緩衝但仍有缺口）';
+    const quoteData = facts.quote ? `- 顧問當初承諾說詞摘錄：${facts.quote}\n` : '';
     const system = `你是保險客戶「${c.name}」（${c.age} 歲，${c.job}）。十年後的今天，你提筆寫一封信給當年的保險顧問。
 不可更改的客觀事實：
-- 結局傾向：${facts.outcome === 'thanks' ? '感謝（沒有缺口，順利度過）' : facts.outcome === 'regret' ? '遺憾與後悔（留下重大缺口與代價）' : '半喜半憂（部分緩衝但仍有缺口）'}
+- 結局傾向：${outcomeDesc}
 - 關鍵事件：${facts.event}
 - 缺口金額：${facts.gap} 萬元
-- 人生背景變數：${twistTag}
+${quoteData}- 人生背景變數：${twistTag}
 
 規則限制：
 1. 只能以第一人稱繁體中文口吻撰寫，字數在 120–200 字之間。
-2. 絕對不可變更結局（例如感謝信中絕不可說沒有理賠或後悔；遺憾信中絕不可說感謝慶幸或沒有缺口）。
-3. 必須提到事件「${facts.event}」；${facts.gap > 0 ? `也要提到缺口金額約 ${facts.gap} 萬元` : '沒有缺口，寫「沒有留下財務缺口」即可，不要寫 0 萬元'}。
-4. 全文使用繁體中文，不可出現簡體字。
-5. 結尾不要寫署名（畫面會自動加上）。`;
+2. 絕對不可變更結局（例如感謝信中絕不可說沒有理賠或後悔；遺憾信中絕不可說感謝慶幸或沒有缺口；申訴信必須表達失望與被誤導並提及向「金融消費評議中心」申訴，絕不可出現感謝字眼）。
+3. 必須提到事件「${facts.event}」；${facts.gap > 0 ? `也要提到缺口金額約 ${facts.gap} 萬元` : '沒有缺口，寫「沒有留下財務缺口」即可，不要寫 0 萬元'}。${facts.quote ? `\n4. 提及當年顧問給予「${facts.quote}」的說法如今證實落空。` : ''}
+5. 全文使用繁體中文，不可出現簡體字。
+6. 結尾不要寫署名（畫面會自動加上）。`;
 
     const userMsg = `請為${c.name}寫這封十年後的信。`;
     const out = await this.ask(LetterSchema, system, userMsg, 400);
@@ -345,7 +360,8 @@ ${UNTRUSTED}`;
 
   private playerSummary(p: PlayerState) {
     const ds = p.decisions.slice(-10).map(d => `[${d.stage}｜${d.quality}] ${d.clientName}：${d.title}`).join('\n');
-    return `顧問：${p.name}\n完成面談 ${p.sessions} 次、客戶 ${p.book.length} 位、聲望 ${p.reputation}、合規測驗 ${p.quizCorrect}/${p.quizTotal}\n近期決策：\n${ds || '（尚無）'}`;
+    // The learner's display name is never sent to the model (privacy)
+    return `顧問：受訓學員\n完成面談 ${p.sessions} 次、客戶 ${p.book.length} 位、聲望 ${p.reputation}、合規測驗 ${p.quizCorrect}/${p.quizTotal}\n近期決策：\n${ds || '（尚無）'}`;
   }
 
   async coachTip(p: PlayerState) {
@@ -369,7 +385,7 @@ ${UNTRUSTED}`;
 
   async generateClient(seed: number) {
     const cardList = CARDS.map(c => `${c.id}=${c.title}（${c.detail}）`).join('；');
-    const system = `你是保險顧問培訓遊戲的關卡設計師，為台灣情境設計一位虛構客戶（不使用真實人名或公司）。規則：\n- 10 枚資源幣分配到 cash（緊急預備）、protect（風險保障）、growth（目標成長）；ideal 是每項的 [最少, 最多]，三項最少值相加 ≤ 10、最多值相加 ≥ 10。\n- cards 是六張保障卡對此客戶的適配度：3 核心、1–2 合理、0 無感、負值＝過度配置；至少一張為 3。保障卡：${cardList}\n- answers 對應五個訪談題：${QUESTIONS.map(q => `${q.id}=${q.text}`).join('；')}。標準題 trust 3–10、insight 5–14；premium 題（太早問預算）trust 為負。\n- keyQuestions 是最能揭露此客戶核心需求的兩題。\n- stress 三個壓力事件：kind=income（收入中斷）、cash（一次性大額支出）、market（市場波動）；cards 列出能承接的保障卡（market 留空）。\n- 所有文字使用繁體中文口語，客戶回答用「」包起來。情境僅供教育模擬。\n- 文字要精簡（欄位很多，太長會被截斷）：name、job、tag 10 字內；short 15 字內；goal、amount、incomeInfo、family 25 字內；intro、quote、各 detail／fact／text／body／held／hit 40 字內。\n- amount 是目標需要的金額，格式固定為「NT$」加千分位數字，金額依目標合理估算。`;
+    const system = `你是保險顧問培訓遊戲的關卡設計師，為台灣情境設計一位虛構客戶（不使用真實人名或公司）。規則：\n- 10 枚資源幣分配到 cash（緊急預備）、protect（風險保障）、growth（目標成長）；ideal 是每項的 [最少, 最多]，三項最少值相加 ≤ 10、最多值相加 ≥ 10。\n- cards 是六張保障卡對此客戶的適配度：3 核心、1–2 合理、0 無感、負值＝過度配置；至少一張為 3。保障卡：${cardList}\n- answers 對應五個訪談題：${QUESTIONS.map(q => `${q.id}=${q.text}`).join('；')}。標準題 trust 3–10、insight 5–14；premium 題（太早問預算）trust 為負。\n- keyQuestions 是最能揭露此客戶核心需求的兩題。\n- stress 三個壓力事件：kind=income（收入中斷）、cash（一次性大額支出）、market（市場波動）；cards 列出能承接的保障卡（market 留空）。\n- finance 財務設定：income 月收入（NT$ 30,000–120,000）、expense 月必要支出（低於收入，至少留 3,000 結餘）、savings 目前流動存款。\n- 所有文字使用繁體中文口語，客戶回答用「」包起來。情境僅供教育模擬。\n- 文字要精簡（欄位很多，太長會被截斷）：name、job、tag 10 字內；short 15 字內；goal、amount、incomeInfo、family 25 字內；intro、quote、各 detail／fact／text／body／held／hit 40 字內。\n- amount 是目標需要的金額，格式固定為「NT$」加千分位數字，金額依目標合理估算。`;
     // 2000 tokens often truncated (finish=length): relax limit and restrict length in prompt
     // Same name appears repeatedly: specify surname by seed to diversify AI clients
     const surnames = '陳林黃張李王吳劉蔡楊許鄭謝郭洪曾邱廖賴周葉蘇莊呂江何蕭羅高潘簡朱鍾彭游詹胡施沈余趙盧梁顏柯翁魏孫戴';

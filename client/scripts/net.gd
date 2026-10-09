@@ -153,6 +153,42 @@ func fetch_auth_config() -> Array:
 	return r
 
 
+func submit_demo_code(code: String) -> Array:
+	var r: Array = await http_json(HTTPClient.METHOD_POST, "/api/auth/demo", {"code": code.strip_edges()})
+	if bool(r[0]):
+		await fetch_me()
+		if is_logged_in():
+			var u: Dictionary = get_user()
+			var un: String = str(u.get("name", "")).strip_edges()
+			if un != "":
+				player_name = un
+				save_prefs()
+	return r
+
+
+func check_and_consume_url_demo_code() -> String:
+	if not OS.has_feature("web") or Engine.is_editor_hint():
+		return ""
+	var code_val = JavaScriptBridge.eval("""(function() {
+		try {
+			var params = new URLSearchParams(window.location.search);
+			var c = params.get('code');
+			if (c) {
+				params.delete('code');
+				var qs = params.toString() ? ('?' + params.toString()) : '';
+				window.history.replaceState({}, '', window.location.pathname + qs + window.location.hash);
+				return c;
+			}
+		} catch (e) {}
+		return '';
+	})()""", true)
+	return str(code_val).strip_edges() if typeof(code_val) == TYPE_STRING else ""
+
+
+func fetch_insights() -> Array:
+	return await http_json(HTTPClient.METHOD_GET, "/api/insights")
+
+
 func fetch_me() -> Array:
 	var r: Array = await http_json(HTTPClient.METHOD_GET, "/api/me")
 	if bool(r[0]) and r[1] is Dictionary:

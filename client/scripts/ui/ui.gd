@@ -549,10 +549,26 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 	var outcome: String = str(letter.get("outcome", "mixed"))
 	var is_phone := is_phone_portrait()
 
-	# Tone: thanks warm gold, regret grayish-blue, mixed neutral
-	var accent_col: Color = Color("#c48b23") if outcome == "thanks" else (Color("#4c6d8c") if outcome == "regret" else Color("#6d6961"))
-	var bg_col: Color = Color("#fbf8ee") if outcome == "thanks" else (Color("#f2f5f8") if outcome == "regret" else Color("#f5f2eb"))
-	var tag_text: String = "★ 暖心感謝" if outcome == "thanks" else ("▲ 遺憾與感慨" if outcome == "regret" else "● 百感交集")
+	# Tone: thanks warm gold, regret grayish-blue, complaint red-grey paper, mixed neutral
+	var accent_col: Color
+	var bg_col: Color
+	var tag_text: String
+	if outcome == "complaint":
+		accent_col = Color("#c94a4a")
+		bg_col = Color("#f7f0f0")
+		tag_text = "⚠ 客訴副本"
+	elif outcome == "thanks":
+		accent_col = Color("#c48b23")
+		bg_col = Color("#fbf8ee")
+		tag_text = "★ 暖心感謝"
+	elif outcome == "regret":
+		accent_col = Color("#4c6d8c")
+		bg_col = Color("#f2f5f8")
+		tag_text = "▲ 遺憾與感慨"
+	else:
+		accent_col = Color("#6d6961")
+		bg_col = Color("#f5f2eb")
+		tag_text = "● 百感交集"
 
 	var p := PanelContainer.new()
 	var pad := 14 if is_phone else 20
@@ -564,7 +580,8 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 
 	# Header row
 	var head := hbox(8)
-	var title_lbl := label("十年後，%s 寄來的信" % client_name, 18, Color("#2b2219"), true)
+	var title_text: String = ("十年後，%s 寄來的申訴副本" % client_name) if outcome == "complaint" else ("十年後，%s 寄來的信" % client_name)
+	var title_lbl := label(title_text, 18, Color("#8c2323") if outcome == "complaint" else Color("#2b2219"), true)
 	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title_lbl)
 
@@ -574,18 +591,21 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 	head.add_child(tag_p)
 	v.add_child(head)
 
-	# Event and gap summary
+	# Event, gap and quote summary
 	var ev_text: String = str(letter.get("event", ""))
 	var gap_val: int = int(letter.get("gap", 0))
-	if ev_text != "" or letter.has("gap") or gap_val > 0:
+	var quote_str: String = str(letter.get("quote", ""))
+	if ev_text != "" or letter.has("gap") or gap_val > 0 or quote_str != "":
 		var summary_box := panel(Color(accent_col.r, accent_col.g, accent_col.b, 0.08), 8, 8)
 		summary_box.add_theme_stylebox_override("panel", box(Color(accent_col.r, accent_col.g, accent_col.b, 0.08), 8, Color(accent_col.r, accent_col.g, accent_col.b, 0.3), 6, false))
 		var sv := vbox(3)
+		if quote_str != "":
+			sv.add_child(label("※ 你當年說：『%s』" % quote_str, 13, Color("#8c2323") if outcome == "complaint" else Color("#3a3028"), true))
 		if ev_text != "":
 			sv.add_child(label("※ 經歷事件：%s" % ev_text, 13, Color("#3a3028"), true))
 		if gap_val > 0:
 			sv.add_child(label("※ 財務缺口：%d 萬元（方案未能完全承接）" % gap_val, 13, Color("#992b2b"), true))
-		else:
+		elif letter.has("gap") or ev_text != "":
 			sv.add_child(label("※ 財務缺口：0 萬元（防護穩健，無缺口）", 13, Color("#26734d"), true))
 		summary_box.add_child(sv)
 		v.add_child(summary_box)

@@ -12,6 +12,18 @@ import { computeAwards, DILEMMAS, DILEMMA_EFFECT, emptyStats, pickLifeChange, re
 import { LIFE_TWISTS, applyTwist, type LifeTwist } from './twists.ts';
 import { ruleCompliance, mergeCompliance } from './compliance.ts';
 import { determineLetter, generateTemplateLetter, type LetterFacts, type ClientLetter } from './letters.ts';
+import { simulateTimeline } from './finance.ts';
+
+/** Mulberry32 32-bit seeded PRNG for reproducible runs */
+export function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return function() {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 export interface Ctx {
   ai: AIService; rng: () => number; now: () => number;
@@ -95,6 +107,13 @@ export function injectClient(s: GameState, c: ClientProfile) {
 }
 
 function drawClient(s: GameState, ctx: Ctx): ClientProfile {
+  if (s.demo && s.demoFirstSession) {
+    const targetId = s.demo === '1' ? 'jiahao' : s.demo;
+    if (s.clients[targetId]) {
+      s.deck = s.deck.filter(id => id !== targetId);
+      return s.clients[targetId];
+    }
+  }
   if (!s.deck.length) {
     const signed = new Set(s.players.flatMap(p => p.book.map(b => b.clientId)));
     s.deck = shuffle(Object.keys(s.clients).filter(id => !signed.has(id)), ctx.rng);
@@ -113,7 +132,13 @@ function startSession(s: GameState, p: PlayerState, c: ClientProfile, referral: 
   const m = { ...START };
   if (referral) m.trust += 10;
   // Randomly draw 1 dynamic life twist attached to interview
-  const twist = LIFE_TWISTS[Math.floor(ctx.rng() * LIFE_TWISTS.length)];
+  let twist: LifeTwist;
+  if (s.demo && s.demoFirstSession) {
+    twist = LIFE_TWISTS.find(t => t.id === 'grace_period_end') ?? LIFE_TWISTS[0];
+    s.demoFirstSession = false;
+  } else {
+    twist = LIFE_TWISTS[Math.floor(ctx.rng() * LIFE_TWISTS.length)];
+  }
   if (twist.initialTrustDelta) m.trust = clamp(m.trust + twist.initialTrustDelta);
 
   // Clients with scene illustration use dedicated decoy (with hotspot coords); others pick random generic decoy
@@ -245,8 +270,16 @@ async function resolveTile(s: GameState, p: PlayerState, ctx: Ctx, passLines: Pe
     case 'audit': {
       const lines: PendingEvent['lines'] = [];
       for (const b of p.book) {
-        if (b.mis) { p.reputation = clamp(p.reputation - 6); lines.push({ text: `${b.name}：發現不適合的配置或不當說法，聲望 -6`, tone: 'bad' }); }
-        else { p.reputation = clamp(p.reputation + 1); lines.push({ text: `${b.name}：紀錄完整、配置適合，聲望 +1`, tone: 'good' }); }
+        if (b.violation) {
+          p.reputation = clamp(p.reputation - 10);
+          lines.push({ text: `${b.name}：出現違規招攬說法（紅燈），聲望 -10`, tone: 'bad' });
+        } else if (b.mis) {
+          p.reputation = clamp(p.reputation - 6);
+          lines.push({ text: `${b.name}：發現不適合的配置或不當說法，聲望 -6`, tone: 'bad' });
+        } else {
+          p.reputation = clamp(p.reputation + 1);
+          lines.push({ text: `${b.name}：紀錄完整、配置適合，聲望 +1`, tone: 'good' });
+        }
       }
       if (!lines.length) lines.push({ text: '沒有可稽核的案件。', tone: 'info' });
       return ev('audit', '合規稽核', '稽核人員抽查你的客戶紀錄：適合度、說明是否完整、是否有誇大或保證。', lines);
@@ -293,16 +326,18 @@ function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ct
   for (const e of st.events) apply(sess.m, STEP.stressEvent(e.result));
   apply(sess.m, STEP.stressFinal(st.quality));
   sess.stress = st.events.map(e => ({ title: e.ev.title, tag: e.ev.tag, result: e.result, defense: e.defense, need: e.ev.need, text: e.result === 'broken' ? e.ev.hit : e.ev.held }));
-  const fs = finalScore(sess.m, { overCards: pe.over.length > 0, plan: pe.quality });
+  const violated = sess.asked.some(a => a.compliance === 'violation') || !!sess.objViolation;
+  const fs = finalScore(sess.m, { overCards: pe.over.length > 0, plan: pe.quality, violation: violated });
   const signed = sess.m.trust >= SIGN_TRUST;
   const commission = signed ? commissionFor(sess.plan!.alloc, sess.plan!.cards) : 0;
-  const mis = pe.over.length > 0 || sess.m.compliance < 70 || pe.quality === 'bad';
+  const mis = pe.over.length > 0 || sess.m.compliance < 70 || pe.quality === 'bad' || violated;
   if (signed) {
     const baseSat = { S: 82, A: 72, B: 60, C: 45 }[fs.grade] ?? 50;
     const entry: BookEntry = {
       clientId: c.id, name: c.name, alloc: sess.plan!.alloc, cards: sess.plan!.cards,
       satisfaction: clamp(baseSat + (sess.referral ? 5 : 0)), planQuality: pe.quality,
       compliance: sess.m.compliance, stressUsed: 0, signedRound: s.round, mis,
+      violation: violated,
     };
     p.book.push(entry);
     p.commission += commission;
@@ -310,7 +345,9 @@ function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ct
   for (const k of METRICS) p.skillSum[k] += sess.m[k];
   p.sessions++;
   const summary = signed
-    ? `${c.name} 決定採納你的建議${mis ? '，但方案或說法有適合度疑慮，可能在稽核時被發現' : ''}。`
+    ? (violated
+      ? `${c.name} 簽了約，但你的說法已埋下客訴與裁罰風險，稽核時一定會被發現。`
+      : `${c.name} 決定採納你的建議${mis ? '，但方案或說法有適合度疑慮，可能在稽核時被發現' : ''}。`)
     : `${c.name} 對你還不夠信任，決定再考慮看看。`;
   // Spectator prediction: player who guesses grade correctly gains +2 reputation
   const predictionHits: string[] = [];
@@ -320,8 +357,20 @@ function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ct
   }
   if (predictionHits.length) log(s, `${predictionHits.join('、')} 準確預測了評級 ${fs.grade}（聲望 +2）`, 'good', ctx.now());
 
+  // 10-year financial timeline
+  const timeline = simulateTimeline(twistedClient, sess.plan!.alloc, sess.plan!.cards, twistedClient.stress, signed);
+
   // Letter from ten years later: rule engine determines outcome, event, and gap
-  const letterFacts = determineLetter(twistedClient, signed, st);
+  let violationQuote = sess.violationQuote;
+  if (!violationQuote) {
+    const vAsk = sess.asked.find(a => a.compliance === 'violation');
+    if (vAsk) violationQuote = vAsk.question.slice(0, 15);
+  }
+  const letterFacts = determineLetter(twistedClient, signed, st, {
+    violated,
+    quote: violationQuote,
+    timeline,
+  });
   const templateLetter = generateTemplateLetter(twistedClient, letterFacts);
   const clientLetter: ClientLetter = { ...letterFacts, content: templateLetter };
 
@@ -331,6 +380,7 @@ function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ct
     signed, score: fs.score, grade: fs.grade, caps: fs.caps, commission, summary, predictionHits,
     epilogue: epilogueFor(c, st.quality, st.events),
     letter: clientLetter,
+    timeline,
   };
   sess.step = 'result';
   p.sessionLogs = [...(p.sessionLogs ?? []), buildSessionLog(s, c, sess, pe, st.events, fs, signed)];
@@ -397,15 +447,21 @@ function buildSessionLog(s: GameState, c: ClientProfile, sess: SessionState, pe:
   if (pe.off.cash === 'low') tags.push('low_cash');
   if (pe.off.protect === 'low') tags.push('low_protect');
   if (pe.off.growth === 'high') tags.push('growth_heavy');
-  if (sess.m.compliance < 100 || sess.asked.some(a => a.compliance === 'violation')) tags.push('non_compliant');
+  const violated = sess.asked.some(a => a.compliance === 'violation') || !!sess.objViolation;
+  if (sess.m.compliance < 100 || violated) tags.push('non_compliant');
   if (reply.quality !== 'good') tags.push('objection_weak');
   if (events.some(e => e.result === 'broken')) tags.push('stress_broken');
   if (!signed) tags.push('not_signed');
+  const violations = sess.asked.filter(a => a.compliance === 'violation').length + (sess.objViolation ? 1 : 0);
+  const warnings = sess.asked.filter(a => a.compliance === 'warning').length;
   return {
     clientId: c.id, clientName: c.name, job: c.job, round: s.round, grade: fs.grade, score: fs.score, signed,
     referral: sess.referral, hintUsed: !!sess.hintUsed,
     twist: sess.twist ? { id: sess.twist.id, title: sess.twist.title, hint: sess.twist.hint } : null,
     letter: sess.result?.letter ?? null,
+    timeline: sess.result?.timeline ?? null,
+    violations,
+    warnings,
     clues: { found: realFound, decoy: decoySeen },
     questions: sess.asked.filter(a => a.qid !== 'free').map(a => ({ qid: String(a.qid), text: a.question, key: a.key })),
     freeQuestion: free ? { text: free.question, note: free.note ?? '' } : null,
@@ -482,7 +538,13 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
 
   if (a.type === 'roll') {
     if (s.turnStage !== 'roll') return '現在不能擲骰';
-    const roll = 1 + Math.floor(ctx.rng() * 6);
+    let roll = 1 + Math.floor(ctx.rng() * 6);
+    if (s.demo && !p.isBot && s.demoFirstRoll) {
+      let dist = 1;
+      while (dist <= BOARD.length && BOARD[(p.pos + dist) % BOARD.length].type !== 'client') dist++;
+      roll = dist;
+      s.demoFirstRoll = false;
+    }
     s.lastRoll = roll;
     const passed = p.pos + roll >= BOARD.length;
     p.pos = (p.pos + roll) % BOARD.length;
@@ -708,6 +770,10 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       sess.objectionMode = 'choice';
       apply(sess.m, opt.changes);
       sess.objectionReply = { text: opt.text, title: opt.title, body: opt.body, quality: opt.quality };
+      if (opt.changes.compliance !== undefined && opt.changes.compliance <= -15) {
+        sess.objViolation = true;
+        sess.violationQuote = opt.text.slice(0, 15);
+      }
       decide(p, s, c.name, '異議處理', opt.quality, opt.title, opt.body);
       finishSession(s, p, sess, ctx);
       return null;
@@ -722,6 +788,10 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       apply(sess.m, { trust: g.trust, fit: g.fit, risk: g.risk, compliance: g.compliance });
       sess.objectionReply = { text, title: g.title, body: g.body, quality: g.quality };
       sess.objectionMode = 'free';
+      if (g.compliance <= -15) {
+        sess.objViolation = true;
+        sess.violationQuote = text.slice(0, 15);
+      }
       decide(p, s, c.name, '異議處理', g.quality, g.title, g.body);
       finishSession(s, p, sess, ctx);
       return null;
@@ -772,10 +842,18 @@ function endGame(s: GameState, ctx: Ctx) {
       .slice(-3)
       .map(l => ({
         clientName: l.clientName,
-        outcome: l.letter!.outcome as 'thanks' | 'regret' | 'mixed',
+        outcome: l.letter!.outcome as 'thanks' | 'regret' | 'mixed' | 'complaint',
         content: l.letter!.content,
       }));
-    return { ...row, letters };
+    const timelines = (p.sessionLogs ?? [])
+      .filter(l => l.timeline)
+      .map(l => ({ clientName: l.clientName, ...l.timeline! }));
+    return {
+      ...row,
+      letters,
+      timeline: timelines[timelines.length - 1],
+      timelines,
+    };
   }).sort((x, y) => y.score - x.score);
   s.awards = computeAwards(s, p => scorePlayer(p).score);
   log(s, `遊戲結束！最佳顧問：${s.final[0].name}（${s.final[0].grade}）`, 'good', ctx.now());

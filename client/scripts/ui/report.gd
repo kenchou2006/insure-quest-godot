@@ -64,11 +64,18 @@ func refresh(s: Dictionary) -> void:
 	_v.add_child(UI.label("評分＝專業五力 50%＋滿意度 25%＋聲望 15%＋業績 10%。不適合的銷售會在稽核中被扣分。", 13 if portrait else 14, UI.MUTED, true))
 
 	var final: Array = s.get("final", []) if s.get("final") != null else []
-	var rank: int = 1
 	var mine: Dictionary = {}
 	for r: Dictionary in final:
 		if str(r.get("playerId", "")) == Net.player_id:
 			mine = r
+			break
+
+	# Training certificate card for local human player at top of report
+	if not mine.is_empty() and not mine.get("isBot", false):
+		_v.add_child(_build_certificate_card(mine, s))
+
+	var rank: int = 1
+	for r: Dictionary in final:
 		var row := UI.panel(UI.PANEL_2 if str(r.get("playerId", "")) == Net.player_id else UI.PANEL, 12, 12)
 		var h := UI.hbox(12 if portrait else 16)
 		h.add_child(UI.label("#%d" % rank, 20 if portrait else 24, UI.GOLD if rank == 1 else UI.MUTED))
@@ -215,6 +222,29 @@ func refresh(s: Dictionary) -> void:
 		var card := UI.letter_card(cur_letter, c_name)
 		l_section.add_child(card)
 
+		# Small TimelineChart in compact mode (height ~90)
+		var timelines_arr: Array = mine.get("timelines", []) as Array if mine.get("timelines") != null else []
+		var match_timeline: Dictionary = {}
+		for tm in timelines_arr:
+			if tm is Dictionary and str(tm.get("clientName", "")) == c_name:
+				match_timeline = tm
+				break
+		if match_timeline.is_empty():
+			if _letter_idx == 0 and mine.get("timeline") is Dictionary:
+				match_timeline = mine.get("timeline")
+			elif _letter_idx < timelines_arr.size() and timelines_arr[_letter_idx] is Dictionary:
+				match_timeline = timelines_arr[_letter_idx]
+
+		if not match_timeline.is_empty():
+			var chart_card := UI.panel(Color("#0d2432"), 8, 8)
+			var chart_v := UI.vbox(3)
+			chart_v.add_child(UI.label("十年財務人生軌跡（有規劃 vs 沒有規劃）：", 12, UI.MUTED))
+			var tc := TimelineChart.new()
+			tc.set_data(match_timeline, true)
+			chart_v.add_child(tc)
+			chart_card.add_child(chart_v)
+			l_section.add_child(chart_card)
+
 		_v.add_child(l_section)
 
 	var me: Dictionary = Net.me()
@@ -292,3 +322,142 @@ func refresh(s: Dictionary) -> void:
 		_v.add_child(dp)
 
 	UI.pass_wheel(_v)
+
+
+func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
+	var portrait: bool = UI.is_portrait()
+	var is_phone: bool = UI.is_phone_portrait()
+
+	var card_panel := UI.panel(Color("#0c2433"), 16, 14 if is_phone else 18)
+	card_panel.add_theme_stylebox_override("panel", UI.box(Color("#0c2433"), 16, UI.GOLD, 8 if is_phone else 12, false))
+	card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	if not portrait and not UI.is_phone():
+		card_panel.custom_minimum_size = Vector2(640, 360)
+
+	var v := UI.vbox(10 if is_phone else 12)
+	card_panel.add_child(v)
+
+	# 1. Header row
+	var head := UI.hbox(8)
+	var title_lbl := UI.label("公平待客面談完訓卡", 20 if is_phone else 24, UI.GOLD)
+	head.add_child(title_lbl)
+	var sub_lbl := UI.label("｜ 專業顧問合格證明", 12 if is_phone else 14, UI.MUTED)
+	head.add_child(sub_lbl)
+	head.add_child(UI.spacer())
+
+	# Download image button (web only)
+	if not Engine.is_editor_hint() and OS.has_feature("web"):
+		var dl_btn := UI.button("儲存圖片", func(): _download_certificate(card_panel), 12 if is_phone else 13, UI.ACCENT)
+		head.add_child(dl_btn)
+	v.add_child(head)
+
+	# 2. Main content row: Left info + competencies, Right seal & comment
+	var body: BoxContainer = UI.vbox(10) if is_phone else UI.hbox(16)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	# Left column: Name, Date, Clients served, Red light stamp, Mini 5-power bars
+	var left_v := UI.vbox(6)
+	left_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var info_h := UI.hbox(8)
+	info_h.add_child(UI.label("顧問：%s" % str(mine.get("name", "顧問")), 16 if is_phone else 18, Color.WHITE))
+	var date_str: String = Time.get_date_string_from_system()
+	info_h.add_child(UI.label("（%s 完訓）" % date_str, 12 if is_phone else 13, UI.MUTED))
+	left_v.add_child(info_h)
+
+	var stats_h := UI.hbox(8)
+	var clients_count: int = int(mine.get("clients", 0))
+	stats_h.add_child(UI.label("服務客戶：%d 位" % clients_count, 13 if is_phone else 14, UI.TEXT))
+
+	# Red-light count & stamp
+	var red_lights: int = 0
+	for b in Net.me().get("book", []):
+		if bool(b.get("violation", false)):
+			red_lights += 1
+	if red_lights == 0 and mine.has("violations"):
+		red_lights = int(mine.get("violations", 0))
+
+	if red_lights == 0:
+		var gold_stamp := UI.stamp("★ 零違規", UI.GOLD, 13 if is_phone else 14)
+		stats_h.add_child(gold_stamp)
+	else:
+		var red_badge := UI.stamp("⚠ 違規 %d 次" % red_lights, UI.BAD, 13 if is_phone else 14)
+		stats_h.add_child(red_badge)
+	left_v.add_child(stats_h)
+
+	# Five competencies mini bars
+	var skill_dict: Dictionary = mine.get("skill", {})
+	var skills_box := UI.vbox(2)
+	for k: String in ["trust", "insight", "fit", "risk", "compliance"]:
+		var val: float = float(skill_dict.get(k, 50.0))
+		var m_row := UI.metric_row(k, val)
+		skills_box.add_child(m_row)
+	left_v.add_child(skills_box)
+	body.add_child(left_v)
+
+	# Right column: Seal badge + one-line coach comment
+	var right_v := UI.vbox(8)
+	right_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_v.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var seal_box := UI.hbox(10)
+	seal_box.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	# Seal-like badge
+	var grade_str: String = str(mine.get("grade", "C"))
+	var grade_col: Color = {"S": UI.GOLD, "A": UI.GOOD, "B": UI.INFO}.get(grade_str, UI.BAD)
+	var seal := UI.panel(grade_col.darkened(0.4), 48 if is_phone else 64, 8)
+	seal.add_theme_stylebox_override("panel", UI.box(grade_col.darkened(0.45), 48 if is_phone else 64, grade_col, 4, false))
+	seal.custom_minimum_size = Vector2(80 if is_phone else 100, 80 if is_phone else 100)
+	var seal_v := UI.vbox(0)
+	seal_v.alignment = BoxContainer.ALIGNMENT_CENTER
+	var s_lbl := UI.label(grade_str, 40 if is_phone else 52, Color.WHITE)
+	s_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	seal_v.add_child(s_lbl)
+	var s_sub := UI.label("GRADE", 10, grade_col)
+	s_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	seal_v.add_child(s_sub)
+	seal.add_child(seal_v)
+	seal_box.add_child(seal)
+	right_v.add_child(seal_box)
+
+	# One-line coach comment
+	var coach_full: String = str(mine.get("coach", "持續精進需求訪談與專業配置。"))
+	var coach_line: String = coach_full.split("。")[0] if coach_full.contains("。") else coach_full
+	if coach_line.length() > 60:
+		coach_line = coach_line.substr(0, 58) + "…"
+	else:
+		coach_line += "。"
+	var coach_lbl := UI.label("教練評語：「%s」" % coach_line, 12 if is_phone else 13, UI.MUTED, true)
+	coach_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if not is_phone else HORIZONTAL_ALIGNMENT_LEFT
+	right_v.add_child(coach_lbl)
+
+	body.add_child(right_v)
+	v.add_child(body)
+
+	return card_panel
+
+
+func _download_certificate(card_panel: Control) -> void:
+	if Engine.is_editor_hint() or not OS.has_feature("web"):
+		return
+	await get_tree().process_frame
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var tex := vp.get_texture()
+	if tex == null:
+		return
+	var img := tex.get_image()
+	if img == null:
+		return
+	var gr: Rect2 = card_panel.get_global_rect()
+	var r := Rect2i(int(gr.position.x), int(gr.position.y), int(gr.size.x), int(gr.size.y))
+	r = r.intersection(Rect2i(0, 0, img.get_width(), img.get_height()))
+	if r.size.x <= 0 or r.size.y <= 0:
+		return
+	var cropped: Image = img.get_region(r)
+	var buf: PackedByteArray = cropped.save_png_to_buffer()
+	JavaScriptBridge.download_buffer(buf, "fair-treatment-certificate.png", "image/png")

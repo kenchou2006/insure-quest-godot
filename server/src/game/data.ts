@@ -90,8 +90,19 @@ function withHotspots(c: ClientProfile): ClientProfile {
   return { ...c, facts, decoy: h.decoy, scene: c.id };
 }
 
+const ORIGINAL_FINANCE: Record<string, { income: number; expense: number; savings: number }> = {
+  yuqing: { income: 50000, expense: 32000, savings: 150000 },
+  boting: { income: 150000, expense: 95000, savings: 400000 },
+  wanting: { income: 70000, expense: 52000, savings: 250000 },
+  ziyuan: { income: 28000, expense: 23000, savings: 60000 },
+  zhiming: { income: 55000, expense: 43000, savings: 450000 },
+};
+
 export const CLIENTS: ClientProfile[] = [
-  ...(original as unknown as ClientProfile[]),
+  ...(original as unknown as ClientProfile[]).map(c => ({
+    ...c,
+    finance: c.finance ?? ORIGINAL_FINANCE[c.id],
+  })),
   ...extraClients.map(calibrate).map(withHotspots),
 ];
 

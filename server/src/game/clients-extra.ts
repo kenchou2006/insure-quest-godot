@@ -37,6 +37,7 @@ function client(p: {
   facts: [string, string, string][]; answers: Record<QuestionId, Answer>; keyQuestions: QuestionId[];
   ideal: Ideal; cards: Record<CardId, number>; overProtect?: number; overNote?: Partial<Record<CardId, string>>;
   objection: ClientProfile['objection']; stress: StressEvent[];
+  finance?: { income: number; expense: number; savings: number };
 }): ClientProfile {
   return {
     id: p.id, name: p.name, short: p.short, age: p.age, gender: p.gender, job: p.job, tag: p.tag, difficulty: p.difficulty,
@@ -45,6 +46,7 @@ function client(p: {
     answers: p.answers, keyQuestions: p.keyQuestions,
     plan: { ideal: p.ideal, cards: p.cards, overProtect: p.overProtect, overNote: p.overNote },
     objection: p.objection, stress: p.stress,
+    finance: p.finance,
   };
 }
 
@@ -52,6 +54,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'junhao', name: '王俊豪', short: '俊豪', age: 32, gender: '男性', job: '外送平台騎手', tag: '零工經濟型', difficulty: '入門',
     goal: '三年內存到開手搖飲店的頭期款', amount: 'NT$ 800,000', incomeInfo: '月收入 4–6 萬，跑越多賺越多', family: '單身，每月給父母 8,000 元',
+    finance: { income: 50000, expense: 35000, savings: 200000 },
     intro: '俊豪每天騎車十小時，收入靠趟數累積。他覺得自己身體好、騎車技術好，保險是「出事的人才需要」。',
     quote: '「我騎了五年都沒事，錢先存開店比較實在吧？」',
     facts: [['機車里程表', '一年騎超過六萬公里，雨天也照跑。', '每日高度暴露在交通風險'], ['平台合約', '騎手是承攬關係，沒有勞保以外的公司福利。', '收入中斷沒有雇主保障'], ['開店存摺', '每月固定轉一萬五到開店帳戶。', '三年 80 萬目標資金']],
@@ -80,6 +83,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'meiling', name: '張美玲', short: '美玲', age: 36, gender: '女性', job: '公司行政助理', tag: '單親家長型', difficulty: '進階',
     goal: '讓女兒順利念完大學', amount: 'NT$ 1,200,000', incomeInfo: '月薪 3.6 萬，另有週末家教收入', family: '單親，扶養 8 歲女兒',
+    finance: { income: 42000, expense: 34000, savings: 150000 },
     intro: '美玲獨自扶養女兒，預算很緊。她最怕的不是自己生病，而是女兒的生活因此被打亂。',
     quote: '「我每個月都在算錢，真的沒有多餘的預算給保險。」',
     facts: [['女兒的作業簿', '冰箱上貼著女兒的才藝班時間表。', '家中唯一經濟支柱'], ['兩份工作的班表', '平日上班、週末家教，幾乎沒有休息。', '收入來源依賴她的健康'], ['教育基金記帳本', '每月存三千元，目前約十五萬。', '長期教育目標']],
@@ -108,6 +112,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'jiahao', name: '劉家豪', short: '家豪', age: 31, gender: '男性', job: '軟體工程師', tag: '新手爸媽型', difficulty: '入門',
     goal: '太太育嬰假期間維持家庭生活', amount: 'NT$ 500,000', incomeInfo: '月薪 8 萬，太太育嬰假中', family: '已婚，新生兒 3 個月',
+    finance: { income: 80000, expense: 60000, savings: 300000 },
     intro: '家豪剛當爸爸，太太請育嬰假，家裡突然變成單薪。他想把錢都放 ETF 拚資產成長。',
     quote: '「我年輕收入高，應該多投資，保險等小孩大一點再說。」',
     facts: [['嬰兒床', '房間裡堆滿尿布和奶粉。', '新增扶養責任'], ['房貸繳款單', '每月房貸三萬二，還有 25 年。', '長期固定支出'], ['券商 App', '大部分存款都在 ETF。', '資產偏重市場部位']],
@@ -136,6 +141,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'shufen', name: '吳淑芬', short: '淑芬', age: 45, gender: '女性', job: '會計主管', tag: '三明治世代', difficulty: '進階',
     goal: '同時照顧父母與兩個孩子', amount: 'NT$ 1,500,000', incomeInfo: '月薪 9 萬，先生月薪 7 萬', family: '已婚，兩個國中孩子，父親 78 歲',
+    finance: { income: 90000, expense: 65000, savings: 600000 },
     intro: '淑芬上有年邁父母、下有孩子，家庭支出龐大。她最近發現父親開始需要人照顧。',
     quote: '「我每天都在處理別人的事，自己的規劃早就沒時間想了。」',
     facts: [['父親的拐杖', '父親去年跌倒後行動變慢。', '長期照顧需求正在浮現'], ['補習班收據', '兩個孩子的補習費每月兩萬。', '子女教育支出'], ['退休試算表', '她曾試算退休金但一直沒完成。', '自己的退休規劃被延後']],
@@ -164,6 +170,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'wenjie', name: '鄭文傑', short: '文傑', age: 58, gender: '男性', job: '國中教師', tag: '退休準備型', difficulty: '進階',
     goal: '兩年後退休，與太太環島旅行', amount: 'NT$ 2,000,000', incomeInfo: '月薪 7 萬，退休後有月退俸', family: '已婚，子女皆已工作',
+    finance: { income: 70000, expense: 45000, savings: 1200000 },
     intro: '文傑即將退休，退休金看似穩定。他最近被朋友推薦高配息商品，想把退休金拿去「錢滾錢」。',
     quote: '「我有月退俸，生活應該沒問題，剩下的錢想多賺一點。」',
     facts: [['健康檢查報告', '血壓與血糖都在臨界值。', '醫療與照顧風險上升'], ['高配息 DM', '桌上放著標榜年配息 8% 的廣告。', '可能追逐高風險商品'], ['環島地圖', '已規劃退休後的旅行路線。', '退休生活目標']],
@@ -192,6 +199,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'yiting', name: '蔡依婷', short: '依婷', age: 24, gender: '女性', job: '行銷專員（社會新鮮人）', tag: '小資起步型', difficulty: '入門',
     goal: '一年內存到第一桶金十萬', amount: 'NT$ 100,000', incomeInfo: '月薪 3.3 萬', family: '單身，與家人同住',
+    finance: { income: 33000, expense: 18000, savings: 50000 },
     intro: '依婷剛出社會，預算很小。親戚推銷她一張高額的終身型保單，她很困惑。',
     quote: '「親戚說要趁年輕買，越早越便宜，可是一個月要五千……」',
     facts: [['薪資單', '月薪三萬三，扣除後實領兩萬九。', '預算有限'], ['信用卡帳單', '上個月有一筆旅遊分期。', '緊急預備金不足'], ['親戚給的建議書', '一張每月五千元的終身型保單。', '可能過度配置']],
@@ -220,6 +228,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'zhiwei', name: '林志偉', short: '志偉', age: 40, gender: '男性', job: '小吃店老闆', tag: '自營商家型', difficulty: '進階',
     goal: '五年內開第二家分店', amount: 'NT$ 1,800,000', incomeInfo: '月營業額 30 萬，淨利約 8 萬', family: '已婚，一個國小孩子，太太在店裡幫忙',
+    finance: { income: 80000, expense: 52000, savings: 400000 },
     intro: '志偉的小吃店生意很好，全家收入都綁在這家店。他覺得只要店開著就沒問題。',
     quote: '「我店裡生意好得很，錢放在店裡周轉最實在。」',
     facts: [['老舊的瓦斯爐', '爐具用了十年，上個月才修過。', '設備故障可能導致停業'], ['夫妻同店', '太太負責收銀與備料。', '家庭收入集中在單一來源'], ['分店估價單', '第二家店的裝潢估價 180 萬。', '擴張目標資金']],
@@ -248,6 +257,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'peishan', name: '何佩珊', short: '佩珊', age: 34, gender: '女性', job: '醫院護理師', tag: '輪班高壓型', difficulty: '入門',
     goal: '兩年後出國進修', amount: 'NT$ 700,000', incomeInfo: '月薪 6 萬（含夜班津貼）', family: '單身，與男友同居',
+    finance: { income: 60000, expense: 38000, savings: 300000 },
     intro: '佩珊懂醫療，自認保障很懂，但輪班與搬病人讓她腰傷反覆。她的收入很依賴夜班津貼。',
     quote: '「我是護理師，醫療的事我比你清楚啦。」',
     facts: [['護腰', '長期搬動病人造成腰傷。', '工作能力與收入綁定'], ['夜班表', '夜班津貼佔收入三成。', '收入結構不穩定'], ['留學簡章', '已在準備語言考試。', '兩年 70 萬目標資金']],
@@ -276,6 +286,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'chengen', name: '李承恩', short: '承恩', age: 29, gender: '男性', job: '科技公司資深工程師', tag: '高收入集中型', difficulty: '挑戰',
     goal: '35 歲前財務自由', amount: 'NT$ 10,000,000', incomeInfo: '年薪 250 萬，一半是公司股票', family: '單身',
+    finance: { income: 110000, expense: 50000, savings: 800000 },
     intro: '承恩收入高，資產幾乎都是自家公司股票。他相信公司會一直成長，覺得保險是「窮人的思維」。',
     quote: '「我公司股票一年漲五成，買保險的錢拿去買股票不是更好？」',
     facts: [['股票帳戶', '八成資產是同一家公司股票。', '資產高度集中'], ['加班餐盒', '每週工作七十小時。', '健康風險被忽略'], ['財務自由試算表', '目標 35 歲存到一千萬。', '積極的長期目標']],
@@ -304,6 +315,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'jiaming', name: '許家銘', short: '家銘', age: 38, gender: '男性', job: '設計公司合夥人', tag: '頂客族型', difficulty: '進階',
     goal: '夫妻倆 55 歲提早退休', amount: 'NT$ 8,000,000', incomeInfo: '夫妻雙薪月入 18 萬', family: '已婚，無子女，養兩隻貓',
+    finance: { income: 95000, expense: 55000, savings: 800000 },
     intro: '家銘夫妻決定不生小孩，打算提早退休。他們最擔心的是「老了沒人照顧」。',
     quote: '「我們沒有小孩，老了只能靠自己。」',
     facts: [['退休計畫書', '目標 55 歲退休、移居花蓮。', '長期退休目標'], ['寵物醫療帳單', '貓咪每年醫療費三萬。', '重視生活品質'], ['合夥契約', '公司收入受景氣影響。', '收入有波動']],
@@ -332,6 +344,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'guohua', name: '楊國華', short: '國華', age: 50, gender: '男性', job: '計程車司機', tag: '高風險職業型', difficulty: '挑戰',
     goal: '五年內還清車貸、供女兒念完研究所', amount: 'NT$ 900,000', incomeInfo: '月收入 4–5 萬，扣油錢與車貸', family: '已婚，女兒念大學',
+    finance: { income: 45000, expense: 38000, savings: 100000 },
     intro: '國華開計程車二十年，收入被車貸與油價吃掉一大半。他覺得自己身體硬朗，最近卻常腰痠背痛。',
     quote: '「我開車二十年沒出過大事，保險都是騙人的。」',
     facts: [['車貸單', '新車貸款還有四年。', '營業工具負債'], ['女兒的學生證', '女兒研究所還要兩年。', '教育支出'], ['痠痛貼布', '長時間開車造成腰傷。', '健康與收入連動']],
@@ -360,6 +373,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'yijun', name: '陳怡君', short: '怡君', age: 42, gender: '女性', job: '外商業務經理', tag: '高房貸家庭型', difficulty: '進階',
     goal: '房貸提前還清、兩個孩子出國讀書', amount: 'NT$ 3,000,000', incomeInfo: '年薪 180 萬，獎金佔四成', family: '已婚，兩個孩子，先生是自由工作者',
+    finance: { income: 130000, expense: 90000, savings: 600000 },
     intro: '怡君是家中主要收入來源，房貸還有 800 萬。她的收入有四成是業績獎金，波動不小。',
     quote: '「我收入很好，房貸慢慢還就好，不想被保險綁住。」',
     facts: [['房貸合約', '剩餘本金 800 萬、還有 20 年。', '大額長期負債'], ['業績獎金單', '獎金佔年收入四成。', '收入波動'], ['留學資料夾', '計畫讓孩子高中出國。', '大額教育目標']],
@@ -388,6 +402,7 @@ export const extraClients: ClientProfile[] = [
   client({
     id: 'yixiang', name: '高奕翔', short: '奕翔', age: 27, gender: '男性', job: '健身教練（自由接課）', tag: '身體即資本型', difficulty: '入門',
     goal: '三年內開自己的健身工作室', amount: 'NT$ 1,000,000', incomeInfo: '月收入 5–7 萬，依課堂數', family: '單身',
+    finance: { income: 60000, expense: 28000, savings: 250000 },
     intro: '奕翔靠身體賺錢，收入完全取決於能上幾堂課。他覺得自己身體最健康，保險是浪費錢。',
     quote: '「我每天運動，身體比誰都好，買保險太浪費了。」',
     facts: [['膝蓋護具', '示範動作讓膝蓋舊傷復發。', '工作能力與身體綁定'], ['學員預約表', '每月上課約 80 堂。', '收入依賴親自授課'], ['工作室估價', '器材與裝潢約 100 萬。', '三年創業目標']],

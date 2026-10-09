@@ -9,3 +9,6 @@ web/
 .wrangler-webtest/
 # Local reference screenshots (may contain personal account info)
 docs/design/tasks/mobile-shots/
+tools/demo-recorder/node_modules/
+recordings/
+tools/demo-recorder/error-*.png

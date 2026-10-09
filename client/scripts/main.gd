@@ -7,6 +7,7 @@ const LobbyScreen := preload("res://scripts/ui/lobby.gd")
 const GameScreen := preload("res://scripts/ui/game.gd")
 const ReportScreen := preload("res://scripts/ui/report.gd")
 const RecordsScreen := preload("res://scripts/ui/records.gd")
+const AutomationBridge := preload("res://scripts/automation.gd")
 
 signal layout_changed(is_portrait: bool)
 
@@ -16,6 +17,7 @@ var _toasts: VBoxContainer
 var _solo_bots: Array = []
 var _solo := false
 var _busy_label: Label
+var _auto: Node = null
 
 
 var _was_quota_exhausted := false
@@ -82,6 +84,10 @@ func _ready() -> void:
 	show_menu()
 	add_child(_toasts)
 	add_child(_busy_label)
+	if AutomationBridge.is_active():
+		_auto = AutomationBridge.new()
+		_auto.set("main", self)
+		add_child(_auto)
 
 
 func _init_auth() -> void:
@@ -246,7 +252,14 @@ func _on_welcomed(_data: Dictionary) -> void:
 			Net.send({"t": "add_bot", "level": level})
 		_solo_bots = []
 		# Only logged-in users get AI real-time new clients; guests use rules version (server has separate check)
-		Net.send({"t": "settings", "rounds": 5, "aiClients": Net.ai_enabled})
+		var settings_dict: Dictionary = {"rounds": 5, "aiClients": Net.ai_enabled}
+		if AutomationBridge.is_active():
+			var demo_id := AutomationBridge.get_url_demo()
+			if demo_id != "":
+				settings_dict["demo"] = demo_id
+		var full_settings := {"t": "settings"}
+		full_settings.merge(settings_dict)
+		Net.send(full_settings)
 		Net.send({"t": "start"})
 
 
@@ -277,3 +290,7 @@ func _on_state(state: Dictionary) -> void:
 				_set_screen("report", r)
 	if _screen and _screen.has_method("refresh"):
 		_screen.refresh(state)
+
+
+func get_screen_kind() -> String:
+	return _screen_kind

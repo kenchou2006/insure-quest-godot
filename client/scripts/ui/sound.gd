@@ -53,9 +53,36 @@ static func _get_or_create_stream(name: String) -> AudioStreamWAV:
 			stream = _gen_slide(260.0, 130.0, 0.25, 0.22)
 		"ding":
 			stream = _gen_tone(1174.66, 0.12, 0.18)
+		"violation":
+			stream = _gen_violation(0.35, 0.28)
 	if stream != null:
 		_streams[name] = stream
 	return stream
+
+
+static func _gen_violation(duration: float, volume: float) -> AudioStreamWAV:
+	var mix_rate: int = 22050
+	var samples: int = int(duration * mix_rate)
+	var data: PackedByteArray = PackedByteArray()
+	data.resize(samples * 2)
+	for i in range(samples):
+		var t: float = float(i) / float(mix_rate)
+		var pulse: float = sin(t * PI * 14.0)
+		var env: float = (1.0 - (float(i) / float(samples))) * (1.0 if pulse > 0.0 else 0.25)
+		var tone1: float = sin(2.0 * PI * 180.0 * t)
+		var tone2: float = sin(2.0 * PI * 235.0 * t) * 0.7
+		var tone3: float = sin(2.0 * PI * 360.0 * t) * 0.4
+		var wave: float = (tone1 + tone2 + tone3) * 0.4 * env * volume
+		var val: int = clampi(int(wave * 32767.0), -32768, 32767)
+		var idx: int = i * 2
+		data[idx] = val & 0xFF
+		data[idx + 1] = (val >> 8) & 0xFF
+	var wav: AudioStreamWAV = AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = mix_rate
+	wav.stereo = false
+	wav.data = data
+	return wav
 
 
 static func _gen_tone(freq: float, duration: float, volume: float) -> AudioStreamWAV:

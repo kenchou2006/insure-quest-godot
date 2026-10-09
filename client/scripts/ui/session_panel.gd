@@ -3,6 +3,8 @@ extends PanelContainer
 ## Client interview panel: clue observation -> needs interview (with AI free questions) -> plan allocation -> objection handling (with AI scoring) -> result and stress test.
 ## Supports portrait stacked layout, adaptive coverage card sizing (truncation prevention), AI coach hints, and visualized stress test.
 
+signal violation_occurred
+
 var main: Node
 var _sess: Dictionary = {}
 var _actor: bool = false
@@ -23,6 +25,10 @@ static var _stream_text: String = ""
 static var _stream_key: String = ""
 var _think_label: Label = null
 var _last_result_sound_key: String = ""
+var _prev_asked_len: int = 0
+var _violation_pulse_panel: Panel = null
+var _flashing_hotspots: bool = false
+var _hint_used_this_session: bool = false
 
 # Local cache for plan allocation
 var _plan_key: String = ""
@@ -111,6 +117,33 @@ func _on_server_error(_msg: String) -> void:
 		refresh(_sess, _actor_name_cache)
 
 
+func _trigger_violation_juice() -> void:
+	Sound.play("violation", self)
+	violation_occurred.emit()
+
+	if _violation_pulse_panel == null or not is_instance_valid(_violation_pulse_panel):
+		_violation_pulse_panel = Panel.new()
+		_violation_pulse_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_violation_pulse_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_violation_pulse_panel.z_index = 50
+		var sb := UI.box(Color(1.0, 0.1, 0.1, 0.12), 18, Color("#ff4444"), 4, false)
+		_violation_pulse_panel.add_theme_stylebox_override("panel", sb)
+		add_child(_violation_pulse_panel)
+
+	_violation_pulse_panel.visible = true
+	_violation_pulse_panel.modulate.a = 0.0
+
+	var tw := create_tween()
+	tw.tween_property(_violation_pulse_panel, "modulate:a", 1.0, 0.15)
+	tw.tween_property(_violation_pulse_panel, "modulate:a", 0.35, 0.25)
+	tw.tween_property(_violation_pulse_panel, "modulate:a", 1.0, 0.25)
+	tw.tween_property(_violation_pulse_panel, "modulate:a", 0.0, 0.55)
+	tw.tween_callback(func():
+		if _violation_pulse_panel and is_instance_valid(_violation_pulse_panel):
+			_violation_pulse_panel.visible = false
+	)
+
+
 func refresh(sess: Dictionary, actor_name: String) -> void:
 	_actor_name_cache = actor_name
 	var prev_key: String = _last_key
@@ -122,6 +155,23 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 		_waiting_ai = false
 		_pending_talk = {}
 		_stream_text = ""
+
+	# Red-light violation juice detection for newly arrived entries
+	var asked_arr: Array = sess.get("asked", []) as Array if sess.get("asked") is Array else []
+	var cur_client_sess_id: String = str(sess.get("client", {}).get("id", "")) + str(sess.get("playerId", ""))
+	if cur_client_sess_id != str(_sess_prev_id):
+		_prev_asked_len = asked_arr.size()
+		_hint_used_this_session = false
+	else:
+		if asked_arr.size() > _prev_asked_len:
+			for chk_idx in range(_prev_asked_len, asked_arr.size()):
+				var chk_entry: Dictionary = asked_arr[chk_idx] if asked_arr[chk_idx] is Dictionary else {}
+				var comp_lvl: String = str(chk_entry.get("compliance", ""))
+				if comp_lvl == "violation":
+					_trigger_violation_juice()
+					break
+			_prev_asked_len = asked_arr.size()
+
 	# On new interview (different client or advisor), reset scroll to top to avoid staying at previous scroll position
 	if str(sess.get("client", {}).get("id", "")) + str(sess.get("playerId", "")) != str(_sess_prev_id):
 		_sess_prev_id = str(sess.get("client", {}).get("id", "")) + str(sess.get("playerId", ""))
@@ -505,7 +555,7 @@ func _render_coach_hint() -> void:
 				refresh(_sess, "")
 			, 14, UI.PANEL_2)
 			hint_bar.add_child(hint_btn)
-			var hint_note: String = ("（每場面談限一次・AI 剩 %d 次）" % Net.get_ai_remaining()) if Net.ai_enabled else "（每場面談限一次・規則版教練）"
+			var hint_note: String = "（每場面談限一次）" if Net.ai_enabled else "（每場面談限一次・規則版教練）"
 			var hint_desc := UI.label(hint_note, 12 if UI.is_phone_portrait() else 13, UI.MUTED, true)
 			hint_bar.add_child(hint_desc)
 		_content.add_child(hint_bar)
@@ -620,51 +670,90 @@ func _build_discover() -> void:
 		if comp_level == "" or comp_level == "null":
 			comp_level = Compliance.check(q_text).level
 
-		var comp_h := UI.hbox(6)
-		comp_h.add_child(UI.spacer())
-		var badge_col: Color = Compliance.level_color(comp_level)
-		var badge_p := UI.panel(Color(badge_col.r, badge_col.g, badge_col.b, 0.18), 4, 2)
-		badge_p.add_theme_stylebox_override("panel", UI.box(Color(badge_col.r, badge_col.g, badge_col.b, 0.18), 4, badge_col, 2, false))
-		badge_p.add_child(UI.label(Compliance.level_tag(comp_level), 11, badge_col))
-		comp_h.add_child(badge_p)
-
-		# Expand compliance analysis
 		var comp_issues: Array = a.get("issues", []) as Array if a.get("issues") != null else []
 		if comp_issues.is_empty():
 			comp_issues = Compliance.check(q_text).issues
 
-		if not comp_issues.is_empty() or comp_level in ["warning", "violation"]:
-			var is_exp: bool = bool(_expanded_compliance_issues.get(a_idx, false))
-			var exp_btn := UI.button("［收合 ▲］" if is_exp else "［查看合規分析 ▼］", func():
-				_expanded_compliance_issues[a_idx] = not bool(_expanded_compliance_issues.get(a_idx, false))
-				refresh(_sess, "")
-			, 11, UI.PANEL_2)
-			comp_h.add_child(exp_btn)
+		if comp_level == "violation":
+			var is_exp: bool = bool(_expanded_compliance_issues.get(a_idx, true))
+			if is_exp:
+				var viol_card := UI.panel(Color("#260e0e"), 10, 10)
+				viol_card.add_theme_stylebox_override("panel", UI.box(Color("#260e0e"), 10, UI.BAD, 8, false))
+				var vv := UI.vbox(4)
+				var v_head := UI.hbox(6)
+				v_head.add_child(UI.label("× 踩到合規紅燈（評級上限 C）", 13, UI.BAD))
+				v_head.add_child(UI.spacer())
+				var collapse_btn := UI.button("收合 ▲", func():
+					_expanded_compliance_issues[a_idx] = false
+					refresh(_sess, "")
+				, 11, UI.PANEL_2)
+				v_head.add_child(collapse_btn)
+				vv.add_child(v_head)
 
-		cons_v.add_child(comp_h)
+				for iss: Dictionary in comp_issues:
+					var r_str: String = str(iss.get("rule", ""))
+					if r_str != "":
+						vv.add_child(UI.label("規範：%s" % r_str, 12, Color("#ffb3b3"), true))
+					var q_str: String = str(iss.get("quote", ""))
+					if q_str != "":
+						vv.add_child(UI.label("原句：「%s」" % q_str, 12, UI.GOLD, true))
+					var s_str: String = str(iss.get("suggestion", ""))
+					if s_str != "":
+						vv.add_child(UI.label("改寫建議：%s" % s_str, 12, UI.ACCENT_2, true))
+				viol_card.add_child(vv)
+				cons_v.add_child(viol_card)
+			else:
+				var comp_h := UI.hbox(6)
+				comp_h.add_child(UI.spacer())
+				var badge_p := UI.panel(Color(UI.BAD.r, UI.BAD.g, UI.BAD.b, 0.18), 4, 2)
+				badge_p.add_theme_stylebox_override("panel", UI.box(Color(UI.BAD.r, UI.BAD.g, UI.BAD.b, 0.18), 4, UI.BAD, 2, false))
+				badge_p.add_child(UI.label("× 違規", 11, UI.BAD))
+				comp_h.add_child(badge_p)
+				var exp_btn := UI.button("［查看合規分析 ▼］", func():
+					_expanded_compliance_issues[a_idx] = true
+					refresh(_sess, "")
+				, 11, UI.PANEL_2)
+				comp_h.add_child(exp_btn)
+				cons_v.add_child(comp_h)
+		else:
+			var comp_h := UI.hbox(6)
+			comp_h.add_child(UI.spacer())
+			var badge_col: Color = Compliance.level_color(comp_level)
+			var badge_p := UI.panel(Color(badge_col.r, badge_col.g, badge_col.b, 0.18), 4, 2)
+			badge_p.add_theme_stylebox_override("panel", UI.box(Color(badge_col.r, badge_col.g, badge_col.b, 0.18), 4, badge_col, 2, false))
+			badge_p.add_child(UI.label(Compliance.level_tag(comp_level), 11, badge_col))
+			comp_h.add_child(badge_p)
 
-		# Expanded issues list
-		if bool(_expanded_compliance_issues.get(a_idx, false)) and not comp_issues.is_empty():
-			var issues_p := UI.panel(Color("#0d202c"), 8, 8)
-			issues_p.add_theme_stylebox_override("panel", UI.box(Color("#0d202c"), 8, badge_col, 6, false))
-			var iv_item := UI.vbox(4)
-			for iss: Dictionary in comp_issues:
-				var q_str: String = str(iss.get("quote", ""))
-				if q_str != "":
-					iv_item.add_child(UI.label("原句：「%s」" % q_str, 12, UI.GOLD, true))
-				var r_str: String = str(iss.get("rule", ""))
-				if r_str != "":
-					iv_item.add_child(UI.label("規範：%s" % r_str, 12, UI.MUTED, true))
-				var s_str: String = str(iss.get("suggestion", ""))
-				if s_str != "":
-					iv_item.add_child(UI.label("改寫建議：%s" % s_str, 12, UI.ACCENT_2, true))
-			issues_p.add_child(iv_item)
-			cons_v.add_child(issues_p)
+			if comp_level == "warning" and not comp_issues.is_empty():
+				var is_exp: bool = bool(_expanded_compliance_issues.get(a_idx, false))
+				var exp_btn := UI.button("［收合 ▲］" if is_exp else "［查看合規分析 ▼］", func():
+					_expanded_compliance_issues[a_idx] = not bool(_expanded_compliance_issues.get(a_idx, false))
+					refresh(_sess, "")
+				, 11, UI.PANEL_2)
+				comp_h.add_child(exp_btn)
+			cons_v.add_child(comp_h)
+
+			if comp_level == "warning" and bool(_expanded_compliance_issues.get(a_idx, false)) and not comp_issues.is_empty():
+				var issues_p := UI.panel(Color("#0d202c"), 8, 8)
+				issues_p.add_theme_stylebox_override("panel", UI.box(Color("#0d202c"), 8, badge_col, 6, false))
+				var iv_item := UI.vbox(4)
+				for iss: Dictionary in comp_issues:
+					var q_str: String = str(iss.get("quote", ""))
+					if q_str != "":
+						iv_item.add_child(UI.label("原句：「%s」" % q_str, 12, UI.GOLD, true))
+					var r_str: String = str(iss.get("rule", ""))
+					if r_str != "":
+						iv_item.add_child(UI.label("規範：%s" % r_str, 12, UI.MUTED, true))
+					var s_str: String = str(iss.get("suggestion", ""))
+					if s_str != "":
+						iv_item.add_child(UI.label("改寫建議：%s" % s_str, 12, UI.ACCENT_2, true))
+				issues_p.add_child(iv_item)
+				cons_v.add_child(issues_p)
 
 		# Coach tip
 		var coach_str: String = str(a.get("coachTip", a.get("note", "")))
 		if coach_str != "" and coach_str != "null":
-			var c_lbl := UI.label("★\u00a0教練短評：" + coach_str, 12, UI.MUTED, true)
+			var c_lbl := UI.label("教練短評：" + coach_str, 12, UI.MUTED, true)
 			cons_v.add_child(c_lbl)
 
 		cons_row.add_child(cons_v)
@@ -800,6 +889,9 @@ func _build_discover() -> void:
 	else:
 		iv.add_child(UI.label("（只有面談中的顧問可以發言）", 13, UI.MUTED))
 
+	if _actor and talk_left > 0:
+		Tutorial.show_spotlight(self, iv, "talk", "可以點建議提問，也可以自己打字；違規說法會被合規雷達抓到", func(): refresh(_sess, ""))
+
 	# Proceed to plan allocation button
 	var ready_to_plan: bool = bool(_sess.get("ready", false)) or talk_left <= 0
 	var go := UI.button("進入方案配置 →", func(): Net.act({"type": "to_plan"}), 18)
@@ -829,6 +921,7 @@ func _build_clues_grid(clues: Array, observed: int) -> void:
 			grid.add_child(p)
 		else:
 			var b := UI.option_button("？ " + str(cl.get("title", "")), func(): Net.act({"type": "observe", "index": idx}))
+			b.set_meta("hotspot_index", idx)
 			b.disabled = not _actor or observed >= 3
 			grid.add_child(b)
 		i += 1
@@ -839,6 +932,18 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 	var cv := _section("◎ 生活場景探索（%d/3）— 共 3 個需求線索與 1 個干擾物" % observed)
 	var toggle_h := UI.hbox(8)
 	toggle_h.add_child(UI.spacer())
+	var hint_btn := UI.button("提示" if _hint_used_this_session else "提示 💡", func():
+		_flashing_hotspots = true
+		_hint_used_this_session = true
+		refresh(_sess, "")
+		get_tree().create_timer(1.5).timeout.connect(func():
+			_flashing_hotspots = false
+			if is_inside_tree() and not _sess.is_empty():
+				refresh(_sess, "")
+		)
+	, 11 if UI.is_phone_portrait() else 12, UI.PANEL_2)
+	hint_btn.disabled = not _actor or observed >= 3 or _flashing_hotspots
+	toggle_h.add_child(hint_btn)
 	var toggle_btn := UI.button("收合為縮圖 ▲" if not _scene_collapsed else "展開場景熱點 ▼", func():
 		_scene_collapsed = not _scene_collapsed
 		refresh(_sess, "")
@@ -928,6 +1033,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 
 		# Do not set flat: flat buttons omit stylebox, making borders disappear completely
 		btn.text = ""
+		btn.set_meta("hotspot_index", idx)
 		btn.mouse_filter = Control.MOUSE_FILTER_PASS
 
 		if is_obs:
@@ -953,28 +1059,18 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 			tag_p.add_child(tag_lbl)
 			btn.add_child(tag_p)
 		else:
-			# Undiscovered: subtle gold border + faint fill (alpha <= 0.12), highlighted on hover
-			var unobs_fill := Color(0.95, 0.75, 0.3, 0.08)
-			var unobs_border := Color(0.95, 0.75, 0.3, 0.55)
-			var unobs_normal := UI.box(unobs_fill, 6, unobs_border, 2)
-			var unobs_hover := UI.box(Color(0.95, 0.75, 0.3, 0.18), 6, UI.GOLD, 2)
-			var unobs_disabled := UI.box(Color(0.95, 0.75, 0.3, 0.05), 6, Color(0.95, 0.75, 0.3, 0.35), 2)
+			btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			var unobs_fill: Color = Color(0.95, 0.75, 0.3, 0.15) if _flashing_hotspots else Color(0, 0, 0, 0)
+			var unobs_border: Color = UI.GOLD if _flashing_hotspots else Color(0, 0, 0, 0)
+			var unobs_normal := UI.box(unobs_fill, 6, unobs_border, 2 if _flashing_hotspots else 0)
+			var unobs_hover := UI.box(Color(1, 1, 1, 0.05), 6, Color(1, 1, 1, 0.4), 1)
+			var unobs_disabled := UI.box(Color(0, 0, 0, 0), 6, Color(0, 0, 0, 0), 0)
 
 			btn.add_theme_stylebox_override("normal", unobs_normal)
 			btn.add_theme_stylebox_override("hover", unobs_hover)
 			btn.add_theme_stylebox_override("pressed", unobs_hover)
 			btn.add_theme_stylebox_override("disabled", unobs_disabled)
 			btn.add_theme_stylebox_override("focus", unobs_normal)
-
-			# Top border small badge
-			var hint_p := PanelContainer.new()
-			var hint_sb := UI.box(Color(0.08, 0.20, 0.28, 0.75), 4, Color(0.95, 0.75, 0.3, 0.35), 2)
-			hint_p.add_theme_stylebox_override("panel", hint_sb)
-			hint_p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			hint_p.position = Vector2(2, 2)
-			var hint_lbl := UI.label("？", 10, UI.GOLD)
-			hint_p.add_child(hint_lbl)
-			btn.add_child(hint_p)
 
 			btn.disabled = not _actor or observed >= 3
 			btn.pressed.connect(func():
@@ -984,6 +1080,8 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 		i += 1
 
 	cv.add_child(arc)
+	if _actor and observed < 3:
+		Tutorial.show_spotlight(self, arc, "discover", "點擊畫面中可疑的物品，找出客戶沒說出口的需求", func(): refresh(_sess, ""))
 
 	var obs_list := UI.vbox(4)
 	var any_obs: bool = false
@@ -1002,7 +1100,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 	if any_obs:
 		cv.add_child(obs_list)
 	elif _actor:
-		cv.add_child(UI.label("提示：請在上方畫面上點選發光的黃框區域探索線索！", 13, UI.MUTED, true))
+		cv.add_child(UI.label("提示：在生活場景中仔細觀察，點擊可疑物品找出需求線索！", 13, UI.MUTED, true))
 
 
 # ───────── ② Plan Allocation ─────────
@@ -1016,6 +1114,8 @@ func _build_plan() -> void:
 	_plan_ui = {"rows": {}, "cards": {}}
 	var av := _section("")
 	_plan_ui["alloc_title"] = av.get_child(0)
+	if _actor:
+		Tutorial.show_spotlight(self, av, "plan", "10 枚資源幣代表客戶每月可運用的錢；保障卡選 2–3 張", func(): refresh(_sess, ""))
 	var hints := {"cash": "可支撐必要支出、避免低點賣出", "protect": "承接傷病、意外與收入中斷", "growth": "長期目標的資產累積"}
 	var is_narrow: bool = UI.is_phone_portrait()
 	for r: String in ["cash", "protect", "growth"]:
@@ -1144,17 +1244,24 @@ func _build_objection() -> void:
 			pv.add_child(UI.label("・" + str(n), 14, UI.OK, true))
 	var v := _section("◎ 客戶提出異議")
 	v.add_child(UI.label(str(o.get("text", "")), 18 if UI.is_portrait() else 20, UI.GOLD, true))
-	var i: int = 0
-	for t in o.get("options", []):
-		var idx: int = i
-		var b := UI.option_button(str(t), func(): Net.act({"type": "objection", "index": idx}))
+	var raw_options: Array = o.get("options", [])
+	var indices: Array = range(raw_options.size())
+	var seed_val: int = hash(str(_sess.get("client", {}).get("id", "")) + str(o.get("text", "")))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_val
+	for idx_i in range(indices.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, idx_i)
+		var tmp = indices[idx_i]
+		indices[idx_i] = indices[j]
+		indices[j] = tmp
+
+	for orig_idx in indices:
+		var t = raw_options[orig_idx]
+		var b := UI.option_button(str(t), func(): Net.act({"type": "objection", "index": orig_idx}))
 		b.disabled = not _actor or _waiting_ai
 		v.add_child(b)
-		i += 1
-	var rem_quota: int = Net.get_ai_remaining()
-	var fv := _section(("或用你自己的話回應（AI 講師評分・額度剩 %d 次；恐嚇與保證重扣合規）" % rem_quota) if Net.ai_enabled else "或用你自己的話回應（規則版評分；恐嚇與保證重扣合規）")
-	if Net.ai_enabled and rem_quota <= 0:
-		fv.add_child(UI.label("※ 今日 AI 額度已用完，送出後將改由規則版講師評分", 12, UI.GOLD, true))
+	# No remaining-count display: NIM calls are unlimited; main.gd toasts only when the Workers AI quota actually runs out
+	var fv := _section("或用你自己的話回應（AI 講師評分；恐嚇與保證重扣合規）" if Net.ai_enabled else "或用你自己的話回應（規則版評分；恐嚇與保證重扣合規）")
 	if _actor:
 		if _waiting_ai:
 			fv.add_child(UI.label("AI 講師評分中……" if Net.ai_enabled else "講師評分中……", 15, UI.GOLD))
@@ -1193,6 +1300,15 @@ func _build_result() -> void:
 			UI.spawn_confetti(self)
 
 	var is_phone: bool = UI.is_phone_portrait()
+
+	var letter_data: Dictionary = r.get("letter", {}) if r.get("letter") is Dictionary else {}
+	var outcome_str: String = str(letter_data.get("outcome", r.get("outcome", "")))
+	if outcome_str == "complaint":
+		var comp_banner := UI.panel(Color("#2d1010"), 10, 10)
+		comp_banner.add_theme_stylebox_override("panel", UI.box(Color("#2d1010"), 10, UI.BAD, 8, false))
+		comp_banner.add_child(UI.label("⚠ 合規紅燈：雖然簽約，但已埋下客訴風險（評級上限 C）", 14 if is_phone else 15, UI.BAD, true))
+		_content.add_child(comp_banner)
+
 	var top := UI.hbox(10 if is_phone else 16)
 	var grade_color: Color = {"S": UI.GOLD, "A": UI.GOOD, "B": UI.INFO}.get(str(r.get("grade", "C")), UI.BAD)
 	var gp := UI.panel(grade_color.darkened(0.35), 36 if is_phone else 60, 8 if is_phone else 14)
@@ -1326,8 +1442,28 @@ func _build_result() -> void:
 
 		ep_v.add_child(comp_box)
 
+	# 10-Year Financial Timeline
+	var timeline: Dictionary = r.get("timeline", {}) if r.get("timeline") is Dictionary else {}
+	if not timeline.is_empty():
+		var tv_sec := _section("◎ 十年財務人生（有你的規劃 vs 沒有規劃）")
+		var chart := TimelineChart.new()
+		chart.set_data(timeline, false)
+		tv_sec.add_child(chart)
+
+		var adopted_flag: bool = bool(timeline.get("adopted", true))
+		var stats_v := UI.vbox(3)
+		if not adopted_flag:
+			stats_v.add_child(UI.label("※ 客戶沒有採納你的建議", 13, UI.MUTED, true))
+		else:
+			var worst_with: int = int(round(float(timeline.get("worstWith", 0)) / 10000.0))
+			var worst_no: int = int(round(float(timeline.get("worstNo", 0)) / 10000.0))
+			var prem_total: int = int(round(float(timeline.get("premiumTotal", 0)) / 10000.0))
+			var stat_str := "最壞的一年：有規劃 %d 萬 ／ 沒有規劃 %d 萬" % [worst_with, worst_no]
+			stats_v.add_child(UI.label(stat_str, 14 if is_phone else 15, UI.TEXT, true))
+			stats_v.add_child(UI.label("十年保費合計 %d 萬" % prem_total, 13 if is_phone else 14, UI.MUTED, true))
+		tv_sec.add_child(stats_v)
+
 	# Letter from ten years later (letter paper style card)
-	var letter_data: Dictionary = r.get("letter", {}) if r.get("letter") is Dictionary else {}
 	if not letter_data.is_empty():
 		var c_name: String = str(_sess.get("client", {}).get("name", "客戶"))
 		var l_card := UI.letter_card(letter_data, c_name)

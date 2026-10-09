@@ -2,6 +2,8 @@
 extends Control
 ## Main menu: name, member login (Google avatar and advisor level), solo practice, create/join multiplayer room, training records, illustrated game guide. Supports landscape/portrait adaptation, PWA update check, and sound toggle.
 
+const AutomationBridge := preload("res://scripts/automation.gd")
+
 var main: Node
 var _name: LineEdit
 var _code: LineEdit
@@ -22,6 +24,8 @@ func _ready() -> void:
 		Net.auth_changed.connect(_on_auth_changed)
 	_last_account_id = str(Net.get_user().get("id", ""))
 	_build_ui()
+	if OS.has_feature("web") and not Engine.is_editor_hint():
+		_check_url_demo_code.call_deferred()
 
 
 func _exit_tree() -> void:
@@ -134,11 +138,12 @@ func _build_ui() -> void:
 	, 16, UI.GOLD)
 	_pwa_btn.visible = false
 	v.add_child(_pwa_btn)
-	if OS.has_feature("web"):
+	if OS.has_feature("web") and not AutomationBridge.is_active():
 		if JavaScriptBridge.pwa_needs_update():
 			_pwa_btn.visible = true
 		JavaScriptBridge.pwa_update_available.connect(func():
-			_pwa_btn.visible = true
+			if not AutomationBridge.is_active():
+				_pwa_btn.visible = true
 		)
 
 	# Account / login status card
@@ -286,6 +291,8 @@ func _update_auth_card() -> void:
 		h.add_child(UI.spacer())
 		if bool(Net.auth_config.get("google", true)):
 			h.add_child(UI.button("Google 登入", _login_google, 14, UI.ACCENT))
+		if bool(Net.auth_config.get("demo", false)):
+			h.add_child(UI.button("評審體驗碼", _open_demo_dialog, 14, UI.GOLD))
 		if bool(Net.auth_config.get("dev", false)):
 			h.add_child(UI.button("測試登入", _login_dev, 14, UI.GOLD.darkened(0.3)))
 		_auth_card_container.add_child(h)
@@ -326,6 +333,83 @@ func _login_dev() -> void:
 func _logout() -> void:
 	await Net.logout()
 	_update_auth_card()
+
+
+func _check_url_demo_code() -> void:
+	if Net.is_logged_in():
+		return
+	var code: String = Net.check_and_consume_url_demo_code()
+	if code != "":
+		var res: Array = await Net.submit_demo_code(code)
+		if bool(res[0]):
+			if main:
+				main.toast("已啟用 AI 體驗模式", UI.GOOD)
+		else:
+			if main:
+				main.toast(str(res[1]), UI.BAD)
+
+
+func _open_demo_dialog() -> void:
+	for c in get_children():
+		if c.name == "DemoCodeDialog":
+			return
+	var dim := ColorRect.new()
+	dim.name = "DemoCodeDialog"
+	dim.color = Color(0, 0, 0, 0.75)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dim.add_child(center)
+
+	var p := UI.panel(UI.PANEL, 14, 18)
+	var max_w: float = 340.0 if UI.is_phone_portrait() else 420.0
+	p.custom_minimum_size = Vector2(max_w, 0)
+	var v := UI.vbox(10)
+	p.add_child(v)
+
+	var head := UI.hbox(8)
+	head.add_child(UI.label("輸入評審體驗碼", 18, UI.ACCENT_2))
+	head.add_child(UI.spacer())
+	var close_btn := UI.button("✕", func(): dim.queue_free(), 14, UI.PANEL_2)
+	close_btn.custom_minimum_size = Vector2(36, 36)
+	head.add_child(close_btn)
+	v.add_child(head)
+
+	v.add_child(UI.label("輸入評審體驗碼即可啟用完整 AI 功能。", 13, UI.MUTED, true))
+
+	var err_lbl := UI.label("", 13, UI.BAD, true)
+	err_lbl.visible = false
+	v.add_child(err_lbl)
+
+	var submitting := false
+	var on_submit := func(code_text: String):
+		if submitting:
+			return
+		submitting = true
+		err_lbl.visible = false
+		var res: Array = await Net.submit_demo_code(code_text)
+		submitting = false
+		if not is_instance_valid(dim):
+			return
+		if bool(res[0]):
+			dim.queue_free()
+			if main:
+				main.toast("已啟用 AI 體驗模式", UI.GOOD)
+		else:
+			err_lbl.text = str(res[1])
+			err_lbl.visible = true
+
+	var input_row := UI.text_input("輸入體驗碼（如 CARDIF-DEMO-2026）", on_submit, 40)
+	var submit_btn = input_row.get_child(1) as Button
+	if submit_btn:
+		submit_btn.text = "進入"
+	v.add_child(input_row)
+
+	center.add_child(p)
+	add_child(dim)
 
 
 func _sync_opp() -> void:
@@ -477,6 +561,13 @@ func _build_howto() -> Control:
 
 	prev_btn = UI.button("◀ 上一步", func(): update_page.call(int(current_step[0]) - 1), 14, UI.PANEL_2)
 	nav.add_child(prev_btn)
+	nav.add_child(UI.spacer())
+	var reset_tut_btn := UI.button("重看教學", func():
+		Tutorial.reset_all()
+		if main and main.has_method("toast"):
+			main.toast("已重置教學，下次面談將重新引導", UI.GOOD)
+	, 13, UI.PANEL_2)
+	nav.add_child(reset_tut_btn)
 	nav.add_child(UI.spacer())
 	next_btn = UI.button("下一步 ▶", func():
 		if int(current_step[0]) >= steps_data.size() - 1:

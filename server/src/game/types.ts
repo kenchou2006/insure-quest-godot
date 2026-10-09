@@ -2,6 +2,7 @@ import type { Award, QuestState, QuestStats } from './extras.ts';
 import type { LifeTwist } from './twists.ts';
 import type { ClientLetter } from './letters.ts';
 import type { ComplianceLevel } from './compliance.ts';
+import type { TimelineResult } from './finance.ts';
 /* INSURE QUEST | Shared types. Authoritative server state, client profiles, and message protocols are defined here. */
 
 export type Metric = 'trust' | 'insight' | 'fit' | 'risk' | 'compliance';
@@ -48,6 +49,7 @@ export interface ClientProfile {
   };
   objection: { text: string; options: ChoiceOption[] };
   stress: StressEvent[];
+  finance?: { income: number; expense: number; savings: number };
   generated?: boolean;
 }
 
@@ -74,6 +76,8 @@ export interface BookEntry {
   stressUsed: number; signedRound: number; mis: boolean;
   /** Whether lifecycle review has been conducted */
   reviewed?: boolean;
+  /** Whether the interview involved a red-light violation */
+  violation?: boolean;
 }
 
 export interface Decision { round: number; clientName: string; stage: string; quality: Quality; title: string; body: string }
@@ -124,6 +128,8 @@ export interface SessionState {
   objectionOrder: number[];
   objectionReply?: { text: string; title: string; body: string; quality: Quality };
   objectionMode?: 'choice' | 'free';
+  objViolation?: boolean;
+  violationQuote?: string;
   /** AI coach hint: limited to once per interview */
   hintUsed?: boolean;
   hint?: string;
@@ -134,6 +140,7 @@ export interface SessionState {
     predictionHits: string[];
     epilogue: { headline: string; title: string; list: string[]; noPlan: string[] };
     letter?: ClientLetter | null;
+    timeline?: TimelineResult | null;
   };
   aiBusy?: boolean;
 }
@@ -156,6 +163,7 @@ export interface SessionLog {
   grade: string; score: number; signed: boolean; referral: boolean; hintUsed: boolean;
   twist?: { id: string; title: string; hint: string } | null;
   letter?: ClientLetter | null;
+  timeline?: TimelineResult | null;
   clues: { found: number; decoy: boolean };
   questions: { qid: string; text: string; key: string | null }[];
   freeQuestion: { text: string; note: string } | null;
@@ -163,6 +171,8 @@ export interface SessionLog {
   objection: { mode: 'choice' | 'free'; text: string; quality: Quality; title: string };
   stress: { title: string; result: string }[];
   tags: string[];
+  violations?: number;
+  warnings?: number;
 }
 
 /** Server-wide announcement (e.g. endgame major event), displayed once per id on client */
@@ -175,7 +185,9 @@ export interface FinalRow {
   score: number; grade: string; caps: string[];
   skill: Metrics; service: number; reputation: number; commission: number; clients: number;
   coach: string;
-  letters?: { clientName: string; outcome: 'thanks' | 'regret' | 'mixed'; content: string }[];
+  letters?: { clientName: string; outcome: 'thanks' | 'regret' | 'mixed' | 'complaint'; content: string }[];
+  timeline?: TimelineResult;
+  timelines?: ({ clientName: string } & TimelineResult)[];
 }
 
 export interface GameState {
@@ -184,6 +196,10 @@ export interface GameState {
   settings: { rounds: number; aiClients: boolean };
   /** Solo practice room: guests may create it, but no other human can join or spectate. */
   solo?: boolean;
+  /** Seeded demo client for reproducible video recordings */
+  demo?: string;
+  demoFirstRoll?: boolean;
+  demoFirstSession?: boolean;
   players: PlayerState[];
   turn: number; round: number;
   turnStage: 'roll' | 'session' | 'event' | 'done';

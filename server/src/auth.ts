@@ -51,9 +51,18 @@ export async function currentUser(req: Request, env: Env): Promise<User | null> 
 }
 
 export function isTrainer(env: Env, user: User | null) {
-  if (!user) return false;
+  if (!user || user.id.startsWith('demo:')) return false;
   const list = (env.TRAINER_EMAILS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   return list.includes(user.email.toLowerCase());
+}
+
+function timingSafeEqualStr(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 async function startSession(env: Env, url: URL, user: User, returnTo: string): Promise<Response> {
@@ -81,7 +90,12 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
   const redirectUri = `${url.origin}/api/auth/google/callback`;
 
   if (url.pathname === '/api/auth/config') {
-    return Response.json({ google: googleEnabled(env), googleClientId: googleEnabled(env) ? env.GOOGLE_CLIENT_ID : null, dev: devLoginEnabled(env, url) });
+    return Response.json({
+      google: googleEnabled(env),
+      googleClientId: googleEnabled(env) ? env.GOOGLE_CLIENT_ID : null,
+      dev: devLoginEnabled(env, url),
+      demo: !!(env.DEMO_CODES && env.DEMO_CODES.trim()),
+    });
   }
 
   // FedCM / One Tap: acquire one-time nonce first (bound to short-lived cookie), Google includes it in ID Token
@@ -159,6 +173,42 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
     const name = (url.searchParams.get('name') || '測試顧問').slice(0, 20);
     const user: User = { id: `dev:${name}`, email: `${encodeURIComponent(name)}@dev.local`, name, picture: null };
     return startSession(env, url, user, safeReturn(url.searchParams.get('return')));
+  }
+
+  if (url.pathname === '/api/auth/demo' && req.method === 'POST') {
+    if (!sameOriginPost(req, url)) return Response.json({ error: 'forbidden' }, { status: 403 });
+    const ip = req.headers.get('CF-Connecting-IP') || req.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown';
+    const rec = records(env);
+    const allowed = await rec.checkDemoRateLimit(ip);
+    if (!allowed) return Response.json({ error: '嘗試次數過多，請稍後再試' }, { status: 429 });
+
+    const body = await req.json<{ code?: string }>().catch(() => ({ code: '' }));
+    const inputCode = (body.code || '').trim();
+    const validCodes = (env.DEMO_CODES || '').split(',').map(s => s.trim()).filter(s => s.length >= 8);
+    const matchedCode = validCodes.find(c => timingSafeEqualStr(c, inputCode));
+    if (!matchedCode) {
+      await rec.recordDemoAttempt(ip);
+      return Response.json({ error: '體驗碼錯誤' }, { status: 401 });
+    }
+
+    const maxAccounts = Math.max(1, Number(env.DEMO_MAX_ACCOUNTS) || 300);
+    const currentCount = await rec.demoAccountCount(matchedCode);
+    if (currentCount >= maxAccounts) {
+      return Response.json({ error: '體驗碼名額已滿' }, { status: 403 });
+    }
+
+    const hexId = randomHex(8);
+    const userId = `demo:${hexId}`;
+    const num = Math.floor(1000 + Math.random() * 9000);
+    const name = `評審體驗 ${num}`;
+    const user: User = { id: userId, email: `demo+${userId}@demo.local`, name, picture: null };
+
+    await rec.recordDemoAccount(matchedCode, userId);
+    await rec.upsertUser(user);
+    const token = await rec.createSession(userId, 7);
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    headers.append('Set-Cookie', cookie(SESSION_COOKIE, token, url, 7 * 86400));
+    return new Response(JSON.stringify({ ok: true, name }), { headers });
   }
 
   if (url.pathname === '/api/auth/logout' && req.method === 'POST') {

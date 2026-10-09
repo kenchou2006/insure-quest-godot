@@ -33,6 +33,16 @@ export interface Env {
   TRAINER_EMAILS?: string;
   /** Local dev test login (set to 1 in .dev.vars only, localhost only) */
   DEV_LOGIN?: string;
+  /** Comma-separated demo codes (each >= 8 chars) for judge guest experience */
+  DEMO_CODES?: string;
+  DEMO_AI_LIMIT?: string;
+  DEMO_MAX_ACCOUNTS?: string;
+}
+
+/** Daily AI quota: judge demo accounts use DEMO_AI_LIMIT, everyone else AI_DAILY_LIMIT */
+export function aiLimitFor(env: Env, userId: string): number {
+  if (userId.startsWith('demo:')) return Math.max(0, Number(env.DEMO_AI_LIMIT) || 30);
+  return Math.max(0, Number(env.AI_DAILY_LIMIT) || 10);
 }
 
 const CORS = {
@@ -118,7 +128,7 @@ export default {
       if (xp.games === 0) xp = await globalRecords(env).xpSummary(user.id);
       return Response.json({
         user: { id: user.id, name: user.name, email: user.email, picture: user.picture, trainer: isTrainer(env, user) },
-        ai: { used, limit: Math.max(0, Number(env.AI_DAILY_LIMIT) || 10), provider },
+        ai: { used, limit: aiLimitFor(env, user.id), provider },
         level: levelFor(xp.xp, xp.games),
       });
     }
@@ -128,7 +138,7 @@ export default {
       const user = await currentUser(req, env);
       if (!user) return Response.json({ error: '請先登入才能查看 AI 使用紀錄' }, { status: 401 });
       const stub = userRecords(env, user.id);
-      const limit = Math.max(0, Number(env.AI_DAILY_LIMIT) || 10);
+      const limit = aiLimitFor(env, user.id);
       const used = await stub.aiUsage(user.id);
       // Next midnight in Taipei time (UTC+8)
       const now = Date.now();
@@ -218,6 +228,12 @@ export default {
       if (!isTrainer(env, user)) return Response.json({ error: '只有講師可以查看學員清單' }, { status: 403 });
       // Trainer learner list: aggregated list provided by global DO
       return Response.json({ learners: await globalRecords(env).learners() });
+    }
+
+    if (url.pathname === '/api/insights' && req.method === 'GET') {
+      const user = await currentUser(req, env);
+      if (!isTrainer(env, user)) return Response.json({ error: '只有講師可以查看培訓洞察' }, { status: 403 });
+      return Response.json(await globalRecords(env).insights());
     }
 
     if (url.pathname.startsWith('/api/')) return json({ error: 'not found' }, 404);

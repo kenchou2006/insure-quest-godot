@@ -105,6 +105,51 @@ When adding or renaming Durable Object classes, a new tag must be added in `migr
 | Coach Hint | Once per interview; deducts 2 Prestige; provides direction without giving away the answer |
 | Illustrated Game Guide | Retains the prototype's 5 guide diagrams |
 
+## Proposal Notes (facts for the 20-page deck and the demo video)
+
+Material the proposal team can lift directly. Everything here is true of the current code; numbers marked *assumption* are model parameters, not market data.
+
+### Problem → solution mapping
+| Pain point (sales & channel enablement) | What the game does | Where in code |
+|---|---|---|
+| New advisors learn product pitches, not needs discovery | Every interview starts with scene clues + 3 rounds of open dialogue with an AI client who hides needs; clues are only revealed by good questions | `server/src/ai.ts` (combined dialogue call), `client/scripts/ui/session_panel.gd` |
+| Mis-selling and non-compliant phrasing (guaranteed returns, fear selling, deposit comparison, pressure) | Compliance radar on every sentence: rule regex (instant) merged with AI judgement; a red light caps the grade at C, flags the case for audit (-10 reputation), and the ten-years-later letter becomes a complaint copy | `server/src/game/compliance.ts`, `game.ts` `finishSession`, `letters.ts` |
+| Advisors never see the long-term consequence of a plan | 90-day stress rehearsal + **10-year financial timeline**: the client's net worth with the advisor's plan vs no plan, driven by the client's real monthly income/expenses/savings | `server/src/game/finance.ts`, `engine.ts` |
+| Classroom role-play does not scale and is hard to measure | Every decision is logged; learner profile (trends, weaknesses, client compendium); trainer view with class-wide weakness heatmap (`/api/insights`) | `server/src/records.ts`, `profile.ts`, `client/scripts/ui/records.gd` |
+
+### AI usage (for the "applied technology" section)
+- **AI client** (persona + hidden needs + dynamic life twist injected into the prompt), **compliance auditor** and **coach** in a single structured call per dialogue round (≤ 3 calls per interview), validated with zod; failures refund quota and fall back to rules.
+- AI objection grading, coach hints, settlement critique, AI-generated new clients, and AI-written letters from ten years later.
+- **Guardrails**: outcomes, scores, money amounts and letter outcomes are decided only by the deterministic rule engine; AI only writes text. Player text is wrapped as untrusted data (prompt-injection defense, also detected as a compliance issue). Letters are validated so a "thanks" letter cannot contain regret wording and vice versa.
+- Providers: NVIDIA NIM (primary) → Workers AI (fallback) → Claude (optional) → rule engine. Guests and bots never call AI.
+
+### 10-year financial timeline model (*assumptions*)
+- Monthly surplus = income − expenses (per client, see `finance` in `server/src/game/data.ts` / `clients-extra.ts`).
+- With plan: surplus and savings split by the 10 coins; cash grows 1%/yr, growth 5%/yr; each protect coin costs 1% of annual income as premium.
+- No plan: everything in a 1%/yr deposit, no coverage.
+- Three life events in years 2, 5, 8; loss = event severity × 0.5 month of income; insurance covers the part of the event defense that comes from protect coins and matching coverage cards; the rest is paid from cash, then growth (forced selling in a market drop loses 15%), then debt.
+- Teaching message: insurance does not make the client richer; it keeps the worst year from breaking the family. Unit test: for ≥ 15 of 18 built-in clients the senior plan's worst year is better than no plan, and it is never clearly worse.
+
+### Compliance references
+The radar cites regulation **names** only (no article numbers, to avoid citing wrong articles): 《金融消費者保護法》 (suitability and disclosure), 《保險業招攬廣告自律規範》, and the FSC Treating Customers Fairly principles. Verify any article numbers before putting them in the deck.
+
+### Privacy and security design
+- Google OAuth handled in the Worker; session in an HttpOnly cookie; tokens never reach the client.
+- Per-learner Durable Object shard (isolated SQLite); trainers are an allow-list secret (`TRAINER_EMAILS`); judge demo accounts can never be trainers.
+- AI prompts contain the fictional client and the learner's utterance only — no learner name, email or ID.
+- All clients are fictional; coverage cards are functional concepts, not real products.
+
+### Cost structure (facts from config, not estimates)
+- One Cloudflare Worker + 2 Durable Object classes + static assets; idle shards hibernate.
+- AI: NVIDIA NIM calls are unmetered in-game; Workers AI / Claude calls count against a per-account daily quota (`AI_DAILY_LIMIT`, default 10; judge demo accounts `DEMO_AI_LIMIT`, default 30).
+- Guest solo play runs entirely in the browser (`web/local-room.js`), costing no server compute.
+
+### Letting judges try the AI
+Set `npx wrangler secret put DEMO_CODES` (comma-separated, ≥ 8 chars each). Judges enter the code on the main menu (「評審體驗碼」) or open `https://<domain>/?code=<CODE>`; each code creates a temporary account (NVIDIA NIM calls are unlimited; only Workers AI / Claude fallback calls count against its 30/day quota) (cap `DEMO_MAX_ACCOUNTS`, default 300 per code; 10 failed attempts per IP per hour).
+
+### Demo video raw footage
+`tools/demo-recorder/` drives the web build with Playwright and records reproducible clips (see its README). `?automation=1&demo=1` makes the first interview deterministic (mortgage family client 劉家豪, fixed life twist, first dice lands on a client tile).
+
 ## Web Version Considerations
 
 | Issue | Solution |

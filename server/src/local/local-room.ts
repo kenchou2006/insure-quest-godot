@@ -10,6 +10,7 @@ import {
   createGame,
   enrichCoach,
   log,
+  mulberry32,
   predict,
   publicView,
   startGame,
@@ -26,7 +27,7 @@ const BOT_NAMES = ['電腦顧問・安安', '電腦顧問・小賴', '電腦顧�
 type ClientMsg =
   | { t: 'hello'; playerId?: string; name?: string }
   | { t: 'add_bot'; level?: BotLevel }
-  | { t: 'settings'; rounds?: number; aiClients?: boolean }
+  | { t: 'settings'; rounds?: number; aiClients?: boolean; demo?: string }
   | { t: 'start' }
   | { t: 'action'; action: Action }
   | { t: 'predict'; grade: string }
@@ -40,6 +41,7 @@ export class LocalRoom {
   private outbox: unknown[] = [];
   private playerId: string | null = null;
   private botTimer: ReturnType<typeof setTimeout> | null = null;
+  private demoRng: (() => number) | null = null;
 
   constructor(code = 'LOCAL') {
     this.game = createGame(code);
@@ -70,9 +72,10 @@ export class LocalRoom {
       timer = null;
       pending = null;
     };
+    const rng = this.game?.demo && this.demoRng ? this.demoRng : Math.random;
     return {
       ai: new RuleAI(),
-      rng: Math.random,
+      rng,
       now: Date.now,
       onStream,
       endStream,
@@ -173,6 +176,15 @@ export class LocalRoom {
         if (!isHost || g.phase !== 'lobby') return this.err('只有房主可以在大廳調整設定');
         if (msg.rounds !== undefined) g.settings.rounds = Math.max(2, Math.min(12, Math.round(Number(msg.rounds)) || 6));
         g.settings.aiClients = false;
+        if (typeof msg.demo === 'string') {
+          const target = msg.demo === '1' ? 'jiahao' : msg.demo;
+          if (g.clients[target]) {
+            g.demo = target;
+            g.demoFirstRoll = true;
+            g.demoFirstSession = true;
+            this.demoRng = mulberry32(20261106);
+          }
+        }
         break;
       }
       case 'start': {

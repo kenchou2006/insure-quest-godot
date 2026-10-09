@@ -166,6 +166,8 @@ func _build_ui() -> void:
 	if Net.is_trainer() and target_user_id == "":
 		tabs.append("全部學員（講師）")
 		_tab_ids.append("trainer")
+		tabs.append("弱點熱力圖")
+		_tab_ids.append("insights")
 	_current_tab = clampi(_current_tab, 0, _tab_ids.size() - 1)
 
 	for i: int in tabs.size():
@@ -251,6 +253,8 @@ func _switch_tab(tab_idx: int) -> void:
 			_render_ai_tab()
 		"trainer":
 			_render_trainer_tab()
+		"insights":
+			_render_insights_tab()
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -909,3 +913,181 @@ func _load_trainer_learners(_container: VBoxContainer) -> void:
 		l_box.add_child(view_btn)
 
 		_trainer_list.add_child(l_card)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Tab 4: Trainer Insights & Weakness Heatmap (trainer only)
+# ──────────────────────────────────────────────────────────────────
+
+func _render_insights_tab() -> void:
+	var scroll: ScrollContainer = UI.scroll(UI.vbox(14))
+	_body_area.add_child(scroll)
+	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
+	content.add_child(UI.label("載入培訓弱點洞察中……", 15, UI.MUTED))
+
+	var res: Array = await Net.fetch_insights()
+	if not is_instance_valid(content):
+		return
+	UI.clear(content)
+	if not bool(res[0]) or not (res[1] is Dictionary):
+		content.add_child(UI.label("無法載入培訓弱點洞察：%s" % str(res[1]), 14, UI.BAD, true))
+		return
+
+	var d: Dictionary = res[1]
+	var learners_cnt: int = int(d.get("learners", 0))
+	var sessions_cnt: int = int(d.get("sessions", 0))
+	var comp: Dictionary = d.get("compliance", {}) if d.get("compliance") is Dictionary else {}
+	var violations_cnt: int = int(comp.get("violations", 0))
+	var warnings_cnt: int = int(comp.get("warnings", 0))
+	var tags: Array = d.get("tags", [])
+	var matrix: Array = d.get("matrix", [])
+
+	# 1. Summary row
+	var summary_card := UI.panel(UI.PANEL, 14, 12)
+	summary_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var summary_v := UI.vbox(8)
+	summary_card.add_child(summary_v)
+	summary_v.add_child(UI.label("培訓全景洞察概況（近 30 天）", 17, UI.ACCENT_2))
+
+	var is_phone := UI.is_phone_portrait()
+	var kpi_box: BoxContainer = UI.vbox(6) if is_phone else UI.hbox(10)
+	kpi_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	kpi_box.add_child(_make_kpi_card("培訓學員人數", "%d 位" % learners_cnt, UI.ACCENT_2))
+	kpi_box.add_child(_make_kpi_card("累計面談場次", "%d 場" % sessions_cnt, UI.TEXT))
+	var red_str := "%d 次" % violations_cnt
+	if warnings_cnt > 0:
+		red_str += "（警示 %d 次）" % warnings_cnt
+	kpi_box.add_child(_make_kpi_card("合規違規紅燈", red_str, UI.BAD if violations_cnt > 0 else UI.GOOD))
+	summary_v.add_child(kpi_box)
+	content.add_child(summary_card)
+
+	# 2. Bar list of top weakness tags
+	var tags_card := UI.panel(UI.PANEL, 14, 12)
+	tags_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var tags_v := UI.vbox(8)
+	tags_card.add_child(tags_v)
+	tags_v.add_child(UI.label("全體常見決策弱點分佈", 16, UI.ACCENT_2))
+
+	if tags.is_empty():
+		tags_v.add_child(UI.label("近 30 天內無弱點標籤紀錄。", 13, UI.MUTED, true))
+	else:
+		var max_cnt: int = 1
+		for t_item: Dictionary in tags:
+			max_cnt = maxi(max_cnt, int(t_item.get("count", 0)))
+
+		var display_tags: Array = tags.slice(0, 8)
+		for t_item: Dictionary in display_tags:
+			var t_lbl: String = str(t_item.get("label", t_item.get("tag", "")))
+			var cnt: int = int(t_item.get("count", 0))
+			var l_cnt: int = int(t_item.get("learners", 0))
+
+			var row := UI.hbox(8)
+			var name_lbl := UI.label(t_lbl, 13 if is_phone else 14, UI.TEXT)
+			name_lbl.custom_minimum_size = Vector2(110 if is_phone else 150, 0)
+			name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			row.add_child(name_lbl)
+
+			var pct: float = 100.0 * float(cnt) / float(max_cnt)
+			var b := UI.bar(pct, UI.GOLD if cnt >= 3 else UI.ACCENT_2, 60 if is_phone else 200)
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			row.add_child(b)
+
+			var count_lbl := UI.label("%d 次（%d 人）" % [cnt, l_cnt], 12 if is_phone else 13, UI.MUTED)
+			row.add_child(count_lbl)
+			tags_v.add_child(row)
+	content.add_child(tags_card)
+
+	# 3. Heatmap grid
+	var heat_card := UI.panel(UI.PANEL, 14, 12)
+	heat_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var heat_v := UI.vbox(8)
+	heat_card.add_child(heat_v)
+	heat_v.add_child(UI.label("學員弱點熱力矩陣（點擊學員列查看學習檔案）", 16, UI.ACCENT_2))
+
+	if matrix.is_empty():
+		heat_v.add_child(UI.label("尚未有學員面談矩陣數據。", 13, UI.MUTED, true))
+	else:
+		var top_6_tags: Array = tags.slice(0, 6)
+		var max_cell: int = 1
+		for row_item: Dictionary in matrix:
+			var r_tags: Dictionary = row_item.get("tags", {}) if row_item.get("tags") is Dictionary else {}
+			for t_info: Dictionary in top_6_tags:
+				var tag_id: String = str(t_info.get("tag", ""))
+				max_cell = maxi(max_cell, int(r_tags.get(tag_id, 0)))
+
+		# Horizontal scroll container for phone portrait / narrow screens
+		var scroll_grid := ScrollContainer.new()
+		scroll_grid.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		scroll_grid.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		scroll_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		scroll_grid.mouse_filter = Control.MOUSE_FILTER_PASS
+
+		var table_v := UI.vbox(4)
+		table_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		scroll_grid.add_child(table_v)
+
+		# Table Header Row
+		var head_row := UI.hbox(4)
+		head_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		var name_hdr := UI.panel(Color("#0d2432"), 6, 6)
+		name_hdr.custom_minimum_size = Vector2(150, 36)
+		var name_hdr_lbl := UI.label("學員姓名（場次）", 12, UI.MUTED)
+		name_hdr_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		name_hdr.add_child(name_hdr_lbl)
+		head_row.add_child(name_hdr)
+
+		for t_info: Dictionary in top_6_tags:
+			var t_lbl: String = str(t_info.get("label", t_info.get("tag", "")))
+			var col_hdr := UI.panel(Color("#0d2432"), 6, 6)
+			col_hdr.custom_minimum_size = Vector2(72, 36)
+			var hdr_lbl := UI.label(t_lbl, 11, UI.MUTED)
+			hdr_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			hdr_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			col_hdr.add_child(hdr_lbl)
+			head_row.add_child(col_hdr)
+		table_v.add_child(head_row)
+
+		# Learner Rows
+		for row_item: Dictionary in matrix:
+			var uid: String = str(row_item.get("userId", ""))
+			var uname: String = str(row_item.get("name", "學員"))
+			var sess_cnt: int = int(row_item.get("sessions", 0))
+			var r_tags: Dictionary = row_item.get("tags", {}) if row_item.get("tags") is Dictionary else {}
+
+			var data_row := UI.hbox(4)
+			data_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+			var open_profile := func():
+				target_user_id = uid
+				target_user_name = uname
+				_current_tab = 0
+				_build_ui()
+
+			var l_btn := UI.button("%s (%d場)" % [uname, sess_cnt], open_profile, 12, UI.PANEL_2)
+			l_btn.custom_minimum_size = Vector2(150, 36)
+			l_btn.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			data_row.add_child(l_btn)
+
+			for t_info: Dictionary in top_6_tags:
+				var tag_id: String = str(t_info.get("tag", ""))
+				var cell_cnt: int = int(r_tags.get(tag_id, 0))
+
+				var cell_bg: Color
+				if cell_cnt == 0:
+					cell_bg = Color("#0b1e28", 0.7)
+				else:
+					var ratio: float = clampf(float(cell_cnt) / float(max_cell), 0.25, 1.0)
+					cell_bg = Color("#1e1b12").lerp(Color("#d9534f"), ratio)
+
+				var cell_btn: Button = UI.button(str(cell_cnt) if cell_cnt > 0 else "-", open_profile, 12, cell_bg)
+				cell_btn.custom_minimum_size = Vector2(72, 36)
+				if cell_cnt == 0:
+					cell_btn.modulate = Color(1, 1, 1, 0.45)
+				data_row.add_child(cell_btn)
+
+			table_v.add_child(data_row)
+
+		heat_v.add_child(scroll_grid)
+	content.add_child(heat_card)

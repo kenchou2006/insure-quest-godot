@@ -247,6 +247,7 @@ func _build_ui() -> void:
 	_session.main = main
 	_session.visible = false
 	_session.z_index = 20
+	_session.violation_occurred.connect(_trigger_screen_shake)
 	if not UI.is_phone():
 		_session.anchor_left = 0.35
 		_session.anchor_right = 1.0
@@ -304,7 +305,7 @@ func _build_ui() -> void:
 		sound_btn.text = "音效：關" if m else "音效：開"
 	)
 	top.add_child(sound_btn)
-	top.add_child(UI.button("離開", func(): main.leave_to_menu(), 13, UI.PANEL_2))
+	top.add_child(UI.button("離開", func(): _confirm_leave(), 13, UI.PANEL_2))
 	sv.add_child(top)
 
 	# Collapsible match quest card (collapsed by default into one line "★ 任務 2/3 ▼", click to expand)
@@ -566,8 +567,7 @@ func refresh(s: Dictionary) -> void:
 		_actor_avatar_panel.add_theme_stylebox_override("panel", UI.box(player_col, 12, Color.WHITE if mine else Color(0, 0, 0, 0), 0))
 		_actor_avatar_label.text = cur_name.substr(0, 1) if cur_name != "" else "顧"
 	if mine:
-		_turn_label.text = "★ 輪到你了！請擲骰"
-		_turn_label.add_theme_color_override("font_color", UI.GOLD)
+		_turn_label.text = ""
 		_my_turn_banner.visible = true
 		_spectator_ribbon.visible = false
 		_screen_glow.visible = true
@@ -919,8 +919,6 @@ func _show_turn_transition(round_num: int, player_name: String, player_col: Colo
 	h.alignment = BoxContainer.ALIGNMENT_CENTER
 	h.add_child(UI.label("●", 18, player_col))
 	var title_str: String = "第 %d 回合 ｜ %s 的回合" % [round_num, player_name]
-	if is_self:
-		title_str += "（輪到你了！）"
 	var l := UI.label(title_str, 15, UI.GOLD if is_self else Color.WHITE)
 	h.add_child(l)
 	p.add_child(h)
@@ -985,3 +983,35 @@ func _show_announcement(ann: Dictionary) -> void:
 	, 18)
 	v.add_child(close_btn)
 	Sound.play("alarm", self)
+
+func _confirm_leave() -> void:
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.75)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.z_index = 120
+	add_child(dim)
+
+	var p := UI.panel(UI.PANEL, 16, 20)
+	p.set_anchors_preset(Control.PRESET_CENTER)
+	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	p.grow_vertical = Control.GROW_DIRECTION_BOTH
+	var is_phone := UI.is_phone()
+	p.custom_minimum_size = Vector2(300, 150) if is_phone else Vector2(380, 170)
+	dim.add_child(p)
+
+	var v := UI.vbox(14)
+	p.add_child(v)
+
+	v.add_child(UI.label("離開遊戲", 18 if is_phone else 20, UI.GOLD))
+	v.add_child(UI.label("確定離開？進行中的面談不會保存，可從主選單回到房間。", 13 if is_phone else 14, UI.TEXT, true))
+
+	var btn_row := UI.hbox(12)
+	btn_row.alignment = BoxContainer.ALIGNMENT_END
+	var stay_btn := UI.button("留下", func(): dim.queue_free(), 14, UI.PANEL_2)
+	var leave_btn := UI.button("離開", func():
+		dim.queue_free()
+		main.leave_to_menu()
+	, 14, UI.BAD)
+	btn_row.add_child(stay_btn)
+	btn_row.add_child(leave_btn)
+	v.add_child(btn_row)
