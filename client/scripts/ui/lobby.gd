@@ -142,17 +142,30 @@ func refresh(s: Dictionary) -> void:
 		var h := UI.hbox(10)
 		var dot := UI.label("●", 20, UI.PLAYER_COLORS[i % 4])
 		h.add_child(dot)
-		var tag := ""
+		var tag_str := ""
 		if p.get("isBot", false):
-			tag = "　電腦"
+			tag_str = "電腦"
 		elif str(p.get("id", "")) == str(s.get("hostId", "")):
-			tag = "　房主"
+			tag_str = "房主"
 		if str(p.get("id", "")) == Net.player_id:
-			tag += "（你）"
-		var p_name_lbl := UI.label(str(p.get("name", "")) + tag, 16 if UI.is_phone_portrait() else 18, UI.TEXT, true)
+			tag_str = (tag_str + "（你）") if tag_str != "" else "（你）"
+
+		var p_name_lbl := UI.label(str(p.get("name", "")), 18, UI.TEXT)
 		p_name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		p_name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		p_name_lbl.clip_text = true
 		h.add_child(p_name_lbl)
-		h.add_child(UI.spacer())
+
+		if tag_str != "":
+			var tag_p := UI.panel(Color("#143547"), 6, 4)
+			tag_p.size_flags_horizontal = Control.SIZE_SHRINK_END
+			var tag_col: Color = UI.GOLD if "房主" in tag_str else (UI.ACCENT_2 if "你" in tag_str else UI.MUTED)
+			var tag_lbl := UI.label(tag_str, 12, tag_col)
+			tag_lbl.size_flags_horizontal = Control.SIZE_SHRINK_END
+			tag_p.add_child(tag_lbl)
+			h.add_child(tag_p)
+		else:
+			h.add_child(UI.spacer())
 		if host and str(p.get("id", "")) != Net.player_id:
 			var pid: String = str(p.get("id", ""))
 			h.add_child(UI.button("移除", func(): Net.send({"t": "remove_player", "id": pid}), 14, UI.BAD.darkened(0.3)))

@@ -8,7 +8,7 @@ extends Node
 const JS_SETUP := """
 (function () {
   if (window.iqOpenInput) return;
-  window.iqOpenInput = function (x, y, w, h, val, ph, maxLen) {
+  window.iqOpenInput = function (x, y, w, h, val, ph, maxLen, fsRatio) {
     var canvas = document.getElementById('canvas');
     var c = canvas.getBoundingClientRect();
     var el = document.getElementById('iq-input');
@@ -53,7 +53,7 @@ const JS_SETUP := """
     el.style.top = (c.top + y * c.height) + 'px';
     el.style.width = (w * c.width) + 'px';
     el.style.height = (h * c.height) + 'px';
-    el.style.fontSize = Math.max(14, h * c.height * 0.42) + 'px';
+    el.style.fontSize = (fsRatio && fsRatio > 0 ? Math.max(12, Math.round(fsRatio * c.height)) : Math.max(14, h * c.height * 0.42)) + 'px';
     el.maxLength = maxLen > 0 ? maxLen : 524288;
     el.value = val;
     el.placeholder = ph;
@@ -67,7 +67,7 @@ const JS_SETUP := """
     });
   };
   // Moving to a new field after screen rebuild: only update position, preserving user input and focus
-  window.iqMoveInput = function (x, y, w, h) {
+  window.iqMoveInput = function (x, y, w, h, fsRatio) {
     var canvas = document.getElementById('canvas');
     var c = canvas.getBoundingClientRect();
     var el = document.getElementById('iq-input');
@@ -76,6 +76,7 @@ const JS_SETUP := """
     el.style.top = (c.top + y * c.height) + 'px';
     el.style.width = (w * c.width) + 'px';
     el.style.height = (h * c.height) + 'px';
+    if (fsRatio && fsRatio > 0) el.style.fontSize = Math.max(12, Math.round(fsRatio * c.height)) + 'px';
     return el.value;
   };
   // Temporarily hide/restore: preserve text and target field
@@ -136,8 +137,12 @@ func _process(_delta: float) -> void:
 	if not r.is_equal_approx(_shown_rect):
 		_shown_rect = r
 		var vp := _target.get_viewport().get_visible_rect().size
-		JavaScriptBridge.eval("window.iqMoveInput(%f,%f,%f,%f)" % [
-			r.position.x / vp.x, r.position.y / vp.y, r.size.x / vp.x, r.size.y / vp.y], true)
+		var le_fs: int = _target.get_theme_font_size("font_size")
+		if le_fs <= 0:
+			le_fs = UI.fs(16)
+		var fs_ratio: float = float(le_fs) / maxf(1.0, vp.y)
+		JavaScriptBridge.eval("window.iqMoveInput(%f,%f,%f,%f,%f)" % [
+			r.position.x / vp.x, r.position.y / vp.y, r.size.x / vp.x, r.size.y / vp.y, fs_ratio], true)
 
 
 ## The actually visible area of the field; returns empty rect if invisible, not yet laid out, or clipped by scroll container
@@ -170,9 +175,13 @@ func _open(le: LineEdit) -> void:
 		le.tree_exiting.connect(_on_target_exiting.bind(le))
 	var vp := le.get_viewport().get_visible_rect().size
 	var r := le.get_global_rect()
-	var js := "window.iqOpenInput(%f,%f,%f,%f,%s,%s,%d)" % [
+	var le_fs: int = le.get_theme_font_size("font_size")
+	if le_fs <= 0:
+		le_fs = UI.fs(16)
+	var fs_ratio: float = float(le_fs) / maxf(1.0, vp.y)
+	var js := "window.iqOpenInput(%f,%f,%f,%f,%s,%s,%d,%f)" % [
 		r.position.x / vp.x, r.position.y / vp.y, r.size.x / vp.x, r.size.y / vp.y,
-		JSON.stringify(le.text), JSON.stringify(le.placeholder_text), le.max_length]
+		JSON.stringify(le.text), JSON.stringify(le.placeholder_text), le.max_length, fs_ratio]
 	JavaScriptBridge.eval(js, true)
 	# Release Godot focus so subsequent clicks on the same field will trigger again
 	le.release_focus.call_deferred()

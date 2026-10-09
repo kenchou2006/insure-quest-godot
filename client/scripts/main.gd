@@ -119,7 +119,7 @@ func _on_size_changed() -> void:
 		# Landscape: phone landscape (<500) vs desktop (>=500)
 		if css_size.y < 500.0:
 			profile = "phone_landscape"
-			target_scale = Vector2i(960, 540)
+			target_scale = Vector2i(800, 450)
 		else:
 			profile = "desktop"
 			target_scale = Vector2i(1280, 720)
@@ -131,6 +131,7 @@ func _on_size_changed() -> void:
 		get_tree().root.content_scale_size = target_scale
 
 	if changed:
+		theme = UI.make_theme()
 		emit_signal("layout_changed", UI.is_portrait())
 		if _screen != null and is_instance_valid(_screen) and _screen.has_method("on_layout_changed"):
 			_screen.on_layout_changed(UI.is_portrait())

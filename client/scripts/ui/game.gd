@@ -67,23 +67,31 @@ class DiceControl extends Control:
 	var dot_color: Color = Color("#f2c14e")
 
 	func _init() -> void:
-		var sz: float = 78.0 if UI.is_phone_portrait() else 84.0
+		var sz: float = 72.0 if UI.is_phone_portrait() else (48.0 if UI.is_phone_landscape() else 84.0)
 		custom_minimum_size = Vector2(sz, sz)
 		pivot_offset = Vector2(sz * 0.5, sz * 0.5)
+
+	func set_dice_size(sz: float) -> void:
+		if absf(custom_minimum_size.x - sz) > 0.5:
+			custom_minimum_size = Vector2(sz, sz)
+			size = Vector2(sz, sz)
+			pivot_offset = Vector2(sz * 0.5, sz * 0.5)
+			queue_redraw()
 
 	func set_value(v: int) -> void:
 		value = v
 		queue_redraw()
 
 	func _draw() -> void:
-		var r := Rect2(Vector2.ZERO, size).grow(-4)
+		var r := Rect2(Vector2.ZERO, size).grow(-3 if UI.is_phone() else -4)
 		var bg_col := Color("#173748") if not rolling else Color("#225068")
 		var border_col := Color("#f2c14e") if not rolling else Color("#2fd197")
-		draw_style_box(UI.box(bg_col, 14, border_col, 0), r)
+		draw_style_box(UI.box(bg_col, int(size.x * 0.16), border_col, 0), r)
 
 		if value <= 0 or value > 6:
 			var font := get_theme_default_font()
-			draw_string(font, Vector2(size.x * 0.5 - 12, size.y * 0.5 + 14), "？", HORIZONTAL_ALIGNMENT_CENTER, 24, 38, border_col)
+			var q_fs: int = UI.fs(int(size.y * 0.42))
+			draw_string(font, Vector2(0, size.y * 0.5 + q_fs * 0.36), "？", HORIZONTAL_ALIGNMENT_CENTER, int(size.x), q_fs, border_col)
 			return
 
 		var cx: float = size.x * 0.5
@@ -146,7 +154,7 @@ func _build_ui() -> void:
 	var left := MarginContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var pad: int = (2 if UI.is_phone_portrait() else 8) if portrait else 14
+	var pad: int = (2 if UI.is_phone_portrait() else 8) if portrait else (6 if UI.is_phone_landscape() else 14)
 	for s in ["left", "top", "bottom", "right"]:
 		left.add_theme_constant_override("margin_" + s, pad)
 	if portrait:
@@ -170,7 +178,7 @@ func _build_ui() -> void:
 	_screen_glow.visible = false
 	_left_stack.add_child(_screen_glow)
 
-	_center = UI.vbox(UI.scale_val(6, 8))
+	_center = UI.vbox(2 if UI.is_phone_landscape() else UI.scale_val(4, 8))
 	_center.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	_center.alignment = BoxContainer.ALIGNMENT_CENTER
 	_left_stack.add_child(_center)
@@ -179,7 +187,7 @@ func _build_ui() -> void:
 	_my_turn_banner = UI.panel(Color("#133647"), 12, 6)
 	_my_turn_banner.add_theme_stylebox_override("panel", UI.box(Color("#133647"), 12, UI.GOLD, 8, false))
 	_my_turn_banner.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	var banner_l := UI.label("★ 輪到你了！請擲骰前進 ★", 16 if UI.is_phone_portrait() else 18, UI.GOLD)
+	var banner_l := UI.label("★ 輪到你了！請擲骰前進 ★", 14 if UI.is_phone_landscape() else (16 if UI.is_phone_portrait() else 18), UI.GOLD)
 	banner_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_my_turn_banner.add_child(banner_l)
 	_my_turn_banner.visible = false
@@ -188,27 +196,28 @@ func _build_ui() -> void:
 	# Spectator ribbon during other players' turns
 	_spectator_ribbon = UI.panel(Color("#0d2432"), 10, 6)
 	_spectator_ribbon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_spectator_ribbon_lbl = UI.label("觀看中：其他顧問的回合", 13 if UI.is_phone_portrait() else 14, UI.MUTED)
+	_spectator_ribbon_lbl = UI.label("觀看中：其他顧問的回合", 12 if UI.is_phone_landscape() else (13 if UI.is_phone_portrait() else 14), UI.MUTED)
 	_spectator_ribbon_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_spectator_ribbon.add_child(_spectator_ribbon_lbl)
 	_spectator_ribbon.visible = false
 	_center.add_child(_spectator_ribbon)
 
-	_top_label = UI.label("", 13 if UI.is_phone_portrait() else (15 if portrait else 16), UI.MUTED, true)
+	_top_label = UI.label("", 12 if UI.is_phone_landscape() else (13 if UI.is_phone_portrait() else (15 if portrait else 16)), UI.MUTED, true)
 	_top_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center.add_child(_top_label)
 
-	var actor_row := UI.hbox(8)
+	var actor_row := UI.hbox(6 if UI.is_phone_landscape() else 8)
 	actor_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var av_sz: float = 20.0 if UI.is_phone_landscape() else 24.0
 	_actor_avatar_panel = UI.panel(UI.PLAYER_COLORS[0], 12, 0)
-	_actor_avatar_panel.custom_minimum_size = Vector2(24, 24)
-	_actor_avatar_label = UI.label("顧", 13, Color.WHITE)
+	_actor_avatar_panel.custom_minimum_size = Vector2(av_sz, av_sz)
+	_actor_avatar_label = UI.label("顧", 11 if UI.is_phone_landscape() else 13, Color.WHITE)
 	_actor_avatar_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_actor_avatar_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_actor_avatar_panel.add_child(_actor_avatar_label)
 	actor_row.add_child(_actor_avatar_panel)
 
-	_turn_label = UI.label("", 19 if UI.is_phone_portrait() else (19 if portrait else 22), UI.TEXT, true)
+	_turn_label = UI.label("", 16 if UI.is_phone_landscape() else (19 if UI.is_phone_portrait() else (19 if portrait else 22)), UI.TEXT, true)
 	actor_row.add_child(_turn_label)
 	_center.add_child(actor_row)
 
@@ -216,19 +225,19 @@ func _build_ui() -> void:
 	_dice_ctl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_center.add_child(_dice_ctl)
 
-	_dice_roll_info_lbl = UI.label("", 12 if UI.is_phone_portrait() else 14, UI.GOLD, true)
+	_dice_roll_info_lbl = UI.label("", 11 if UI.is_phone_landscape() else (12 if UI.is_phone_portrait() else 14), UI.GOLD, true)
 	_dice_roll_info_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center.add_child(_dice_roll_info_lbl)
 
 	_roll_btn = UI.button("▶ 擲骰子", func():
 		Sound.play("dice", self)
 		Net.act({"type": "roll"})
-	, 22 if UI.is_phone_portrait() else (22 if portrait else 24), UI.ACCENT)
+	, 16 if UI.is_phone_landscape() else (22 if UI.is_phone_portrait() else (22 if portrait else 24)), UI.ACCENT)
 	_roll_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_roll_btn.custom_minimum_size = Vector2(180 if UI.is_phone_portrait() else (180 if portrait else 220), 54 if UI.is_phone_portrait() else (50 if portrait else 56))
+	_roll_btn.custom_minimum_size = Vector2(160 if UI.is_phone_landscape() else (180 if UI.is_phone_portrait() else (180 if portrait else 220)), 38 if UI.is_phone_landscape() else (54 if UI.is_phone_portrait() else (50 if portrait else 56)))
 	_center.add_child(_roll_btn)
 
-	if not UI.is_phone_portrait():
+	if not UI.is_phone():
 		var leg_text: String = "◎客戶 ✚事件 ↗市場 ✓合規 ⚠稽核 ♥介紹 ◇研討 ★結算"
 		var legend := UI.label(leg_text, 12 if portrait else 13, UI.MUTED, true)
 		legend.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -237,6 +246,7 @@ func _build_ui() -> void:
 	_session = SessionPanel.new()
 	_session.main = main
 	_session.visible = false
+	_session.z_index = 20
 	if not UI.is_phone():
 		_session.anchor_left = 0.35
 		_session.anchor_right = 1.0
@@ -248,16 +258,23 @@ func _build_ui() -> void:
 		_session.offset_bottom = 0
 	else:
 		_session.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_session.offset_left = 0
+		_session.offset_right = 0
+		_session.offset_top = 0
+		_session.offset_bottom = 0
 	_left_stack.add_child(_session)
 
 	_event = EventPanel.new()
 	_event.set_anchors_preset(Control.PRESET_FULL_RECT)
 	if UI.is_phone_portrait():
 		_event.offset_left = 4; _event.offset_right = -4; _event.offset_top = 8; _event.offset_bottom = -8
+	elif UI.is_phone_landscape():
+		_event.offset_left = 0; _event.offset_right = 0; _event.offset_top = 0; _event.offset_bottom = 0
 	elif portrait:
 		_event.offset_left = 8; _event.offset_right = -8; _event.offset_top = 12; _event.offset_bottom = -12
 	else:
 		_event.offset_left = 80; _event.offset_right = -80; _event.offset_top = 40; _event.offset_bottom = -40
+	_event.z_index = 20
 	_event.visible = false
 	_left_stack.add_child(_event)
 
@@ -271,6 +288,8 @@ func _build_ui() -> void:
 	content_box.add_child(_side_panel)
 
 	var sv := UI.vbox(8 if UI.is_phone() else 10)
+	if portrait:
+		sv.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_side_panel.add_child(UI.scroll(sv))
 
 	var top := UI.hbox(8)
@@ -323,7 +342,11 @@ func _build_ui() -> void:
 	sv.add_child(UI.label("動態", 15 if UI.is_phone() else 16, UI.ACCENT_2))
 	_log_box = UI.vbox(3)
 	var ls := UI.scroll(_log_box)
-	ls.custom_minimum_size.y = 120.0 if UI.is_phone() else 160.0
+	if portrait:
+		ls.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		ls.custom_minimum_size.y = 120.0
+	else:
+		ls.custom_minimum_size.y = 120.0 if UI.is_phone() else 160.0
 	sv.add_child(ls)
 
 	var react := UI.hbox(4 if UI.is_phone() else 6)
@@ -352,9 +375,37 @@ func _sync_center_bounds() -> void:
 	if _board == null or _center == null:
 		return
 	var r: Rect2 = _board.get_inner_rect()
-	var pad := 4.0 if UI.is_phone_portrait() else 6.0
+	var is_phone_land := UI.is_phone_landscape()
+	var is_phone_port := UI.is_phone_portrait()
+	var pad := 3.0 if is_phone_land else (4.0 if is_phone_port else 6.0)
 	var avail_w := maxf(80.0, r.size.x - pad * 2.0)
 	var avail_h := maxf(80.0, r.size.y - pad * 2.0)
+
+	if is_phone_land:
+		_center.add_theme_constant_override("separation", 2)
+		var dice_sz := clampf(avail_h * 0.22, 42.0, 52.0)
+		if _dice_ctl != null:
+			_dice_ctl.set_dice_size(dice_sz)
+		if _roll_btn != null:
+			var btn_w := clampf(avail_w * 0.70, 140.0, 175.0)
+			var btn_h := clampf(avail_h * 0.15, 34.0, 40.0)
+			_roll_btn.custom_minimum_size = Vector2(btn_w, btn_h)
+	elif is_phone_port:
+		_center.add_theme_constant_override("separation", 4)
+		var dice_sz := clampf(avail_h * 0.20, 52.0, 72.0)
+		if _dice_ctl != null:
+			_dice_ctl.set_dice_size(dice_sz)
+		if _roll_btn != null:
+			var btn_w := clampf(avail_w * 0.65, 150.0, 180.0)
+			var btn_h := clampf(avail_h * 0.14, 40.0, 48.0)
+			_roll_btn.custom_minimum_size = Vector2(btn_w, btn_h)
+	else:
+		_center.add_theme_constant_override("separation", 8)
+		if _dice_ctl != null:
+			_dice_ctl.set_dice_size(84.0)
+		if _roll_btn != null:
+			_roll_btn.custom_minimum_size = Vector2(220, 56)
+
 	_center.position = r.position + Vector2(pad, pad)
 	_center.size = Vector2(avail_w, avail_h)
 	if _cutscene_center_box != null and is_instance_valid(_cutscene_center_box):
@@ -368,9 +419,28 @@ func _switch_tab(tab_idx: int) -> void:
 
 
 func _sync_tabs() -> void:
+	var sess = Net.state.get("session")
+	var ev = Net.state.get("event")
+	var is_sess: bool = sess is Dictionary and not _is_overlay_deferred
+	var is_ev: bool = ev is Dictionary and not is_sess and not _is_overlay_deferred
+	var overlay: bool = is_sess or is_ev
+
 	if not UI.is_portrait():
 		_left_stack.get_parent().visible = true
-		_side_panel.visible = true
+		if UI.is_phone_landscape():
+			_side_panel.visible = not overlay
+			if overlay:
+				_board.visible = false
+			else:
+				_board.visible = true
+				_board.modulate = Color.WHITE
+		else:
+			_side_panel.visible = true
+			_board.visible = true
+			_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
+		_session.visible = is_sess
+		_event.visible = is_ev
+		_center.visible = not overlay
 		return
 
 	for i: int in range(_tab_buttons.size()):
@@ -380,14 +450,8 @@ func _sync_tabs() -> void:
 		else:
 			b.add_theme_stylebox_override("normal", UI.box(UI.PANEL_2, 8, Color(0, 0, 0, 0), 10))
 
-	var sess = Net.state.get("session")
-	var ev = Net.state.get("event")
-	var is_sess: bool = sess is Dictionary and not _is_overlay_deferred
-	var is_ev: bool = ev is Dictionary and not is_sess and not _is_overlay_deferred
-
 	if _current_tab == 0:
 		# Game tab: displays panel directly if interview or event active (own or spectating), otherwise shows board
-		var overlay: bool = is_sess or is_ev
 		_left_stack.get_parent().visible = true
 		if overlay and UI.is_phone():
 			# Phone: fullscreen panel
@@ -567,11 +631,17 @@ func refresh(s: Dictionary) -> void:
 		_was_overlay = has_overlay
 
 		if not UI.is_portrait():
+			if UI.is_phone_landscape():
+				_side_panel.visible = not has_overlay
+				_board.visible = not has_overlay
+				_board.modulate = Color.WHITE
+			else:
+				_side_panel.visible = true
+				_board.visible = true
+				_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
 			_session.visible = is_sess
 			_event.visible = is_ev
-			_center.visible = not is_sess and not is_ev
-			_board.visible = true
-			_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
+			_center.visible = not has_overlay
 
 		if is_sess:
 			_session.refresh(sess, cur_name)
@@ -698,11 +768,17 @@ func _apply_deferred_overlay() -> void:
 	_was_overlay = has_overlay
 
 	if not UI.is_portrait():
+		if UI.is_phone_landscape():
+			_side_panel.visible = not has_overlay
+			_board.visible = not has_overlay
+			_board.modulate = Color.WHITE
+		else:
+			_side_panel.visible = true
+			_board.visible = true
+			_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
 		_session.visible = is_sess
 		_event.visible = is_ev
-		_center.visible = not is_sess and not is_ev
-		_board.visible = true
-		_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
+		_center.visible = not has_overlay
 
 	if is_sess:
 		_session.refresh(sess, cur_name)

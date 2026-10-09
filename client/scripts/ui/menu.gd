@@ -91,15 +91,32 @@ func _build_ui() -> void:
 		title_box.add_child(UI.label("人生顧問局", 22 if UI.is_phone_portrait() else 26, UI.TEXT))
 		title_box.add_child(UI.label("擲骰走過客戶的人生，練習用需求而不是商品說服人。", 13 if UI.is_phone_portrait() else 14, UI.MUTED, true))
 	else:
-		title_box.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-		title_box.position = Vector2(48, 0)
-		title_box.anchor_top = 1.0
-		title_box.offset_top = -250
-		title_box.add_child(UI.label("INSURE QUEST", 54, UI.ACCENT_2))
-		title_box.add_child(UI.label("人生顧問局", 40, UI.TEXT))
-		title_box.add_child(UI.label("擲骰走過客戶的人生，練習用需求而不是商品說服人。", 18, UI.MUTED))
-		title_box.add_child(UI.label("法國巴黎人壽 Cardif InsurHack｜1-1 保險大富翁・銷售與通路賦能", 14, UI.MUTED))
-		art.add_child(title_box)
+		var is_phone_land: bool = UI.is_phone_landscape()
+		var margin := MarginContainer.new()
+		margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+		var pad_l: int = 24 if is_phone_land else 48
+		var pad_r: int = 16 if is_phone_land else 32
+		var pad_b: int = 20 if is_phone_land else 36
+		margin.add_theme_constant_override("margin_left", pad_l)
+		margin.add_theme_constant_override("margin_right", pad_r)
+		margin.add_theme_constant_override("margin_bottom", pad_b)
+		margin.add_theme_constant_override("margin_top", 16)
+		art.add_child(margin)
+
+		title_box.alignment = BoxContainer.ALIGNMENT_END
+		title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		margin.add_child(title_box)
+
+		var title_fs: int = 32 if is_phone_land else 54
+		var sub_fs: int = 22 if is_phone_land else 40
+		var desc1_fs: int = 13 if is_phone_land else 18
+		var desc2_fs: int = 11 if is_phone_land else 14
+
+		title_box.add_child(UI.label("INSURE QUEST", title_fs, UI.ACCENT_2))
+		title_box.add_child(UI.label("人生顧問局", sub_fs, UI.TEXT))
+		title_box.add_child(UI.label("擲骰走過客戶的人生，練習用需求而不是商品說服人。", desc1_fs, UI.MUTED, true))
+		title_box.add_child(UI.label("法國巴黎人壽 Cardif InsurHack｜1-1 保險大富翁・銷售與通路賦能", desc2_fs, UI.MUTED, true))
 	_root.add_child(art)
 
 	# Actions area
@@ -164,6 +181,11 @@ func _build_ui() -> void:
 	lvl.add_item("新人顧問（常見錯誤）")
 	lvl.add_item("混合")
 	lvl.item_selected.connect(func(i: int): _level = ["pro", "novice", "mix"][i])
+	# Let the dropdown shrink to the remaining width (ellipsized) instead of widening the whole menu on phones
+	lvl.clip_text = true
+	lvl.fit_to_longest_item = false
+	lvl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	lvl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	opp.add_child(lvl)
 	v.add_child(opp)
 	_sync_opp()

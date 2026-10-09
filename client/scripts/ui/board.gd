@@ -160,6 +160,8 @@ func _draw() -> void:
 
 	# 2. Draw 24 life tiles (with distinct ribbons, icons, and location names)
 	var is_compact: bool = cw < 60.0 and not UI.is_phone_portrait()
+	# Phone landscape tiles have no room beside the name, so names are drawn after the pawns (with an outline) to stay readable
+	var deferred_names: Array = []
 	for i: int in tiles.size():
 		var t: Dictionary = tiles[i]
 		var r: Rect2 = tile_rect(i)
@@ -170,42 +172,104 @@ func _draw() -> void:
 		draw_style_box(UI.box(Color("#0d2432"), 8, col.darkened(0.35), 0), r)
 
 		# Top category ribbon
-		var ribbon_h: float = clampf(r.size.y * (0.24 if UI.is_phone_portrait() else (0.28 if is_compact else 0.25)), 18.0 if UI.is_phone_portrait() else 14.0, 24.0 if UI.is_phone_portrait() else 22.0)
+		var ribbon_h: float
+		if UI.is_phone_portrait():
+			ribbon_h = clampf(r.size.y * 0.24, 18.0, 24.0)
+		elif UI.is_phone_landscape():
+			ribbon_h = clampf(r.size.y * 0.32, 18.0, 22.0)
+		else:
+			ribbon_h = clampf(r.size.y * (0.28 if is_compact else 0.25), 14.0, 22.0)
 		var ribbon_r := Rect2(r.position.x, r.position.y, r.size.x, ribbon_h)
 		draw_style_box(UI.box(col.darkened(0.15), 6, col.lightened(0.15), 0), ribbon_r)
 
-		# Ribbon text and tile index (phone portrait displays icon and category name, larger font)
-		var cat_name: String = UI.tile_badge(type_key, is_compact and not UI.is_phone_portrait())
+		# Ribbon text and tile index: always show the full index without clipping
+		var idx_str: String = str(i)
+		var idx_fs: int = UI.fs(10 if not UI.is_phone() else 11)
+		var idx_w: float = font.get_string_size(idx_str, HORIZONTAL_ALIGNMENT_LEFT, -1, idx_fs).x
+		var pad_l: float = 3.0 if UI.is_phone_portrait() else 4.0
+		var pad_r: float = 3.0 if UI.is_phone_portrait() else 4.0
+		var idx_gap: float = 4.0 if UI.is_phone() else 3.0
+		var idx_reserved_w: float = idx_w + idx_gap
+		var max_cat_w: float = maxf(10.0, ribbon_r.size.x - pad_l - pad_r - idx_reserved_w)
 
-		var cat_fs: int
-		if UI.is_phone_portrait():
-			cat_fs = int(clampf(ribbon_h * 0.65, 12, 14))
-			var max_cat_w: float = ribbon_r.size.x - 18.0
-			while cat_fs > 10 and font.get_string_size(cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, cat_fs).x > max_cat_w:
-				cat_fs -= 1
-		else:
-			cat_fs = int(clampf(ribbon_h * 0.65, 9, 13))
+		# Portrait ribbon: icon + full index (category word optional only if it fits)
+		var full_cat: String = UI.tile_badge(type_key, false)
+		var icon_cat: String = UI.tile_badge(type_key, true)
+		var cat_name: String = ""
+		var cat_fs: int = UI.fs(11 if UI.is_phone() else 10)
 
-		draw_string(font, Vector2(ribbon_r.position.x + (3 if UI.is_phone_portrait() else 4), ribbon_r.get_center().y + cat_fs * 0.38), cat_name, HORIZONTAL_ALIGNMENT_LEFT, int(ribbon_r.size.x - 16), cat_fs, Color.WHITE)
-		draw_string(font, Vector2(ribbon_r.end.x - (14 if UI.is_phone_portrait() else 16), ribbon_r.get_center().y + cat_fs * 0.38), str(i), HORIZONTAL_ALIGNMENT_RIGHT, 14, int(cat_fs * 0.9), Color(1, 1, 1, 0.75))
-
-		# Draw tile center vector symbol (scaled by min(cw, ch) in phone portrait, vertically centered)
-		var body_center := Vector2(r.get_center().x, r.position.y + ribbon_h + (r.size.y - ribbon_h) * 0.42)
-		var sym_sz: float = (c_min * 0.20) if UI.is_phone_portrait() else (cw * 0.16)
-		_draw_tile_symbol(type_key, body_center, sym_sz, col.lightened(0.35))
-
-		# Bottom location text (clearly displayed in both phone portrait and standard sizes, larger font)
-		var name_str: String = str(t.get("name", ""))
-		if name_str != "" and (not is_compact or UI.is_phone_portrait()):
-			var name_fs: int
-			if UI.is_phone_portrait():
-				name_fs = int(clampf(c_min * 0.21, 13, 15))
-				var max_name_w: float = r.size.x - 4.0
-				while name_fs > 9 and font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
-					name_fs -= 1
+		if UI.is_portrait():
+			if font.get_string_size(full_cat, HORIZONTAL_ALIGNMENT_LEFT, -1, cat_fs).x <= max_cat_w:
+				cat_name = full_cat
 			else:
-				name_fs = int(clampf(cw * 0.14, 10, 13))
-			draw_string(font, Vector2(r.position.x + 2, r.end.y - (4 if UI.is_phone_portrait() else 6)), name_str, HORIZONTAL_ALIGNMENT_CENTER, int(r.size.x - 4), name_fs, UI.TEXT)
+				var test_fs: int = cat_fs
+				while test_fs > UI.fs(9) and font.get_string_size(full_cat, HORIZONTAL_ALIGNMENT_LEFT, -1, test_fs).x > max_cat_w:
+					test_fs -= 1
+				if font.get_string_size(full_cat, HORIZONTAL_ALIGNMENT_LEFT, -1, test_fs).x <= max_cat_w:
+					cat_name = full_cat
+					cat_fs = test_fs
+				else:
+					cat_name = icon_cat
+		else:
+			cat_name = icon_cat if (is_compact and not UI.is_phone()) else full_cat
+			while cat_fs > UI.fs(9) and font.get_string_size(cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, cat_fs).x > max_cat_w:
+				cat_fs -= 1
+			if font.get_string_size(cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, cat_fs).x > max_cat_w:
+				cat_name = icon_cat
+
+		if font.get_string_size(cat_name, HORIZONTAL_ALIGNMENT_LEFT, -1, cat_fs).x > max_cat_w:
+			while cat_name.length() > 1 and font.get_string_size(cat_name + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, cat_fs).x > max_cat_w:
+				cat_name = cat_name.substr(0, cat_name.length() - 1)
+			cat_name += "…"
+
+		draw_string(font, Vector2(ribbon_r.position.x + pad_l, ribbon_r.get_center().y + cat_fs * 0.38), cat_name, HORIZONTAL_ALIGNMENT_LEFT, int(max_cat_w), cat_fs, Color.WHITE)
+		var idx_x: float = ribbon_r.end.x - pad_r - idx_w
+		draw_string(font, Vector2(idx_x, ribbon_r.get_center().y + idx_fs * 0.38), idx_str, HORIZONTAL_ALIGNMENT_LEFT, -1, idx_fs, Color(1, 1, 1, 0.85))
+
+		# Body area below ribbon
+		var body_top: float = ribbon_r.end.y
+		var body_h: float = r.end.y - body_top
+		var name_str: String = str(t.get("name", ""))
+		var min_fs: int = UI.fs(11)
+		var name_fs: int = UI.fs(12)
+		var max_name_w: float = r.size.x - 4.0
+
+		# Check if tile has enough height for ribbon + icon + readable name (>= UI.fs(11))
+		# If too short (e.g. phone landscape ~38px body), drop the icon first, keeping ribbon and name
+		var can_fit_icon: bool = body_h >= 52.0 and not UI.is_phone_landscape()
+
+		if can_fit_icon:
+			var sym_sz: float = (c_min * 0.20) if UI.is_phone_portrait() else (cw * 0.16)
+			var sym_center := Vector2(r.get_center().x, body_top + sym_sz + 4.0)
+			_draw_tile_symbol(type_key, sym_center, sym_sz, col.lightened(0.35))
+
+		if name_str != "":
+			if UI.is_phone_portrait() and font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
+				# Phone portrait: wrap long place names into 2 lines
+				var mid: int = 2 if name_str.length() == 5 else int(ceilf(float(name_str.length()) / 2.0))
+				var line1: String = name_str.substr(0, mid)
+				var line2: String = name_str.substr(mid)
+				while name_fs > min_fs and (font.get_string_size(line1, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w or font.get_string_size(line2, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w):
+					name_fs -= 1
+				var line_spacing: float = name_fs * 1.05
+				var y2: float = r.end.y - 4.0
+				var y1: float = y2 - line_spacing
+				draw_string(font, Vector2(r.position.x + 2, y1), line1, HORIZONTAL_ALIGNMENT_CENTER, int(max_name_w), name_fs, UI.TEXT)
+				draw_string(font, Vector2(r.position.x + 2, y2), line2, HORIZONTAL_ALIGNMENT_CENTER, int(max_name_w), name_fs, UI.TEXT)
+			else:
+				# Single line: shrink down to min_fs, then ellipsize
+				while name_fs > min_fs and font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
+					name_fs -= 1
+				var display_name: String = name_str
+				if font.get_string_size(display_name, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
+					while display_name.length() > 1 and font.get_string_size(display_name + "…", HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
+						display_name = display_name.substr(0, display_name.length() - 1)
+					display_name += "…"
+				var name_y: float = (body_top + body_h * 0.5 + name_fs * 0.35) if not can_fit_icon else (r.end.y - (4.0 if UI.is_phone_portrait() else 6.0))
+				if UI.is_phone_landscape():
+					deferred_names.append([Vector2(r.position.x + 2, name_y), display_name, int(max_name_w), name_fs])
+				else:
+					draw_string(font, Vector2(r.position.x + 2, name_y), display_name, HORIZONTAL_ALIGNMENT_CENTER, int(max_name_w), name_fs, UI.TEXT)
 
 	# 3. Breathing glow outline for tile of current active player
 	if current_id != "" and _shown.has(current_id):
@@ -265,13 +329,18 @@ func _draw() -> void:
 
 		# Player initial avatar
 		var initial_char: String = str(p.get("name", "顧")).substr(0, 1)
-		var char_fs: int = int(rad * 1.15)
+		var char_fs: int = mini(UI.fs(int(rad * 1.15)), int(rad * 1.5))
 		# Drop shadow text
 		draw_string(font, pawn_pos + Vector2(-rad, char_fs * 0.38 + 1), initial_char, HORIZONTAL_ALIGNMENT_CENTER, int(rad * 2), char_fs, Color(0, 0, 0, 0.75))
 		# Main text
 		draw_string(font, pawn_pos + Vector2(-rad, char_fs * 0.38), initial_char, HORIZONTAL_ALIGNMENT_CENTER, int(rad * 2), char_fs, Color.WHITE)
 
 		idx += 1
+
+	# 5. Phone landscape: place names on top of pawns, outlined so they stay readable
+	for dn: Array in deferred_names:
+		draw_string_outline(font, dn[0], dn[1], HORIZONTAL_ALIGNMENT_CENTER, dn[2], dn[3], 5, Color("#0b1f2a"))
+		draw_string(font, dn[0], dn[1], HORIZONTAL_ALIGNMENT_CENTER, dn[2], dn[3], UI.TEXT)
 
 
 func _draw_tile_symbol(type_key: String, c: Vector2, sz: float, col: Color) -> void:

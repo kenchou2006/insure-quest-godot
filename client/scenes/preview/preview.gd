@@ -9,14 +9,14 @@ const LobbyScreen := preload("res://scripts/ui/lobby.gd")
 const GameScreen := preload("res://scripts/ui/game.gd")
 const ReportScreen := preload("res://scripts/ui/report.gd")
 const STATES_PATH := "res://scenes/preview/states.json"
-const SIZES := {"desktop": Vector2i(1280, 720), "phone_portrait": Vector2i(480, 854)}
+const SIZES := {"desktop": Vector2i(1280, 720), "phone_portrait": Vector2i(480, 854), "phone_landscape": Vector2i(800, 450)}
 
 ## Screen to preview: menu (main menu), lobby, roll (board), interview stages (discover/plan/objection/result), event (life event), ended (settlement report)
 @export_enum("menu", "lobby", "roll", "discover", "plan", "objection", "result", "event", "ended") var screen: String = "roll":
 	set(v):
 		screen = v
 		_queue_rebuild()
-@export_enum("desktop", "phone_portrait") var layout: String = "desktop":
+@export_enum("desktop", "phone_portrait", "phone_landscape") var layout: String = "desktop":
 	set(v):
 		layout = v
 		_queue_rebuild()

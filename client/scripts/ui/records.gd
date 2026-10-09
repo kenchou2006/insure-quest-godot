@@ -64,10 +64,10 @@ class TrendChart extends Control:
 		for val: int in [0, 50, 100]:
 			var y: float = pad_top + plot_h * (1.0 - float(val) / 100.0)
 			draw_line(Vector2(pad_left, y), Vector2(size.x - pad_right, y), Color("#1b4052", 0.6), 1.0)
-			draw_string(font, Vector2(4, y + 4), str(val), HORIZONTAL_ALIGNMENT_RIGHT, int(pad_left - 8), 10, UI.MUTED)
+			draw_string(font, Vector2(4, y + 4), str(val), HORIZONTAL_ALIGNMENT_RIGHT, int(pad_left - 8), UI.fs(10), UI.MUTED)
 
 		if trend_data.is_empty():
-			draw_string(font, Vector2(0, size.y * 0.5 + 4), "尚未有足夠場次繪製趨勢圖", HORIZONTAL_ALIGNMENT_CENTER, int(size.x), 13, UI.MUTED)
+			draw_string(font, Vector2(0, size.y * 0.5 + 4), "尚未有足夠場次繪製趨勢圖", HORIZONTAL_ALIGNMENT_CENTER, int(size.x), UI.fs(13), UI.MUTED)
 			return
 
 		var count: int = trend_data.size()
@@ -96,8 +96,8 @@ class TrendChart extends Control:
 			draw_circle(pt, 2.0, UI.BG)
 
 			var grade_color: Color = UI.GOLD if grade == "S" else (UI.GOOD if grade == "A" else (UI.OK if grade == "B" else UI.MUTED))
-			draw_string(font, Vector2(pt.x - 16, pt.y - 8), grade, HORIZONTAL_ALIGNMENT_CENTER, 32, 11, grade_color)
-			draw_string(font, Vector2(pt.x - 16, size.y - 8), "#%d" % (i + 1), HORIZONTAL_ALIGNMENT_CENTER, 32, 10, UI.MUTED)
+			draw_string(font, Vector2(pt.x - 16, pt.y - 8), grade, HORIZONTAL_ALIGNMENT_CENTER, 32, UI.fs(11), grade_color)
+			draw_string(font, Vector2(pt.x - 16, size.y - 8), "#%d" % (i + 1), HORIZONTAL_ALIGNMENT_CENTER, 32, UI.fs(10), UI.MUTED)
 
 
 func _ready() -> void:

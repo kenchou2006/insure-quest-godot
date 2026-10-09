@@ -65,6 +65,14 @@ static func set_layout_profile(profile: String, sz: Vector2i) -> void:
 	content_size = sz
 
 
+static func fs(size: int) -> int:
+	if is_phone_portrait():
+		return maxi(roundi(size * 1.2), 15)
+	elif is_phone_landscape():
+		return maxi(roundi(size * 1.15), 15)
+	return size
+
+
 ## Value based on layout profile: first value for phone, second value for others
 static func scale_val(phone_value: int, normal_value: int) -> int:
 	return phone_value if is_phone() else normal_value
@@ -116,6 +124,11 @@ static func make_theme() -> Theme:
 	t.set_color("font_hover_color", "Button", Color.WHITE)
 	t.set_color("font_pressed_color", "Button", Color.WHITE)
 	t.set_color("font_disabled_color", "Button", Color("#9fb8c2"))
+	var input_fs := fs(16)
+	t.set_font_size("font_size", "LineEdit", input_fs)
+	t.set_font_size("font_size", "OptionButton", input_fs)
+	t.set_font_size("font_size", "TextEdit", input_fs)
+	t.set_font_size("font_size", "PopupMenu", input_fs)
 	t.set_stylebox("normal", "LineEdit", box(Color("#0e2633"), 10, Color("#2d5a6e"), 10))
 	t.set_stylebox("focus", "LineEdit", box(Color("#0e2633"), 10, ACCENT_2, 10))
 	t.set_color("font_color", "LineEdit", TEXT)
@@ -167,10 +180,20 @@ static func make_theme() -> Theme:
 	return t
 
 
+## Symbols used as bullets/prefixes ("✓ 合規", "★ 教練短評"). Word-wrap may break right after them and leave the
+## symbol alone on a line, so the following space is made non-breaking.
+const GLUE_SYMBOLS := "✓×★◎※●◆△▶◀✚↗⚠♥◇→"
+
+static func glue(text: String) -> String:
+	for ch in GLUE_SYMBOLS:
+		text = text.replace(ch + " ", ch + "\u00a0")
+	return text
+
+
 static func label(text: String, size := 17, color := TEXT, wrap := false) -> Label:
 	var l := Label.new()
-	l.text = text
-	l.add_theme_font_size_override("font_size", size)
+	l.text = glue(text) if wrap else text
+	l.add_theme_font_size_override("font_size", fs(size))
 	l.add_theme_color_override("font_color", color)
 	if wrap:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -185,15 +208,16 @@ static func rich(bbcode: String, size := 17) -> RichTextLabel:
 	r.scroll_active = false
 	r.text = bbcode
 	r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	r.add_theme_font_size_override("normal_font_size", size)
-	r.add_theme_font_size_override("bold_font_size", size)
+	var s := fs(size)
+	r.add_theme_font_size_override("normal_font_size", s)
+	r.add_theme_font_size_override("bold_font_size", s)
 	return r
 
 
 static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> Button:
 	var b := Button.new()
-	b.text = text
-	b.add_theme_font_size_override("font_size", size)
+	b.text = glue(text)
+	b.add_theme_font_size_override("font_size", fs(size))
 	if color != ACCENT:
 		b.add_theme_stylebox_override("normal", box(color, 10, Color(0, 0, 0, 0), 12))
 		b.add_theme_stylebox_override("hover", box(color.lightened(0.12), 10, Color(0, 0, 0, 0), 12))
@@ -208,11 +232,12 @@ static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> B
 ## Multi-line text option button (long sentences wrap automatically)
 static func option_button(text: String, cb: Callable, color := PANEL_2) -> Button:
 	var b := Button.new()
-	b.text = text
+	b.text = glue(text)
 	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.custom_minimum_size = Vector2(0, 48)
+	b.add_theme_font_size_override("font_size", fs(15))
 	b.add_theme_stylebox_override("normal", box(color, 10, Color("#2d5a6e"), 12))
 	b.add_theme_stylebox_override("hover", box(color.lightened(0.1), 10, ACCENT_2, 12))
 	b.add_theme_stylebox_override("pressed", box(color.darkened(0.1), 10, ACCENT_2, 12))
@@ -288,14 +313,14 @@ static func bar(value: float, color := ACCENT_2, width := 140.0) -> ProgressBar:
 
 static func metric_row(key: String, value: float) -> HBoxContainer:
 	var h := hbox(6 if is_phone_portrait() else 8)
-	var l := label(METRIC_NAMES.get(key, key), 13 if is_phone_portrait() else 14, MUTED)
-	l.custom_minimum_size = Vector2(62 if is_phone_portrait() else 72, 0)
+	var l := label(METRIC_NAMES.get(key, key), 14, MUTED)
+	l.custom_minimum_size = Vector2(68 if is_phone() else 72, 0)
 	h.add_child(l)
 	var c := GOOD if value >= 75 else (OK if value >= 50 else BAD)
 	var b := bar(value, c, 70 if is_phone_portrait() else 110)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(b)
-	h.add_child(label(str(int(value)), 13 if is_phone_portrait() else 14, TEXT))
+	h.add_child(label(str(int(value)), 14, TEXT))
 	return h
 
 
@@ -539,13 +564,13 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 
 	# Header row
 	var head := hbox(8)
-	var title_lbl := label("十年後，%s 寄來的信" % client_name, 16 if is_phone else 18, Color("#2b2219"), true)
+	var title_lbl := label("十年後，%s 寄來的信" % client_name, 18, Color("#2b2219"), true)
 	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title_lbl)
 
 	var tag_p := panel(Color(accent_col.r, accent_col.g, accent_col.b, 0.15), 6, 4)
 	tag_p.add_theme_stylebox_override("panel", box(Color(accent_col.r, accent_col.g, accent_col.b, 0.15), 6, accent_col, 4, false))
-	tag_p.add_child(label(tag_text, 11 if is_phone else 12, accent_col))
+	tag_p.add_child(label(tag_text, 12, accent_col))
 	head.add_child(tag_p)
 	v.add_child(head)
 
@@ -557,24 +582,24 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 		summary_box.add_theme_stylebox_override("panel", box(Color(accent_col.r, accent_col.g, accent_col.b, 0.08), 8, Color(accent_col.r, accent_col.g, accent_col.b, 0.3), 6, false))
 		var sv := vbox(3)
 		if ev_text != "":
-			sv.add_child(label("※ 經歷事件：%s" % ev_text, 12 if is_phone else 13, Color("#3a3028"), true))
+			sv.add_child(label("※ 經歷事件：%s" % ev_text, 13, Color("#3a3028"), true))
 		if gap_val > 0:
-			sv.add_child(label("※ 財務缺口：%d 萬元（方案未能完全承接）" % gap_val, 12 if is_phone else 13, Color("#992b2b"), true))
+			sv.add_child(label("※ 財務缺口：%d 萬元（方案未能完全承接）" % gap_val, 13, Color("#992b2b"), true))
 		else:
-			sv.add_child(label("※ 財務缺口：0 萬元（防護穩健，無缺口）", 12 if is_phone else 13, Color("#26734d"), true))
+			sv.add_child(label("※ 財務缺口：0 萬元（防護穩健，無缺口）", 13, Color("#26734d"), true))
 		summary_box.add_child(sv)
 		v.add_child(summary_box)
 
 	# Letter body
 	var content: String = str(letter.get("content", ""))
 	if content != "":
-		var body_lbl := label(content, 14 if is_phone else 15, Color("#2c241d"), true)
+		var body_lbl := label(content, 15, Color("#2c241d"), true)
 		v.add_child(body_lbl)
 
 	# Signature
 	var sign_row := hbox(8)
 	sign_row.add_child(spacer())
-	var sign_lbl := label("—— %s 敬上" % client_name, 12 if is_phone else 13, Color("#5e564c"))
+	var sign_lbl := label("—— %s 敬上" % client_name, 13, Color("#5e564c"))
 	sign_row.add_child(sign_lbl)
 	v.add_child(sign_row)
 

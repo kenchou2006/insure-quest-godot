@@ -31,17 +31,36 @@ func refresh(s: Dictionary) -> void:
 	UI.clear(_v)
 	var portrait: bool = UI.is_portrait()
 
-	var head := UI.hbox(8 if UI.is_phone_portrait() else 10)
-	head.add_child(UI.label("顧問結算報告", 20 if UI.is_phone_portrait() else (24 if portrait else 32), UI.ACCENT_2))
-	head.add_child(UI.spacer())
-	if Net.is_logged_in():
-		head.add_child(UI.label("✓ 紀錄已保存", 13, UI.GOOD))
-		head.add_child(UI.button("查看我的成長", func(): Net.leave(); main.show_records(), 14 if UI.is_phone_portrait() else 15, UI.ACCENT))
+	if UI.is_phone_portrait():
+		var top_row := UI.hbox(8)
+		top_row.add_child(UI.label("顧問結算報告", 20, UI.ACCENT_2))
+		top_row.add_child(UI.spacer())
+		if Net.is_logged_in():
+			top_row.add_child(UI.button("查看我的成長", func(): Net.leave(); main.show_records(), 14, UI.ACCENT))
+		else:
+			top_row.add_child(UI.button("培訓紀錄", func(): Net.leave(); main.show_records(), 14, UI.PANEL_2))
+		top_row.add_child(UI.button("回主選單", func(): main.leave_to_menu(), 14))
+		_v.add_child(top_row)
+
+		var hint_row := UI.hbox(4)
+		hint_row.add_child(UI.spacer())
+		if Net.is_logged_in():
+			hint_row.add_child(UI.label("✓ 紀錄已保存", 12, UI.GOOD))
+		else:
+			hint_row.add_child(UI.label("登入後可保存紀錄", 12, UI.MUTED))
+		_v.add_child(hint_row)
 	else:
-		head.add_child(UI.label("登入後可保存紀錄", 13, UI.MUTED))
-		head.add_child(UI.button("培訓紀錄", func(): Net.leave(); main.show_records(), 14 if UI.is_phone_portrait() else 15, UI.PANEL_2))
-	head.add_child(UI.button("回主選單", func(): main.leave_to_menu(), 14 if UI.is_phone_portrait() else 15))
-	_v.add_child(head)
+		var head := UI.hbox(10)
+		head.add_child(UI.label("顧問結算報告", 24 if portrait else 32, UI.ACCENT_2))
+		head.add_child(UI.spacer())
+		if Net.is_logged_in():
+			head.add_child(UI.label("✓ 紀錄已保存", 13, UI.GOOD))
+			head.add_child(UI.button("查看我的成長", func(): Net.leave(); main.show_records(), 15, UI.ACCENT))
+		else:
+			head.add_child(UI.label("登入後可保存紀錄", 13, UI.MUTED))
+			head.add_child(UI.button("培訓紀錄", func(): Net.leave(); main.show_records(), 15, UI.PANEL_2))
+		head.add_child(UI.button("回主選單", func(): main.leave_to_menu(), 15))
+		_v.add_child(head)
 	_v.add_child(UI.label("評分＝專業五力 50%＋滿意度 25%＋聲望 15%＋業績 10%。不適合的銷售會在稽核中被扣分。", 13 if portrait else 14, UI.MUTED, true))
 
 	var final: Array = s.get("final", []) if s.get("final") != null else []
@@ -204,9 +223,11 @@ func refresh(s: Dictionary) -> void:
 		var dp := UI.panel(Color("#0d2432"), 14, 14)
 		var dv := UI.vbox(10)
 
-		var dh := UI.hbox(8)
+		# Phone portrait: title and quality counts stack, side by side they exceed the screen width
+		var dh: BoxContainer = UI.vbox(4) if UI.is_phone_portrait() else UI.hbox(8)
 		dh.add_child(UI.label("關鍵決策回顧（最近 %d 項）" % ds.size(), 17 if portrait else 18, UI.ACCENT_2))
-		dh.add_child(UI.spacer())
+		if not UI.is_phone_portrait():
+			dh.add_child(UI.spacer())
 		var good_cnt: int = 0
 		var ok_cnt: int = 0
 		var bad_cnt: int = 0

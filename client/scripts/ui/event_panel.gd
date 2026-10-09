@@ -87,7 +87,7 @@ func refresh(ev: Dictionary, actor_name: String) -> void:
 
 	_v.add_child(UI.label(title, 22 if UI.is_portrait() else 26, UI.TEXT, true))
 	var body_txt: String = str(ev.get("body", ""))
-	if body_txt != "":
+	if body_txt != "" and not (dilemma is Dictionary and str(dilemma.get("prompt", "")) != ""):
 		_v.add_child(UI.label(body_txt, 15 if UI.is_portrait() else 17, UI.MUTED, true))
 
 	# ───────── 1. Compliance dilemma (dilemma) ─────────
@@ -162,16 +162,19 @@ func _build_dilemma_ui(dilemma: Dictionary, actor: bool) -> void:
 
 	var picked = dilemma.get("picked")
 	var choices: Array = dilemma.get("choices", [])
+	var choice_idx: int = 0
 	for c: Dictionary in choices:
 		var cid: String = str(c.get("id", ""))
 		var ctext: String = str(c.get("text", ""))
 		var is_picked: bool = picked != null and str(picked) == cid
 		var btn_col: Color = UI.ACCENT.darkened(0.3) if is_picked else UI.PANEL_2
-		var btn := UI.option_button("【%s】 %s" % [cid, ctext], func():
+		var letter: String = char(65 + choice_idx)
+		var btn := UI.option_button("%s. %s" % [letter, ctext], func():
 			Net.act({"type": "choose_dilemma", "choice": cid})
 		, btn_col)
 		btn.disabled = not actor or picked != null
 		_v.add_child(btn)
+		choice_idx += 1
 
 	var outcome = dilemma.get("outcome")
 	if outcome is Dictionary:

@@ -68,7 +68,7 @@ func _ready() -> void:
 	_scroll = UI.scroll(_body)
 	add_child(_scroll)
 	_build_header_container()
-	_steps = UI.hbox(4 if UI.is_phone_portrait() else 6)
+	_steps = UI.hbox(2 if UI.is_phone() else 6)
 	_body.add_child(_steps)
 	_content = UI.vbox(10 if UI.is_phone_portrait() else 12)
 	_body.add_child(_content)
@@ -195,13 +195,102 @@ func _build_header(actor_name: String) -> void:
 	var twist: Dictionary = _sess.get("twist", {}) if _sess.get("twist") is Dictionary else {}
 	var m_dict: Dictionary = _sess.get("metrics", {}) if _sess.get("metrics") is Dictionary else {}
 
+	var is_phone_land: bool = UI.is_phone_landscape()
+
 	# Client profile card frame
-	var card_panel := UI.panel(Color("#0d2432"), 14, 8 if is_phone else 10)
-	card_panel.add_theme_stylebox_override("panel", UI.box(Color("#0d2432"), 14, UI.GOLD if referral else Color("#1e475b"), 8))
+	var pad_val: int = 6 if is_phone_land else (8 if is_phone else 10)
+	var card_panel := UI.panel(Color("#0d2432"), 14, pad_val)
+	card_panel.add_theme_stylebox_override("panel", UI.box(Color("#0d2432"), 14, UI.GOLD if referral else Color("#1e475b"), pad_val))
 	card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	# Desktop single row, phone portrait two rows
-	if not is_phone:
+	# Phone landscape compact 3 rows, desktop single row, phone portrait two rows
+	if is_phone_land:
+		var v_all := UI.vbox(3)
+		card_panel.add_child(v_all)
+
+		# Row 1: portrait + name + age/job (ellipsized) + badges
+		var row1 := UI.hbox(6)
+		row1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var avatar_box := UI.portrait(c, 36)
+		row1.add_child(avatar_box)
+
+		var c_name: String = str(c.get("name", "客戶"))
+		row1.add_child(UI.label(c_name, 14, UI.GOLD if referral else UI.TEXT))
+
+		var c_age: int = int(c.get("age", 30))
+		var c_gender: String = str(c.get("gender", ""))
+		var c_job: String = str(c.get("job", ""))
+		var age_job_lbl := UI.label("｜ %d 歲・%s・%s" % [c_age, c_gender, c_job], 11, UI.MUTED)
+		age_job_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		age_job_lbl.clip_text = true
+		row1.add_child(age_job_lbl)
+
+		var tag_str: String = str(c.get("tag", ""))
+		if tag_str != "":
+			var tag_p := UI.panel(Color("#133647"), 4, 2)
+			tag_p.add_child(UI.label("［%s］" % tag_str, 10, UI.ACCENT_2))
+			row1.add_child(tag_p)
+
+		if not twist.is_empty() and twist.get("title") != null:
+			var tw_p := UI.panel(Color("#2e2614"), 4, 2)
+			tw_p.add_theme_stylebox_override("panel", UI.box(Color("#2e2614"), 4, UI.GOLD, 2, false))
+			tw_p.add_child(UI.label("※ " + str(twist.get("title")), 10, UI.GOLD))
+			row1.add_child(tw_p)
+
+		var diff: String = str(c.get("difficulty", "normal"))
+		var diff_stars: String = "★☆☆" if diff == "easy" else ("★★☆" if diff == "normal" else "★★★")
+		var diff_p := UI.panel(Color("#262214"), 4, 2)
+		diff_p.add_child(UI.label(diff_stars, 10, UI.GOLD))
+		row1.add_child(diff_p)
+
+		if referral:
+			var ref_p := UI.panel(Color("#183d2a"), 4, 2)
+			ref_p.add_child(UI.label("♥ 轉介紹", 10, UI.GOOD))
+			row1.add_child(ref_p)
+
+		if generated:
+			var ai_p := UI.panel(Color("#1a2b38"), 4, 2)
+			ai_p.add_child(UI.label("AI 客戶" if Net.ai_enabled else "規則版客戶", 10, UI.INFO if Net.ai_enabled else UI.MUTED))
+			row1.add_child(ai_p)
+
+		if not _actor:
+			var obs_p := UI.panel(Color("#1c3340"), 4, 2)
+			obs_p.add_child(UI.label("觀摩：%s" % actor_name, 10, UI.GOLD))
+			row1.add_child(obs_p)
+
+		v_all.add_child(row1)
+
+		# Row 2: goal (single line, ellipsized)
+		var goal_str: String = str(c.get("goal", ""))
+		var amount_str: String = str(c.get("amount", ""))
+		var full_goal: String = "◎ 核心目標：%s（需求預算：%s）" % [goal_str, amount_str] if amount_str != "" else "◎ 核心目標：%s" % goal_str
+		if goal_str == "":
+			full_goal = "◎ 進行需求訪談中"
+		var goal_lbl := UI.label(full_goal, 11, UI.TEXT)
+		goal_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		goal_lbl.clip_text = true
+		goal_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v_all.add_child(goal_lbl)
+
+		# Row 3: the five metric bars in one row
+		_metrics = UI.hbox(8)
+		_metrics.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		for k: String in ["trust", "insight", "fit", "risk", "compliance"]:
+			var val: float = float(m_dict.get(k, 50.0))
+			var col: Color = UI.GOOD if val >= 75 else (UI.OK if val >= 50 else UI.BAD)
+			var m_item := UI.hbox(4)
+			m_item.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			m_item.add_child(UI.label(METRIC_SHORT[k], 10, UI.MUTED))
+			m_item.add_child(UI.label(str(int(val)), 10, col))
+			var b := UI.bar(val, col, 50)
+			b.custom_minimum_size = Vector2(40, 6)
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			m_item.add_child(b)
+			_metrics.add_child(m_item)
+		v_all.add_child(_metrics)
+
+	elif not is_phone:
 		# Desktop single row: avatar 64px + client info + mini competency bars
 		var h_row := UI.hbox(10)
 		h_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -313,11 +402,15 @@ func _build_header(actor_name: String) -> void:
 			var tag_p := UI.panel(Color("#133647"), 4, 2)
 			tag_p.add_child(UI.label("［%s］" % tag_str, 10, UI.ACCENT_2))
 			name_row.add_child(tag_p)
-		if not twist.is_empty() and twist.get("title") != null:
-			var tw_p := UI.panel(Color("#2e2614"), 4, 2)
-			tw_p.add_child(UI.label("※ " + str(twist.get("title")), 10, UI.GOLD))
-			name_row.add_child(tw_p)
 		info_v.add_child(name_row)
+		if not twist.is_empty() and twist.get("title") != null:
+			var tw_row := HFlowContainer.new()
+			tw_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var tw_p := UI.panel(Color("#2e2614"), 4, 2)
+			tw_p.add_theme_stylebox_override("panel", UI.box(Color("#2e2614"), 4, UI.GOLD, 2, false))
+			tw_p.add_child(UI.label("※ " + str(twist.get("title")), 11, UI.GOLD))
+			tw_row.add_child(tw_p)
+			info_v.add_child(tw_row)
 
 		var goal_str: String = str(c.get("goal", ""))
 		if goal_str != "":
@@ -351,10 +444,10 @@ func _build_header(actor_name: String) -> void:
 func _build_steps() -> void:
 	UI.clear(_steps)
 	var cur_step: String = str(_sess.get("step", ""))
-	var is_phone: bool = UI.is_phone_portrait()
+	var is_phone: bool = UI.is_phone()
 	var step_keys := ["discover", "plan", "objection", "result"]
-	# Steps numbered by left icons (✓/●/number); names omit redundant numbers
-	var step_names := ["訪談線索", "方案配置", "異議處理", "結果預演"]
+	# Steps numbered by left icons (✓/●/number); on phones use short names ("1 線索", "2 方案", "3 異議", "4 結果") to fit 480 canvas
+	var step_names := ["線索", "方案", "異議", "結果"] if is_phone else ["訪談線索", "方案配置", "異議處理", "結果預演"]
 	var cur_idx: int = step_keys.find(cur_step)
 	if cur_idx < 0:
 		cur_idx = 0
@@ -365,11 +458,11 @@ func _build_steps() -> void:
 		var bg_col: Color = UI.ACCENT.darkened(0.2) if is_curr else (Color("#133647") if is_past else Color("#0d202b"))
 		var border_col: Color = UI.GOLD if is_curr else (UI.GOOD.darkened(0.4) if is_past else Color("#173748"))
 
-		var s_box := UI.panel(bg_col, 6 if is_phone else 8, 4 if is_phone else 6)
-		s_box.add_theme_stylebox_override("panel", UI.box(bg_col, 6 if is_phone else 8, border_col, 4 if is_phone else 6, false))
+		var s_box := UI.panel(bg_col, 6 if is_phone else 8, 2 if is_phone else 6)
+		s_box.add_theme_stylebox_override("panel", UI.box(bg_col, 6 if is_phone else 8, border_col, 2 if is_phone else 6, false))
 		s_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-		var sh := UI.hbox(4 if is_phone else 6)
+		var sh := UI.hbox(2 if is_phone else 6)
 		sh.alignment = BoxContainer.ALIGNMENT_CENTER
 
 		var icon_txt: String = "✓" if is_past else ("●" if is_curr else "%d" % (i + 1))
@@ -383,7 +476,7 @@ func _build_steps() -> void:
 		_steps.add_child(s_box)
 
 		if i < 3:
-			var arrow := UI.label("→", 11 if is_phone else 13, UI.GOOD if is_past else UI.MUTED)
+			var arrow := UI.label("→", 10 if is_phone else 13, UI.GOOD if is_past else UI.MUTED)
 			_steps.add_child(arrow)
 
 
@@ -507,7 +600,11 @@ func _build_discover() -> void:
 		# 1. Advisor statement (right side, blue bubble)
 		var cons_row := UI.hbox(8)
 		cons_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cons_row.add_child(UI.spacer())
+		var cons_pad := UI.spacer()
+		# Phones: the advisor column takes ~80% of the row so the coach note is not squeezed into a narrow column
+		if UI.is_phone():
+			cons_pad.size_flags_stretch_ratio = 0.25
+		cons_row.add_child(cons_pad)
 
 		var cons_v := UI.vbox(3)
 		cons_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -567,7 +664,7 @@ func _build_discover() -> void:
 		# Coach tip
 		var coach_str: String = str(a.get("coachTip", a.get("note", "")))
 		if coach_str != "" and coach_str != "null":
-			var c_lbl := UI.label("★ 教練短評：" + coach_str, 12, UI.MUTED, true)
+			var c_lbl := UI.label("★\u00a0教練短評：" + coach_str, 12, UI.MUTED, true)
 			cons_v.add_child(c_lbl)
 
 		cons_row.add_child(cons_v)
@@ -684,7 +781,7 @@ func _build_discover() -> void:
 		)
 		b.disabled = not _actor or was_asked or talk_left <= 0 or _waiting_ai
 		if was_asked:
-			b.text = "✓ " + qtext
+			b.text = UI.glue("✓ " + qtext)
 		iv.add_child(b)
 
 	# Free-form input row
@@ -923,23 +1020,46 @@ func _build_plan() -> void:
 	var is_narrow: bool = UI.is_phone_portrait()
 	for r: String in ["cash", "protect", "growth"]:
 		var res: String = r
-		var h := UI.hbox(6 if is_narrow else 8)
-		var nm := UI.vbox(0)
-		nm.custom_minimum_size = Vector2(110 if is_narrow else (160 if UI.is_portrait() else 220), 0)
-		nm.add_child(UI.label(UI.RES_NAMES[r], 15 if is_narrow else 16, UI.TEXT, true))
-		nm.add_child(UI.label(hints[r], 11 if is_narrow else 12, UI.MUTED, true))
-		h.add_child(nm)
 		var minus := UI.button("－", func(): _bump(res, -1), 16, UI.PANEL_2)
-		h.add_child(minus)
+		minus.custom_minimum_size = Vector2(44, 44)
+		minus.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var value := UI.label("", 19 if is_narrow else 20, UI.GOLD)
 		value.custom_minimum_size = Vector2(24 if is_narrow else 26, 0)
 		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		h.add_child(value)
 		var plus := UI.button("＋", func(): _bump(res, 1), 16, UI.PANEL_2)
-		h.add_child(plus)
+		plus.custom_minimum_size = Vector2(44, 44)
+		plus.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		var coins := UI.label("", 15 if is_narrow else 16, UI.ACCENT_2)
-		h.add_child(coins)
-		av.add_child(h)
+
+		if UI.is_portrait():
+			var row_v := UI.vbox(2)
+			row_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var h := UI.hbox(8)
+			h.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			h.add_child(UI.label(UI.RES_NAMES[r], 15 if is_narrow else 16, UI.TEXT))
+			h.add_child(UI.spacer())
+			h.add_child(minus)
+			h.add_child(value)
+			h.add_child(plus)
+			coins.custom_minimum_size = Vector2(28 if is_narrow else 60, 0)
+			h.add_child(coins)
+			row_v.add_child(h)
+			var desc := UI.label(hints[r], 11 if is_narrow else 12, UI.MUTED, true)
+			row_v.add_child(desc)
+			av.add_child(row_v)
+		else:
+			var h := UI.hbox(8)
+			var nm := UI.vbox(0)
+			nm.custom_minimum_size = Vector2(220, 0)
+			nm.add_child(UI.label(UI.RES_NAMES[r], 16, UI.TEXT, true))
+			nm.add_child(UI.label(hints[r], 12, UI.MUTED, true))
+			h.add_child(nm)
+			h.add_child(minus)
+			h.add_child(value)
+			h.add_child(plus)
+			h.add_child(coins)
+			av.add_child(h)
+
 		_plan_ui["rows"][r] = {"minus": minus, "plus": plus, "value": value, "coins": coins}
 
 	var cv := _section("")
@@ -952,10 +1072,10 @@ func _build_plan() -> void:
 	for card: Dictionary in Net.static_data.get("cards", []):
 		var cid: String = str(card.get("id", ""))
 		var b := UI.option_button("", func(): _toggle(cid))
-		# 1 column needs 80 height, 2 columns need 110
-		var min_h: int = 80 if UI.is_phone_portrait() else (110 if UI.is_portrait() else 96)
+		# In phone modes (portrait 1 col, landscape 3 cols), cards need sufficient vertical room for wrapped text without clipping
+		var min_h: int = 86 if UI.is_phone_portrait() else (128 if UI.is_phone_landscape() else (110 if UI.is_portrait() else 104))
 		b.custom_minimum_size = Vector2(0, min_h)
-		b.add_theme_font_size_override("font_size", 13)
+		b.add_theme_font_size_override("font_size", UI.fs(13))
 		b.disabled = not _actor
 		b.set_meta("card", card)
 		grid.add_child(b)
