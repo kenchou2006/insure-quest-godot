@@ -18,6 +18,11 @@ var _content: VBoxContainer
 # if not preserved, "client thinking..." vanishes and input box reappears while AI response is still en route
 static var _waiting_ai: bool = false
 static var _waiting_hint: bool = false
+static var _streamed_hint_text: String = ""
+static var _hint_streamed: bool = false
+static var _streamed_obj_text: String = ""
+static var _obj_streamed: bool = false
+static var _rep_body_streamed: bool = false
 ## Summary of last received interview state (client/step/asked count...); change signifies AI response received, clearing wait
 static var _last_key: String = ""
 ## Client answer stream: current text and state summary at reception (state change means final answer arrived, stops showing)
@@ -26,6 +31,8 @@ static var _stream_key: String = ""
 static var _stream_answer_done: bool = false
 static var _queued_talk: Dictionary = {}
 var _think_label: Label = null
+var _hint_label: Label = null
+var _obj_think_label: Label = null
 var _last_result_sound_key: String = ""
 var _prev_asked_len: int = 0
 var _violation_pulse_panel: Panel = null
@@ -130,6 +137,8 @@ func _ready() -> void:
 		Net.stream_text.connect(_on_stream_text)
 	if not Engine.is_editor_hint() and not Net.stream_answer_done.is_connected(_on_stream_answer_done):
 		Net.stream_answer_done.connect(_on_stream_answer_done)
+	if not Engine.is_editor_hint() and not Net.stream_chunk.is_connected(_on_stream_chunk):
+		Net.stream_chunk.connect(_on_stream_chunk)
 	var pad: int = 10 if UI.is_phone_portrait() else (14 if UI.is_portrait() else 16)
 	add_theme_stylebox_override("panel", UI.box(UI.PANEL, 18, UI.ACCENT, pad))
 	_body = UI.vbox(10 if UI.is_phone_portrait() else 12)
@@ -206,6 +215,28 @@ func _on_stream_answer_done() -> void:
 	refresh(_sess, _actor_name_cache)
 
 
+func _on_stream_chunk(key: String, text: String, _done: bool) -> void:
+	if key == "hint":
+		_hint_streamed = true
+		_streamed_hint_text = text
+		if _hint_label != null and is_instance_valid(_hint_label):
+			_hint_label.text = text
+			_hint_label.visible_ratio = 1.0
+			_hint_label.add_theme_color_override("font_color", UI.TEXT)
+		else:
+			refresh(_sess, _actor_name_cache)
+	elif key == "objection":
+		_obj_streamed = true
+		_rep_body_streamed = true
+		_streamed_obj_text = text
+		if _obj_think_label != null and is_instance_valid(_obj_think_label):
+			_obj_think_label.text = text
+			_obj_think_label.visible_ratio = 1.0
+			_obj_think_label.add_theme_color_override("font_color", UI.TEXT)
+		else:
+			refresh(_sess, _actor_name_cache)
+
+
 func _streaming() -> bool:
 	return _stream_text != "" and _stream_key == _last_key
 
@@ -215,6 +246,8 @@ func _on_server_error(_msg: String) -> void:
 		return
 	_waiting_ai = false
 	_waiting_hint = false
+	_streamed_hint_text = ""
+	_streamed_obj_text = ""
 	_pending_talk = {}
 	_queued_talk = {}
 	_stream_answer_done = false
@@ -388,6 +421,12 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 		_queued_talk = {}
 		_pending_talk = {}
 		_waiting_ai = false
+		_waiting_hint = false
+		_streamed_hint_text = ""
+		_hint_streamed = false
+		_streamed_obj_text = ""
+		_obj_streamed = false
+		_rep_body_streamed = false
 		_stream_answer_done = false
 		_prev_asked_len = asked_arr.size()
 		_hint_used_this_session = false
@@ -820,22 +859,33 @@ func _render_coach_hint() -> void:
 	var hint_used: bool = bool(_sess.get("hintUsed", false))
 	var step_str: String = str(_sess.get("step", ""))
 
-	if hint_str != "":
+	if hint_str != "" or _streamed_hint_text != "":
+		_waiting_hint = false
 		var hb := UI.panel(UI.INFO.darkened(0.65), 10, 10)
 		hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var hv := UI.vbox(4)
 		hv.add_child(UI.label("★ AI 教練提示：" if Net.ai_enabled else "★ 教練提示：", 15, UI.INFO))
-		hv.add_child(UI.label(hint_str, 14, UI.TEXT, true))
+		var display_text := hint_str if hint_str != "" else _streamed_hint_text
+		_hint_label = UI.label(display_text, 14, UI.TEXT, true)
+		if hint_str != "":
+			if not _hint_streamed:
+				UI.typewriter(_hint_label, hint_str, false)
+			else:
+				_hint_label.text = hint_str
+		hv.add_child(_hint_label)
 		hb.add_child(hv)
 		_content.add_child(hb)
 	elif _actor and not hint_used and step_str in ["discover", "plan", "objection"]:
 		var hint_bar: BoxContainer = UI.vbox(4) if UI.is_phone_portrait() else UI.hbox(8)
 		hint_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if _waiting_hint:
-			hint_bar.add_child(UI.label("教練思考中……", 14, UI.GOLD, true))
+			_hint_label = UI.label("教練思考中……", 14, UI.GOLD, true)
+			hint_bar.add_child(_hint_label)
 		else:
 			var hint_btn := UI.button("求助教練", func():
 				_waiting_hint = true
+				_streamed_hint_text = ""
+				_hint_streamed = false
 				Net.act({"type": "hint"})
 				refresh(_sess, "")
 			, 14, UI.PANEL_2)
@@ -1140,9 +1190,7 @@ func _build_discover() -> void:
 		var p_badge := UI.chip(Color(pend_col.r, pend_col.g, pend_col.b, 0.18), pend_col, 4, 10, 4)
 		p_badge.add_child(UI.label(Compliance.level_tag(pend_lvl), 11, pend_col))
 		pend_h.add_child(p_badge)
-		if _stream_answer_done:
-			pend_h.add_child(UI.label("（教練短評整理中……）", 11, UI.MUTED))
-		else:
+		if not _stream_answer_done:
 			pend_h.add_child(UI.label("（送出中……）", 11, UI.MUTED))
 		pend_v.add_child(pend_h)
 
@@ -1224,6 +1272,8 @@ func _build_discover() -> void:
 
 	var asked_qids: Array = asked.map(func(x: Dictionary): return str(x.get("qid", "")))
 	var covered_qids: Array = _sess.get("covered", []) if _sess.get("covered") != null else []
+	var pending_qid: String = str(_pending_talk.get("suggested", ""))
+	var queued_qid: String = str(_queued_talk.get("suggested", ""))
 
 	var is_waiting: bool = _waiting_ai or bool(_sess.get("aiBusy", false)) or _streaming()
 	var can_queue: bool = is_waiting and _stream_answer_done and _queued_talk.is_empty() and talk_left > 1
@@ -1233,7 +1283,7 @@ func _build_discover() -> void:
 	for q_item in questions_src:
 		var qid: String = str(q_item.get("id", ""))
 		var qtext: String = str(q_item.get("text", ""))
-		var was_asked: bool = (qid in asked_qids) or (qid in covered_qids)
+		var was_asked: bool = (qid in asked_qids) or (qid in covered_qids) or (qid != "" and (qid == pending_qid or qid == queued_qid))
 
 		var b := UI.option_button(qtext, func():
 			_send_talk(qtext, qid)
@@ -1766,10 +1816,15 @@ func _build_objection() -> void:
 	var fv := _section("或用你自己的話回應（AI 講師評分；恐嚇與保證重扣合規）" if Net.ai_enabled else "或用你自己的話回應（規則版評分；恐嚇與保證重扣合規）")
 	if _actor:
 		if _waiting_ai:
-			fv.add_child(UI.label("AI 講師評分中……" if Net.ai_enabled else "講師評分中……", 15, UI.GOLD))
+			var default_wait := "AI 講師評分中……" if Net.ai_enabled else "講師評分中……"
+			var disp := _streamed_obj_text if _streamed_obj_text != "" else default_wait
+			_obj_think_label = UI.label(disp, 15, UI.TEXT if _streamed_obj_text != "" else UI.GOLD, true)
+			fv.add_child(_obj_think_label)
 		else:
 			fv.add_child(UI.text_input("輸入你的回應……", func(t: String):
 				_waiting_ai = true
+				_streamed_obj_text = ""
+				_obj_streamed = false
 				Net.act({"type": "objection_free", "text": t})
 				refresh(_sess, "")
 			, 200))
@@ -1889,7 +1944,10 @@ func _build_result() -> void:
 		var v := _section("異議回應回饋")
 		v.add_child(UI.label("你說：" + str(rep.get("text", "")), 13, UI.MUTED, true))
 		v.add_child(UI.label(str(rep.get("title", "")), 16 if is_phone else 17, UI.tone_color(str(rep.get("quality", "")))))
-		v.add_child(UI.label(str(rep.get("body", "")), 14, UI.TEXT, true))
+		var body_str: String = str(rep.get("body", ""))
+		var body_lbl := UI.label(body_str, 14, UI.TEXT, true)
+		UI.typewriter(body_lbl, body_str, _rep_body_streamed)
+		v.add_child(body_lbl)
 
 	# Stress test visualization: clash comparison display
 	var stress: Array = _sess.get("stress", []) if _sess.get("stress") != null else []

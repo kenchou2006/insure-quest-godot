@@ -247,22 +247,24 @@ func _draw() -> void:
 			else:
 				draw_style_box(sb, Rect2(r.position.x, r.position.y + inset, band_sz, r.size.y - inset * 2.0))
 
-		# Tile index number in subtle outer corner
+		# Tile index number in subtle outer corner (top corner away from bottom name area across all layouts)
 		var idx_str: String = str(i)
-		var idx_fs: int = UI.fs(10 if not UI.is_phone() else 11)
+		var is_phone := UI.is_phone()
+		var idx_fs: int = 9 if is_phone else 10
+		var idx_w: float = font.get_string_size(idx_str, HORIZONTAL_ALIGNMENT_LEFT, -1, idx_fs).x
 		var idx_pos: Vector2
 		if i == 6:
-			idx_pos = Vector2(r.position.x + 4, r.position.y + band_sz + idx_fs * 0.9)
-		elif i == 18:
-			idx_pos = Vector2(r.end.x - 18, r.position.y + idx_fs * 0.9 + 2)
+			idx_pos = Vector2(r.position.x + 3, r.position.y + band_sz + idx_fs * 0.85)
 		elif i <= 6:
-			idx_pos = Vector2(r.end.x - 18, r.position.y + band_sz + idx_fs * 0.9)
+			idx_pos = Vector2(r.end.x - idx_w - 3, r.position.y + band_sz + idx_fs * 0.85)
 		elif i <= 11:
-			idx_pos = Vector2(r.position.x + 4, r.position.y + idx_fs * 0.9 + 2)
+			idx_pos = Vector2(r.position.x + 3, r.position.y + idx_fs * 0.85 + 2)
+		elif i == 18:
+			idx_pos = Vector2(r.end.x - idx_w - 3, r.position.y + idx_fs * 0.85 + 2)
 		elif i <= 18:
-			idx_pos = Vector2(r.position.x + 4, r.end.y - band_sz - 3)
+			idx_pos = Vector2(r.position.x + 3, r.position.y + idx_fs * 0.85 + 2)
 		else:
-			idx_pos = Vector2(r.end.x - 18, r.position.y + idx_fs * 0.9 + 2)
+			idx_pos = Vector2(r.end.x - idx_w - 3, r.position.y + idx_fs * 0.85 + 2)
 		draw_string(font, idx_pos, idx_str, HORIZONTAL_ALIGNMENT_LEFT, -1, idx_fs, Color(1, 1, 1, 0.45))
 
 		# Territory overlay: owner player colour inner border + corner client portrait badge
@@ -317,31 +319,39 @@ func _draw() -> void:
 				break
 
 		# Larger symbol (~40% of tile), corner tiles slightly larger
-		var sym_sz: float = c_min * (0.38 if not UI.is_phone_landscape() else 0.28)
+		var sym_sz: float = c_min * (0.30 if UI.is_phone_portrait() else (0.28 if UI.is_phone_landscape() else 0.38))
 		if is_corner:
-			sym_sz *= 1.20
-		var sym_center := Vector2(r.get_center().x, r.position.y + r.size.y * 0.42)
-		if UI.is_phone_landscape():
-			sym_center.y = r.position.y + r.size.y * 0.38
+			sym_sz *= 1.15
+		var sym_center := Vector2(r.get_center().x, r.position.y + r.size.y * (0.35 if UI.is_phone_portrait() else (0.38 if UI.is_phone_landscape() else 0.42)))
 		_draw_tile_symbol(type_key, sym_center, sym_sz, col.lightened(0.25))
 
 		# Name label under symbol
 		var name_str: String = str(t.get("name", ""))
-		var min_fs: int = UI.fs(11)
-		var name_fs: int = UI.fs(12)
 		var max_name_w: float = r.size.x - 4.0
 		if name_str != "":
-			if UI.is_phone_portrait() and font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
-				var mid: int = 2 if name_str.length() == 5 else int(ceilf(float(name_str.length()) / 2.0))
-				var line1: String = name_str.substr(0, mid)
-				var line2: String = name_str.substr(mid)
-				while name_fs > min_fs and (font.get_string_size(line1, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w or font.get_string_size(line2, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w):
-					name_fs -= 1
-				var y2: float = r.end.y - (4.0 if not (i >= 12 and i <= 18) else (band_sz + 2.0))
-				var y1: float = y2 - name_fs * 1.05
-				draw_string(font, Vector2(r.position.x + 2, y1), line1, HORIZONTAL_ALIGNMENT_CENTER, int(max_name_w), name_fs, UI.TEXT)
-				draw_string(font, Vector2(r.position.x + 2, y2), line2, HORIZONTAL_ALIGNMENT_CENTER, int(max_name_w), name_fs, UI.TEXT)
+			if UI.is_phone_portrait():
+				var single_fs: int = 11
+				while single_fs >= 10 and font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, single_fs).x > max_name_w:
+					single_fs -= 1
+
+				var fits_single: bool = font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, single_fs).x <= max_name_w
+				if fits_single:
+					var name_y: float = r.end.y - (band_sz + 2.0 if (i >= 12 and i <= 18) else 3.0)
+					draw_string(font, Vector2(r.position.x + 2, name_y), name_str, HORIZONTAL_ALIGNMENT_CENTER, int(max_name_w), single_fs, UI.TEXT)
+				else:
+					var mid: int = 2 if name_str.length() == 5 else int(ceilf(float(name_str.length()) / 2.0))
+					var line1: String = name_str.substr(0, mid)
+					var line2: String = name_str.substr(mid)
+					var wrap_fs: int = 10
+					while wrap_fs > 9 and (font.get_string_size(line1, HORIZONTAL_ALIGNMENT_CENTER, -1, wrap_fs).x > max_name_w or font.get_string_size(line2, HORIZONTAL_ALIGNMENT_CENTER, -1, wrap_fs).x > max_name_w):
+						wrap_fs -= 1
+					var y2: float = r.end.y - (band_sz + 2.0 if (i >= 12 and i <= 18) else 3.0)
+					var y1: float = y2 - wrap_fs * 1.05
+					draw_string(font, Vector2(r.position.x + 2, y1), line1, HORIZONTAL_ALIGNMENT_CENTER, int(max_name_w), wrap_fs, UI.TEXT)
+					draw_string(font, Vector2(r.position.x + 2, y2), line2, HORIZONTAL_ALIGNMENT_CENTER, int(max_name_w), wrap_fs, UI.TEXT)
 			else:
+				var min_fs: int = 10 if is_phone else 11
+				var name_fs: int = 11 if is_phone else 12
 				while name_fs > min_fs and font.get_string_size(name_str, HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
 					name_fs -= 1
 				var display_name: String = name_str
@@ -349,9 +359,7 @@ func _draw() -> void:
 					while display_name.length() > 1 and font.get_string_size(display_name + "…", HORIZONTAL_ALIGNMENT_CENTER, -1, name_fs).x > max_name_w:
 						display_name = display_name.substr(0, display_name.length() - 1)
 					display_name += "…"
-				var name_y: float = r.end.y - (4.0 if UI.is_phone_portrait() else 6.0)
-				if i >= 12 and i <= 18:
-					name_y -= (band_sz * 0.6)
+				var name_y: float = r.end.y - (band_sz + 2.0 if (i >= 12 and i <= 18) else (4.0 if is_phone else 6.0))
 				if UI.is_phone_landscape():
 					deferred_names.append([Vector2(r.position.x + 2, name_y), display_name, int(max_name_w), name_fs])
 				else:

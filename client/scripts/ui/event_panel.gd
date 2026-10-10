@@ -17,6 +17,13 @@ var _last_ev_title: String = ""
 var _last_manual_scroll_time: float = -999.0
 var _scroll_tween: Tween = null
 var _target_focus_node: Control = null
+var _body_label: Label = null
+var _cur_kind: String = ""
+var _cur_player_id: String = ""
+var _streamed_market: bool = false
+var _streamed_seminar: bool = false
+var _stream_text_market: String = ""
+var _stream_text_seminar: String = ""
 
 
 func _ready() -> void:
@@ -30,6 +37,23 @@ func _ready() -> void:
 		var v_bar := _scroll.get_v_scroll_bar()
 		if v_bar != null:
 			v_bar.gui_input.connect(_on_scroll_input)
+		if not Net.stream_chunk.is_connected(_on_stream_chunk):
+			Net.stream_chunk.connect(_on_stream_chunk)
+
+
+func _on_stream_chunk(key: String, text: String, _done: bool) -> void:
+	if key == "market":
+		_streamed_market = true
+		_stream_text_market = text
+		if _cur_kind == "market" and _body_label != null and is_instance_valid(_body_label):
+			_body_label.text = text
+			_body_label.visible_ratio = 1.0
+	elif key == "seminar:" + Net.player_id or (_cur_player_id != "" and key == "seminar:" + _cur_player_id):
+		_streamed_seminar = true
+		_stream_text_seminar = text
+		if _cur_kind == "seminar" and _body_label != null and is_instance_valid(_body_label):
+			_body_label.text = text
+			_body_label.visible_ratio = 1.0
 
 
 func _on_scroll_input(event: InputEvent) -> void:
@@ -129,6 +153,13 @@ func refresh(ev: Dictionary, actor_name: String) -> void:
 
 	# Only play sound and fade in on event change; updates within same event redraw directly to prevent flickering
 	var is_new_event: bool = title != _last_ev_title
+	_cur_kind = kind
+	_cur_player_id = str(ev.get("playerId", ""))
+	if is_new_event:
+		_streamed_market = false
+		_streamed_seminar = false
+		_stream_text_market = ""
+		_stream_text_seminar = ""
 	if title != "" and is_new_event:
 		_last_ev_title = title
 		UI.pop_in(self, 0.22)
@@ -186,8 +217,24 @@ func refresh(ev: Dictionary, actor_name: String) -> void:
 
 	_v.add_child(UI.label(title, 22 if UI.is_portrait() else 26, UI.TEXT, true))
 	var body_txt: String = str(ev.get("body", ""))
-	if body_txt != "" and not (dilemma is Dictionary and str(dilemma.get("prompt", "")) != ""):
-		_v.add_child(UI.label(body_txt, 15 if UI.is_portrait() else 17, UI.MUTED, true))
+	if kind == "market":
+		var display_market := body_txt if body_txt != "" else _stream_text_market
+		if display_market != "":
+			_body_label = UI.label(display_market, 15 if UI.is_portrait() else 17, UI.MUTED, true)
+			if body_txt != "":
+				UI.typewriter(_body_label, body_txt, _streamed_market)
+			_v.add_child(_body_label)
+	elif kind == "seminar":
+		var display_seminar := body_txt if body_txt != "" else _stream_text_seminar
+		if display_seminar != "":
+			_body_label = UI.label(display_seminar, 15 if UI.is_portrait() else 17, UI.MUTED, true)
+			if body_txt != "":
+				UI.typewriter(_body_label, body_txt, _streamed_seminar)
+			_v.add_child(_body_label)
+	else:
+		if body_txt != "" and not (dilemma is Dictionary and str(dilemma.get("prompt", "")) != ""):
+			_body_label = UI.label(body_txt, 15 if UI.is_portrait() else 17, UI.MUTED, true)
+			_v.add_child(_body_label)
 
 	# ───────── 1. Compliance dilemma (dilemma) ─────────
 	if dilemma is Dictionary:

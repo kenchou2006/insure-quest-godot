@@ -182,44 +182,77 @@ static func make_theme() -> Theme:
 	t.set_stylebox("normal", "OptionButton", box(PANEL_2, 10, Color(0, 0, 0, 0), 12))
 	t.set_stylebox("hover", "OptionButton", box(PANEL_2.lightened(0.1), 10, Color(0, 0, 0, 0), 12))
 	t.set_stylebox("normal", "SpinBox", box(PANEL_2))
-	# VScrollBar custom style (12px width, high-contrast visibility protection, including hover and pressed states)
-	var sb_scroll := StyleBoxFlat.new()
-	sb_scroll.bg_color = Color("#0d231e", 0.85)
-	sb_scroll.set_corner_radius_all(6)
-	sb_scroll.content_margin_left = 5
-	sb_scroll.content_margin_right = 5
-	sb_scroll.content_margin_top = 4
-	sb_scroll.content_margin_bottom = 4
+	if is_phone():
+		# Phone: thin overlay-style scrollbar (narrow, semi-transparent grabber, no reserved track)
+		var sb_scroll_phone := StyleBoxEmpty.new()
+		var sb_grabber_phone := StyleBoxFlat.new()
+		sb_grabber_phone.bg_color = Color("#2ed59e", 0.45)
+		sb_grabber_phone.set_corner_radius_all(2)
+		sb_grabber_phone.content_margin_left = 1
+		sb_grabber_phone.content_margin_right = 1
+		sb_grabber_phone.content_margin_top = 4
+		sb_grabber_phone.content_margin_bottom = 4
 
-	var sb_grabber := StyleBoxFlat.new()
-	sb_grabber.bg_color = Color("#26594a")
-	sb_grabber.set_corner_radius_all(5)
-	sb_grabber.content_margin_left = 5
-	sb_grabber.content_margin_right = 5
-	sb_grabber.content_margin_top = 8
-	sb_grabber.content_margin_bottom = 8
+		var sb_grabber_hl_phone := StyleBoxFlat.new()
+		sb_grabber_hl_phone.bg_color = Color("#2ed59e", 0.75)
+		sb_grabber_hl_phone.set_corner_radius_all(2)
+		sb_grabber_hl_phone.content_margin_left = 1
+		sb_grabber_hl_phone.content_margin_right = 1
+		sb_grabber_hl_phone.content_margin_top = 4
+		sb_grabber_hl_phone.content_margin_bottom = 4
 
-	var sb_grabber_hl := StyleBoxFlat.new()
-	sb_grabber_hl.bg_color = Color("#2ed59e")
-	sb_grabber_hl.set_corner_radius_all(5)
-	sb_grabber_hl.content_margin_left = 5
-	sb_grabber_hl.content_margin_right = 5
-	sb_grabber_hl.content_margin_top = 8
-	sb_grabber_hl.content_margin_bottom = 8
+		var sb_grabber_p_phone := StyleBoxFlat.new()
+		sb_grabber_p_phone.bg_color = ACCENT
+		sb_grabber_p_phone.set_corner_radius_all(2)
+		sb_grabber_p_phone.content_margin_left = 1
+		sb_grabber_p_phone.content_margin_right = 1
+		sb_grabber_p_phone.content_margin_top = 4
+		sb_grabber_p_phone.content_margin_bottom = 4
 
-	var sb_grabber_pressed := StyleBoxFlat.new()
-	sb_grabber_pressed.bg_color = ACCENT
-	sb_grabber_pressed.set_corner_radius_all(5)
-	sb_grabber_pressed.content_margin_left = 5
-	sb_grabber_pressed.content_margin_right = 5
-	sb_grabber_pressed.content_margin_top = 8
-	sb_grabber_pressed.content_margin_bottom = 8
+		t.set_stylebox("scroll", "VScrollBar", sb_scroll_phone)
+		t.set_stylebox("scroll_focus", "VScrollBar", sb_scroll_phone)
+		t.set_stylebox("grabber", "VScrollBar", sb_grabber_phone)
+		t.set_stylebox("grabber_highlight", "VScrollBar", sb_grabber_hl_phone)
+		t.set_stylebox("grabber_pressed", "VScrollBar", sb_grabber_p_phone)
+	else:
+		# VScrollBar custom style (12px width, high-contrast visibility protection, including hover and pressed states)
+		var sb_scroll := StyleBoxFlat.new()
+		sb_scroll.bg_color = Color("#0d231e", 0.85)
+		sb_scroll.set_corner_radius_all(6)
+		sb_scroll.content_margin_left = 5
+		sb_scroll.content_margin_right = 5
+		sb_scroll.content_margin_top = 4
+		sb_scroll.content_margin_bottom = 4
 
-	t.set_stylebox("scroll", "VScrollBar", sb_scroll)
-	t.set_stylebox("scroll_focus", "VScrollBar", sb_scroll)
-	t.set_stylebox("grabber", "VScrollBar", sb_grabber)
-	t.set_stylebox("grabber_highlight", "VScrollBar", sb_grabber_hl)
-	t.set_stylebox("grabber_pressed", "VScrollBar", sb_grabber_pressed)
+		var sb_grabber := StyleBoxFlat.new()
+		sb_grabber.bg_color = Color("#26594a")
+		sb_grabber.set_corner_radius_all(5)
+		sb_grabber.content_margin_left = 5
+		sb_grabber.content_margin_right = 5
+		sb_grabber.content_margin_top = 8
+		sb_grabber.content_margin_bottom = 8
+
+		var sb_grabber_hl := StyleBoxFlat.new()
+		sb_grabber_hl.bg_color = Color("#2ed59e")
+		sb_grabber_hl.set_corner_radius_all(5)
+		sb_grabber_hl.content_margin_left = 5
+		sb_grabber_hl.content_margin_right = 5
+		sb_grabber_hl.content_margin_top = 8
+		sb_grabber_hl.content_margin_bottom = 8
+
+		var sb_grabber_pressed := StyleBoxFlat.new()
+		sb_grabber_pressed.bg_color = ACCENT
+		sb_grabber_pressed.set_corner_radius_all(5)
+		sb_grabber_pressed.content_margin_left = 5
+		sb_grabber_pressed.content_margin_right = 5
+		sb_grabber_pressed.content_margin_top = 8
+		sb_grabber_pressed.content_margin_bottom = 8
+
+		t.set_stylebox("scroll", "VScrollBar", sb_scroll)
+		t.set_stylebox("scroll_focus", "VScrollBar", sb_scroll)
+		t.set_stylebox("grabber", "VScrollBar", sb_grabber)
+		t.set_stylebox("grabber_highlight", "VScrollBar", sb_grabber_hl)
+		t.set_stylebox("grabber_pressed", "VScrollBar", sb_grabber_pressed)
 	return t
 
 
@@ -303,6 +336,23 @@ static func is_animation_disabled() -> bool:
 		if bool(res):
 			return true
 	return false
+
+
+## Typewriter effect on a Label (used for fallback progressive reveal when AI did not stream)
+## Rate: ~30 chars/s, clamped to [0.25, 1.5]s so it never freezes automation.
+## If `already_streamed` is true, or if `Engine.is_editor_hint()`, or if `is_animation_disabled()`,
+## immediately display full text without tweening.
+static func typewriter(lbl: Label, text: String, already_streamed: bool = false) -> void:
+	if not is_instance_valid(lbl):
+		return
+	lbl.text = glue(text) if lbl.autowrap_mode != TextServer.AUTOWRAP_OFF else text
+	if already_streamed or is_animation_disabled() or Engine.is_editor_hint() or text.strip_edges() == "":
+		lbl.visible_ratio = 1.0
+		return
+	lbl.visible_ratio = 0.0
+	var dur: float = clampf(float(text.length()) / 30.0, 0.25, 1.5)
+	var tw := lbl.create_tween()
+	tw.tween_property(lbl, "visible_ratio", 1.0, dur)
 
 
 ## Pop-in animation effect
@@ -441,10 +491,37 @@ static func scroll(child: Control, right_margin := 12) -> ScrollContainer:
 	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	m.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	m.mouse_filter = Control.MOUSE_FILTER_PASS
-	m.add_theme_constant_override("margin_right", right_margin)
+	var gutter: int = 0 if is_phone() else right_margin
+	m.add_theme_constant_override("margin_right", gutter)
 	child.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	m.add_child(child)
 	s.add_child(m)
+
+	if is_phone():
+		var v_bar := s.get_v_scroll_bar()
+		if v_bar != null:
+			v_bar.custom_minimum_size = Vector2(4, 0)
+			var sb_empty := StyleBoxEmpty.new()
+			v_bar.add_theme_stylebox_override("scroll", sb_empty)
+			v_bar.add_theme_stylebox_override("scroll_focus", sb_empty)
+			var sb_g := StyleBoxFlat.new()
+			sb_g.bg_color = Color("#2ed59e", 0.45)
+			sb_g.set_corner_radius_all(2)
+			sb_g.content_margin_left = 1
+			sb_g.content_margin_right = 1
+			sb_g.content_margin_top = 4
+			sb_g.content_margin_bottom = 4
+			v_bar.add_theme_stylebox_override("grabber", sb_g)
+			var sb_gh := StyleBoxFlat.new()
+			sb_gh.bg_color = Color("#2ed59e", 0.75)
+			sb_gh.set_corner_radius_all(2)
+			sb_gh.content_margin_left = 1
+			sb_gh.content_margin_right = 1
+			sb_gh.content_margin_top = 4
+			sb_gh.content_margin_bottom = 4
+			v_bar.add_theme_stylebox_override("grabber_highlight", sb_gh)
+			v_bar.add_theme_stylebox_override("grabber_pressed", sb_gh)
+
 	return s
 
 
@@ -728,7 +805,7 @@ static func text_input(placeholder: String, on_submit: Callable, max_len := 120)
 
 
 ## Letter from ten years later card (letter paper style: off-white base, dark text, handwritten-feel margins)
-static func letter_card(letter: Dictionary, client_name: String) -> PanelContainer:
+static func letter_card(letter: Dictionary, client_name: String, pending := false) -> PanelContainer:
 	var outcome: String = str(letter.get("outcome", "mixed"))
 	var is_phone := is_phone_portrait()
 
@@ -793,9 +870,18 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 		v.add_child(summary_box)
 
 	# Letter body
-	var content: String = str(letter.get("content", ""))
-	if content != "":
+	if pending:
+		var wait_lbl := label("AI 正在撰寫十年後的來信……", 15, Color("#8c6418") if outcome == "thanks" else accent_col, true)
+		wait_lbl.name = "LetterBodyLabel"
+		if not Engine.is_editor_hint() and not is_animation_disabled():
+			var tw := wait_lbl.create_tween().set_loops()
+			tw.tween_property(wait_lbl, "modulate:a", 0.45, 0.7).set_trans(Tween.TRANS_SINE)
+			tw.tween_property(wait_lbl, "modulate:a", 1.0, 0.7).set_trans(Tween.TRANS_SINE)
+		v.add_child(wait_lbl)
+	else:
+		var content: String = str(letter.get("content", ""))
 		var body_lbl := label(content, 15, Color("#2c241d"), true)
+		body_lbl.name = "LetterBodyLabel"
 		v.add_child(body_lbl)
 
 	# Signature

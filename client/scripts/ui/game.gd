@@ -206,7 +206,7 @@ func _build_ui() -> void:
 	_my_turn_banner = UI.panel(Color("#1a4239"), 12, 6)
 	_my_turn_banner.add_theme_stylebox_override("panel", UI.box(Color("#1a4239"), 12, UI.GOLD, 8, false))
 	_my_turn_banner.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	var banner_l := UI.label("★ 輪到你了！請擲骰前進 ★", 14 if UI.is_phone_landscape() else (16 if UI.is_phone_portrait() else 18), UI.GOLD)
+	var banner_l := UI.label("★ 輪到你了！請擲骰前進 ★", 12 if UI.is_phone_landscape() else (13 if UI.is_phone_portrait() else 18), UI.GOLD, true)
 	banner_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_my_turn_banner.add_child(banner_l)
 	_my_turn_banner.visible = false
@@ -215,13 +215,13 @@ func _build_ui() -> void:
 	# Spectator ribbon during other players' turns
 	_spectator_ribbon = UI.panel(Color("#0f2922"), 10, 6)
 	_spectator_ribbon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_spectator_ribbon_lbl = UI.label("觀看中：其他顧問的回合", 12 if UI.is_phone_landscape() else (13 if UI.is_phone_portrait() else 14), UI.MUTED)
+	_spectator_ribbon_lbl = UI.label("觀看中：其他顧問的回合", 11 if UI.is_phone_landscape() else (12 if UI.is_phone_portrait() else 14), UI.MUTED, true)
 	_spectator_ribbon_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_spectator_ribbon.add_child(_spectator_ribbon_lbl)
 	_spectator_ribbon.visible = false
 	_center.add_child(_spectator_ribbon)
 
-	_top_label = UI.label("", 12 if UI.is_phone_landscape() else (13 if UI.is_phone_portrait() else (15 if portrait else 16)), UI.MUTED, true)
+	_top_label = UI.label("", 11 if UI.is_phone_landscape() else (12 if UI.is_phone_portrait() else (15 if portrait else 16)), UI.MUTED, true)
 	_top_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center.add_child(_top_label)
 
@@ -425,6 +425,16 @@ func _on_player_avatar_loaded(_arg1: Variant = null, _arg2: Variant = null) -> v
 		refresh(Net.state)
 
 
+func _fit_wrapped_label(lbl: Label, max_w: float) -> void:
+	if lbl == null or not is_instance_valid(lbl):
+		return
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var font: Font = lbl.get_theme_font("font")
+	var fsz: int = lbl.get_theme_font_size("font_size")
+	var text_w: float = font.get_string_size(lbl.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x if font != null else max_w
+	lbl.custom_minimum_size.x = clampf(text_w + 2.0, 0.0, maxf(max_w, 40.0))
+
+
 func _sync_center_bounds() -> void:
 	if _board == null or _center == null:
 		return
@@ -437,21 +447,21 @@ func _sync_center_bounds() -> void:
 
 	if is_phone_land:
 		_center.add_theme_constant_override("separation", 2)
-		var dice_sz := clampf(avail_h * 0.22, 42.0, 52.0)
+		var dice_sz := clampf(avail_h * 0.22, 38.0, 48.0)
 		if _dice_ctl != null:
 			_dice_ctl.set_dice_size(dice_sz)
 		if _roll_btn != null:
-			var btn_w := clampf(avail_w * 0.70, 140.0, 175.0)
-			var btn_h := clampf(avail_h * 0.15, 34.0, 40.0)
+			var btn_w := clampf(avail_w * 0.70, 130.0, 160.0)
+			var btn_h := clampf(avail_h * 0.15, 32.0, 38.0)
 			_roll_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	elif is_phone_port:
 		_center.add_theme_constant_override("separation", 4)
-		var dice_sz := clampf(avail_h * 0.20, 52.0, 72.0)
+		var dice_sz := clampf(avail_h * 0.18, 48.0, 64.0)
 		if _dice_ctl != null:
 			_dice_ctl.set_dice_size(dice_sz)
 		if _roll_btn != null:
-			var btn_w := clampf(avail_w * 0.65, 150.0, 180.0)
-			var btn_h := clampf(avail_h * 0.14, 40.0, 48.0)
+			var btn_w := clampf(avail_w * 0.65, 140.0, 175.0)
+			var btn_h := clampf(avail_h * 0.14, 38.0, 46.0)
 			_roll_btn.custom_minimum_size = Vector2(btn_w, btn_h)
 	else:
 		_center.add_theme_constant_override("separation", 8)
@@ -460,8 +470,19 @@ func _sync_center_bounds() -> void:
 		if _roll_btn != null:
 			_roll_btn.custom_minimum_size = Vector2(220, 56)
 
-	_center.position = r.position + Vector2(pad, pad)
 	_center.size = Vector2(avail_w, avail_h)
+	_center.position = r.get_center() - Vector2(avail_w * 0.5, avail_h * 0.5)
+
+	# Wrapping labels inside SHRINK_CENTER boxes collapse to one character per line unless given a width:
+	# size each one to its text, capped at the inner board width
+	_fit_wrapped_label(_spectator_ribbon_lbl, avail_w - 24.0)
+	if _my_turn_banner != null and _my_turn_banner.get_child_count() > 0:
+		_fit_wrapped_label(_my_turn_banner.get_child(0) as Label, avail_w - 24.0)
+	if _top_label != null:
+		_top_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if _dice_roll_info_lbl != null:
+		_dice_roll_info_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
 	if _cutscene_center_box != null and is_instance_valid(_cutscene_center_box):
 		var inner_c: Vector2 = r.get_center()
 		_cutscene_center_box.position = inner_c - (_cutscene_center_box.size * 0.5)
@@ -617,7 +638,10 @@ func refresh(s: Dictionary) -> void:
 
 	_board.set_data(Net.static_data.get("board", []), s.get("players", []), cur_id, s.get("territory", {}))
 	_update_center_client_strip()
-	_top_label.text = "第 %d / %d 回合 ｜ 名單剩 %d 位" % [round_num, int(s.get("settings", {}).get("rounds", 6)), int(s.get("deckLeft", 0))]
+	if UI.is_phone():
+		_top_label.text = "第 %d/%d 回合 ｜ 名單剩 %d 位" % [round_num, int(s.get("settings", {}).get("rounds", 6)), int(s.get("deckLeft", 0))]
+	else:
+		_top_label.text = "第 %d / %d 回合 ｜ 名單剩 %d 位" % [round_num, int(s.get("settings", {}).get("rounds", 6)), int(s.get("deckLeft", 0))]
 
 	# Own turn vs spectating other player turn indicator
 	var cur_player_idx: int = int(s.get("turn", 0)) % 4
@@ -639,7 +663,15 @@ func refresh(s: Dictionary) -> void:
 	else:
 		_my_turn_banner.visible = false
 		_spectator_ribbon.visible = true
-		_spectator_ribbon_lbl.text = "觀看中：【%s】的回合（行動中）" % cur_name
+		if UI.is_phone():
+			var clean_name: String = cur_name
+			var p_idx: int = clean_name.find("（")
+			if p_idx > 0:
+				clean_name = clean_name.substr(0, p_idx)
+			clean_name = clean_name.replace("【", "").replace("】", "").strip_edges()
+			_spectator_ribbon_lbl.text = "觀看中：%s" % clean_name
+		else:
+			_spectator_ribbon_lbl.text = "觀看中：【%s】的回合（行動中）" % cur_name
 		_turn_label.text = ""
 		_screen_glow.visible = true
 		_screen_glow.add_theme_stylebox_override("panel", UI.box(Color(0, 0, 0, 0), 12, Color("#1a4239"), 2, false))
@@ -839,7 +871,7 @@ func _update_center_client_strip() -> void:
 	UI.clear(_client_avatars_box)
 	var me: Dictionary = Net.me()
 	var book: Array = me.get("book", [])
-	var av_sz: int = 22 if UI.is_phone_landscape() else (26 if UI.is_phone_portrait() else 32)
+	var av_sz: int = 18 if UI.is_phone_landscape() else (22 if UI.is_phone_portrait() else 32)
 	var count: int = mini(book.size(), 6)
 	# Hide the strip until the first signing so it never crowds the dice area
 	if _client_strip != null:

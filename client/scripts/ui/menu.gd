@@ -13,6 +13,10 @@ var _level := "pro"
 var _opp_label: Label
 var _howto: Control
 var _pwa_btn: Button
+var _resume_container: VBoxContainer
+var _pwa_cb: JavaScriptObject = null
+var _target_version: String = ""
+var _seat_check_gen: int = 0
 var _root: BoxContainer
 var _auth_card_container: VBoxContainer
 var _last_account_id: String = ""
@@ -31,6 +35,9 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	if Net.auth_changed.is_connected(_on_auth_changed):
 		Net.auth_changed.disconnect(_on_auth_changed)
+	if OS.has_feature("web") and not Engine.is_editor_hint():
+		if JavaScriptBridge.pwa_update_available.is_connected(_on_pwa_update_avail):
+			JavaScriptBridge.pwa_update_available.disconnect(_on_pwa_update_avail)
 
 
 func _on_auth_changed() -> void:
@@ -154,19 +161,13 @@ func _build_ui() -> void:
 	_root.add_child(side)
 
 	# PWA update button
-	_pwa_btn = UI.button("★ 有新版本，點此更新", func():
-		if OS.has_feature("web"):
-			JavaScriptBridge.pwa_update()
-	, 16, UI.GOLD)
+	_pwa_btn = UI.button("★ 有新版本，點此更新", _on_pwa_btn_pressed, 16, UI.GOLD)
 	_pwa_btn.visible = false
 	v.add_child(_pwa_btn)
-	if OS.has_feature("web") and not AutomationBridge.is_active():
-		if JavaScriptBridge.pwa_needs_update():
-			_pwa_btn.visible = true
-		JavaScriptBridge.pwa_update_available.connect(func():
-			if not AutomationBridge.is_active():
-				_pwa_btn.visible = true
-		)
+	if OS.has_feature("web") and not AutomationBridge.is_active() and not Engine.is_editor_hint():
+		_check_pwa_update()
+		if not JavaScriptBridge.pwa_update_available.is_connected(_on_pwa_update_avail):
+			JavaScriptBridge.pwa_update_available.connect(_on_pwa_update_avail)
 
 	# Account / login status card
 	for c in v.get_children():
@@ -193,8 +194,9 @@ func _build_ui() -> void:
 	_name.custom_minimum_size = Vector2(0, 44)
 	v.add_child(_name)
 
-	if not Net.saved_seat.is_empty():
-		v.add_child(UI.button("回到進行中的房間 %s" % Net.saved_seat.get("room", ""), func(): _save(); main.resume_seat(), 18, UI.GOLD.darkened(0.35)))
+	_resume_container = UI.vbox(0)
+	v.add_child(_resume_container)
+	_check_saved_seat()
 
 	v.add_child(UI.label("單人練習（對電腦顧問）", 20, UI.TEXT))
 	var opp := UI.hbox(8)
@@ -623,3 +625,114 @@ func _build_howto() -> Control:
 
 	update_page.call(0)
 	return dim
+
+
+func _on_pwa_update_avail() -> void:
+	if not AutomationBridge.is_active():
+		_check_pwa_update()
+
+
+func _check_pwa_update() -> void:
+	if not OS.has_feature("web") or AutomationBridge.is_active() or Engine.is_editor_hint():
+		return
+	_pwa_cb = JavaScriptBridge.create_callback(func(args: Array):
+		if args.is_empty():
+			return
+		var ver_str: String = str(args[0])
+		if ver_str != "":
+			_target_version = ver_str
+			if _pwa_btn and is_instance_valid(_pwa_btn):
+				_pwa_btn.visible = true
+				_pwa_btn.disabled = false
+				_pwa_btn.text = "★ 有新版本，點此更新"
+	)
+	var win = JavaScriptBridge.get_interface("window")
+	if win:
+		win.__iq_pwa_cb = _pwa_cb
+		JavaScriptBridge.eval("""(function() {
+			try {
+				var cur = window.IQ_BUILD || '';
+				if (!cur) return;
+				var updating = sessionStorage.getItem('iq-updating');
+				if (updating && updating === cur) {
+					sessionStorage.removeItem('iq-updating');
+					updating = null;
+				}
+				fetch('version.json', { cache: 'no-store' })
+					.then(function(r) { return r.ok ? r.json() : null; })
+					.then(function(d) {
+						if (!d || !d.version) return;
+						var sVer = d.version;
+						if (sVer !== cur) {
+							if (sessionStorage.getItem('iq-updating') === sVer) return;
+							if (window.__iq_pwa_cb) window.__iq_pwa_cb(sVer);
+						} else {
+							if ('serviceWorker' in navigator) {
+								navigator.serviceWorker.getRegistration().then(function(reg) {
+									if (reg && reg.waiting) reg.waiting.postMessage('claim');
+								});
+							}
+						}
+					})
+					.catch(function() {});
+			} catch(e) {}
+		})()""", true)
+
+
+func _on_pwa_btn_pressed() -> void:
+	if not OS.has_feature("web") or Engine.is_editor_hint():
+		return
+	if _pwa_btn:
+		_pwa_btn.disabled = true
+		_pwa_btn.text = "更新中…"
+	JavaScriptBridge.eval("""(function(targetVer) {
+		try {
+			if (targetVer) sessionStorage.setItem('iq-updating', targetVer);
+			if ('serviceWorker' in navigator) {
+				navigator.serviceWorker.getRegistration().then(function(reg) {
+					if (reg && reg.waiting) {
+						reg.waiting.postMessage('update');
+						// The service worker navigates every client itself on "update"; only reload if that never happens
+						setTimeout(function() { location.reload(); }, 5000);
+					} else {
+						location.reload();
+					}
+				}).catch(function() { location.reload(); });
+			} else {
+				location.reload();
+			}
+		} catch(e) {
+			location.reload();
+		}
+	})(%s)""" % JSON.stringify(_target_version), true)
+
+
+func _check_saved_seat() -> void:
+	if Net.saved_seat.is_empty() or Engine.is_editor_hint():
+		return
+	var room: String = str(Net.saved_seat.get("room", "")).strip_edges().to_upper()
+	var p_id: String = str(Net.saved_seat.get("playerId", "")).strip_edges()
+	if room == "" or p_id == "":
+		Net.saved_seat = {}
+		Net.save_prefs()
+		return
+
+	_seat_check_gen += 1
+	var cur_gen := _seat_check_gen
+	var result: Array = await Net.check_saved_room(room, p_id)
+	if cur_gen != _seat_check_gen:
+		return
+	var status: String = result[0]
+	if status == "valid":
+		if _resume_container and is_instance_valid(_resume_container):
+			UI.clear(_resume_container)
+			var resume_btn := UI.button("回到進行中的房間 %s" % room, func(): _save(); main.resume_seat(), 18, UI.GOLD.darkened(0.35))
+			_resume_container.add_child(resume_btn)
+	elif status == "invalid":
+		Net.saved_seat = {}
+		Net.save_prefs()
+		if _resume_container and is_instance_valid(_resume_container):
+			UI.clear(_resume_container)
+	elif status == "network_error":
+		if _resume_container and is_instance_valid(_resume_container):
+			UI.clear(_resume_container)

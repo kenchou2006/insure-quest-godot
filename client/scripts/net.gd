@@ -14,6 +14,8 @@ signal auth_changed()
 signal stream_text(text: String)
 ## Stream client answer finished (coach tip may still be generating)
 signal stream_answer_done()
+## Keyed streaming fragment for all AI text (talk, hint, objection, market, seminar, coach, letter)
+signal stream_chunk(key: String, text: String, done: bool)
 ## The room no longer exists (host left, abandoned, or voided); the client should go back to the menu.
 signal room_closed(message: String)
 
@@ -56,7 +58,8 @@ func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
 	if OS.has_feature("web"):
-		var origin = JavaScriptBridge.eval("window.location.origin", true)
+		# origin + mount prefix (e.g. https://host/insure-quest when served under a Route)
+		var origin = JavaScriptBridge.eval("window.location.origin + window.location.pathname.replace(/\\/[^\\/]*$/, '')", true)
 		if typeof(origin) == TYPE_STRING and String(origin).begins_with("http"):
 			base_url = String(origin)
 	var saved := _load_prefs()
@@ -452,6 +455,42 @@ func _check_room_gone(code: String) -> void:
 		_close_room("房間已不存在")
 
 
+## Queries whether a room exists, is not ended, and has the specified player.
+## Returns [status: String, info: Dictionary]
+## status is "valid", "invalid" (room 404, ended, or player not in it), or "network_error"
+func check_saved_room(code: String, p_id: String) -> Array:
+	if Engine.is_editor_hint():
+		return ["invalid", {}]
+	var req := HTTPRequest.new()
+	req.timeout = 10.0
+	req.accept_gzip = false
+	add_child(req)
+	var url := base_url + "/api/rooms/%s/info?playerId=%s" % [code.uri_encode(), p_id.uri_encode()]
+	var err := req.request(url)
+	if err != OK:
+		req.queue_free()
+		return ["network_error", {}]
+	var res: Array = await req.request_completed
+	req.queue_free()
+	if res[0] != HTTPRequest.RESULT_SUCCESS:
+		return ["network_error", {}]
+	var status_code: int = res[1]
+	if status_code == 404:
+		return ["invalid", {}]
+	if status_code != 200:
+		return ["network_error", {}]
+	var text: String = (res[3] as PackedByteArray).get_string_from_utf8()
+	var parsed = JSON.parse_string(text)
+	if parsed is Dictionary:
+		var exists: bool = bool(parsed.get("exists", false))
+		var phase: String = str(parsed.get("phase", ""))
+		var has_player: bool = bool(parsed.get("hasPlayer", false))
+		if exists and phase != "ended" and has_player:
+			return ["valid", parsed]
+		return ["invalid", parsed]
+	return ["invalid", {}]
+
+
 func _ws_url() -> String:
 	var u := base_url.replace("https://", "wss://").replace("http://", "ws://")
 	return "%s/api/rooms/%s/ws" % [u, room_code]
@@ -571,9 +610,14 @@ func _handle(text: String) -> void:
 		"react":
 			reaction.emit(str(m.get("from", "")), str(m.get("emoji", "")))
 		"stream":
-			stream_text.emit(str(m.get("text", "")))
-			if bool(m.get("answerDone", false)):
-				stream_answer_done.emit()
+			var skey := str(m.get("key", "talk"))
+			var stext := str(m.get("text", ""))
+			var sdone := bool(m.get("done", false)) or bool(m.get("answerDone", false))
+			if skey == "talk":
+				stream_text.emit(stext)
+				if bool(m.get("answerDone", false)):
+					stream_answer_done.emit()
+			stream_chunk.emit(skey, stext, sdone)
 		"quota":
 			var used: int = int(m.get("used", 0))
 			var limit: int = int(m.get("limit", 50))

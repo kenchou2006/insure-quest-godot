@@ -43,6 +43,38 @@ func _ready() -> void:
 	_queue_rebuild()
 	# Run with -- --capture=path.png: captures screenshot after animations complete and exits (for docs and verification)
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--cert="):
+			# Render the certificate export card (same builder as 「儲存圖片」) to a PNG for checking
+			await get_tree().create_timer(1.0).timeout
+			var final: Array = Net.state.get("final", []) if Net.state.get("final") != null else []
+			var mine: Dictionary = {}
+			for row in final:
+				if row is Dictionary and str(row.get("playerId", "")) == Net.player_id:
+					mine = row
+			var rep: Node = null
+			for c in get_children():
+				if c.has_method("_build_certificate_card"):
+					rep = c
+			if rep == null or mine.is_empty():
+				push_error("cert capture: report screen or own final row not found")
+				get_tree().quit(1)
+				return
+			var prev_profile: String = UI.layout_profile
+			UI.layout_profile = "desktop"
+			var card: Control = rep._build_certificate_card(mine, Net.state, true)
+			UI.layout_profile = prev_profile
+			var vp := SubViewport.new()
+			vp.size = Vector2i(1200, 675)
+			vp.transparent_bg = true
+			vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			vp.add_child(card)
+			add_child(vp)
+			await get_tree().process_frame
+			await get_tree().process_frame
+			await RenderingServer.frame_post_draw
+			vp.get_texture().get_image().save_png(a.substr(7))
+			get_tree().quit()
+			return
 		if a.begins_with("--capture="):
 			get_window().size = SIZES.get(layout, SIZES["desktop"])
 			get_tree().root.content_scale_size = SIZES.get(layout, SIZES["desktop"])

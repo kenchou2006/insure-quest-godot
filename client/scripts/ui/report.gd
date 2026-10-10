@@ -6,6 +6,14 @@ var main: Node
 var _v: VBoxContainer
 var _scroll: ScrollContainer
 var _letter_idx: int = 0
+var _downloading_cert: bool = false
+var _coach_label: Label = null
+var _cert_coach_label: Label = null
+var _cur_letter_card: Control = null
+var _coach_streamed: bool = false
+var _streamed_coach_text: String = ""
+var _letters_streamed: Dictionary = {}
+var _streamed_letter_texts: Dictionary = {}
 
 
 func _ready() -> void:
@@ -19,8 +27,43 @@ func _ready() -> void:
 	_scroll = UI.scroll(_v)
 	m.add_child(_scroll)
 	UI.pop_in(self)
+	if not Engine.is_editor_hint() and not Net.stream_chunk.is_connected(_on_stream_chunk):
+		Net.stream_chunk.connect(_on_stream_chunk)
 	if not Net.state.is_empty():
 		refresh(Net.state)
+
+
+func _on_stream_chunk(key: String, text: String, _done: bool) -> void:
+	if key == "coach:" + Net.player_id:
+		_coach_streamed = true
+		_streamed_coach_text = text
+		if _coach_label != null and is_instance_valid(_coach_label):
+			_coach_label.modulate.a = 1.0
+			_coach_label.add_theme_color_override("font_color", UI.TEXT)
+			_coach_label.text = text
+			_coach_label.visible_ratio = 1.0
+		if _cert_coach_label != null and is_instance_valid(_cert_coach_label):
+			_cert_coach_label.modulate.a = 1.0
+			var coach_line: String = text.split("。")[0] if text.contains("。") else text
+			if coach_line.length() > 60:
+				coach_line = coach_line.substr(0, 58) + "…"
+			_cert_coach_label.text = "教練評語：「%s」" % coach_line
+			_cert_coach_label.visible_ratio = 1.0
+	elif key.begins_with("letter:" + Net.player_id + ":"):
+		var parts: PackedStringArray = key.split(":")
+		if parts.size() >= 3:
+			var cid: String = parts[2]
+			_letters_streamed[cid] = true
+			_streamed_letter_texts[cid] = text
+			if _cur_letter_card != null and is_instance_valid(_cur_letter_card):
+				var cur_cid: String = str(_cur_letter_card.get_meta("client_id", ""))
+				if cur_cid == cid or cur_cid == "":
+					var body_lbl: Label = _cur_letter_card.find_child("LetterBodyLabel", true, false)
+					if body_lbl != null:
+						body_lbl.modulate.a = 1.0
+						body_lbl.add_theme_color_override("font_color", Color("#2c241d"))
+						body_lbl.text = text
+						body_lbl.visible_ratio = 1.0
 
 
 func on_layout_changed(_is_portrait: bool) -> void:
@@ -194,17 +237,35 @@ func refresh(s: Dictionary) -> void:
 	ct.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ct.add_child(UI.label("AI 教練回饋" if Net.ai_enabled else "教練回饋", 17 if portrait else 18, UI.ACCENT_2))
 	# Show prompt while AI is still drafting (only logged-in players with AI will wait for AI version)
-	var ai_pending: bool = bool(s.get("aiPending", false)) and Net.ai_enabled
-	if ai_pending:
-		ct.add_child(UI.label("AI 教練正在撰寫你的專屬回饋……", 15 if portrait else 16, UI.GOLD, true))
+	var coach_str: String = str(mine.get("coach", ""))
+	var coach_pending: bool = bool(mine.get("coachPending", false)) or (bool(s.get("aiPending", false)) and Net.ai_enabled and coach_str == "")
+	var ai_pending: bool = coach_pending
+	if coach_str != "":
+		_coach_label = UI.label(coach_str, 15 if portrait else 16, UI.TEXT, true)
+		if not _coach_streamed:
+			UI.typewriter(_coach_label, coach_str, false)
+		ct.add_child(_coach_label)
+	elif _streamed_coach_text != "":
+		_coach_label = UI.label(_streamed_coach_text, 15 if portrait else 16, UI.TEXT, true)
+		ct.add_child(_coach_label)
+	elif coach_pending:
+		_coach_label = UI.label("AI 教練評語產生中……", 15 if portrait else 16, UI.GOLD, true)
+		if not Engine.is_editor_hint() and not UI.is_animation_disabled():
+			var tw := _coach_label.create_tween().set_loops()
+			tw.tween_property(_coach_label, "modulate:a", 0.45, 0.7).set_trans(Tween.TRANS_SINE)
+			tw.tween_property(_coach_label, "modulate:a", 1.0, 0.7).set_trans(Tween.TRANS_SINE)
+		ct.add_child(_coach_label)
 	else:
-		ct.add_child(UI.label(str(mine.get("coach", "")), 15 if portrait else 16, UI.TEXT, true))
+		_coach_label = UI.label(coach_str, 15 if portrait else 16, UI.TEXT, true)
+		ct.add_child(_coach_label)
 	cv.add_child(ct)
 	coach.add_child(cv)
 	body.add_child(coach)
 	_v.add_child(body)
 
 	# Letter from ten years later (up to 3 letters, navigable left/right)
+	var is_ai_player: bool = Net.ai_enabled and not bool(mine.get("isBot", false)) and Net.is_logged_in()
+	var letters_pending: bool = is_ai_player and (bool(mine.get("lettersPending", false)) or bool(s.get("aiPending", false)))
 	var letters: Array = mine.get("letters", []) as Array if mine.get("letters") != null else []
 	if not letters.is_empty():
 		var l_section := UI.vbox(8)
@@ -212,8 +273,6 @@ func refresh(s: Dictionary) -> void:
 
 		var l_head := UI.hbox(8)
 		l_head.add_child(UI.label("十年後的信", 17 if portrait else 18, UI.ACCENT_2))
-		if ai_pending:
-			l_head.add_child(UI.label("AI 潤稿中……（先顯示草稿）", 12 if UI.is_phone_portrait() else 13, UI.GOLD))
 		l_head.add_child(UI.spacer())
 
 		if letters.size() > 1:
@@ -237,8 +296,28 @@ func refresh(s: Dictionary) -> void:
 			_letter_idx = 0
 		var cur_letter: Dictionary = letters[_letter_idx] if letters[_letter_idx] is Dictionary else {}
 		var c_name: String = str(cur_letter.get("clientName", "客戶"))
-		var card := UI.letter_card(cur_letter, c_name)
+		var cid: String = str(cur_letter.get("clientId", cur_letter.get("id", "")))
+		var has_streamed_letter: bool = _streamed_letter_texts.has(cid) and str(_streamed_letter_texts[cid]) != ""
+		var card := UI.letter_card(cur_letter, c_name, letters_pending and not has_streamed_letter)
+		card.set_meta("client_id", cid)
+		_cur_letter_card = card
 		l_section.add_child(card)
+
+		var body_lbl: Label = card.find_child("LetterBodyLabel", true, false)
+		if body_lbl != null:
+			if letters_pending and has_streamed_letter:
+				body_lbl.text = str(_streamed_letter_texts[cid])
+				body_lbl.add_theme_color_override("font_color", Color("#2c241d"))
+				body_lbl.visible_ratio = 1.0
+			elif not letters_pending:
+				var c_content: String = str(cur_letter.get("content", ""))
+				if c_content != "":
+					var was_streamed: bool = bool(_letters_streamed.get(cid, false))
+					if not was_streamed:
+						UI.typewriter(body_lbl, c_content, false)
+					else:
+						body_lbl.text = c_content
+						body_lbl.visible_ratio = 1.0
 
 		# Small TimelineChart in compact mode (height ~90)
 		var timelines_arr: Array = mine.get("timelines", []) as Array if mine.get("timelines") != null else []
@@ -342,7 +421,10 @@ func refresh(s: Dictionary) -> void:
 	UI.pass_wheel(_v)
 
 
-func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
+func _build_certificate_card(mine: Dictionary, s: Dictionary, for_export: bool = false) -> Control:
+	if for_export:
+		return _build_export_certificate_card(mine, s)
+
 	var portrait: bool = UI.is_portrait()
 	var is_phone: bool = UI.is_phone_portrait()
 
@@ -369,10 +451,15 @@ func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
 	head.add_child(sub_lbl)
 	head.add_child(UI.spacer())
 
-	# Download image button (web only)
+	var coach_pending: bool = bool(mine.get("coachPending", false)) or (bool(s.get("aiPending", false)) and Net.ai_enabled and str(mine.get("coach", "")) == "")
+
+	# Download image button (web only, omitted in export instance)
 	if not Engine.is_editor_hint() and OS.has_feature("web"):
-		var dl_btn := UI.button("儲存圖片", func(): _download_certificate(card_panel), 12 if is_phone else 13, UI.ACCENT)
+		var dl_btn := UI.button("儲存圖片", func(): _download_certificate(mine, s), 12 if is_phone else 13, UI.ACCENT)
+		dl_btn.disabled = coach_pending
 		head.add_child(dl_btn)
+		if coach_pending:
+			head.add_child(UI.label("等待 AI 評語…", 11 if is_phone else 12, UI.GOLD))
 	v.add_child(head)
 
 	# 2. Main content row: Left info + competencies, Right seal & comment
@@ -446,16 +533,39 @@ func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
 	seal_box.add_child(seal)
 	right_v.add_child(seal_box)
 
-	# One-line coach comment
-	var coach_full: String = str(mine.get("coach", "持續精進需求訪談與專業配置。"))
-	var coach_line: String = coach_full.split("。")[0] if coach_full.contains("。") else coach_full
-	if coach_line.length() > 60:
-		coach_line = coach_line.substr(0, 58) + "…"
+	# One-line coach comment or waiting state
+	var coach_full: String = str(mine.get("coach", ""))
+	if coach_full != "":
+		var coach_line: String = coach_full.split("。")[0] if coach_full.contains("。") else coach_full
+		if coach_line.length() > 60:
+			coach_line = coach_line.substr(0, 58) + "…"
+		else:
+			coach_line += "。"
+		_cert_coach_label = UI.label("教練評語：「%s」" % coach_line, 12 if is_phone else 13, cert_muted, true)
+		_cert_coach_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if not is_phone else HORIZONTAL_ALIGNMENT_LEFT
+		if not _coach_streamed:
+			UI.typewriter(_cert_coach_label, "教練評語：「%s」" % coach_line, false)
+		right_v.add_child(_cert_coach_label)
+	elif _streamed_coach_text != "":
+		var coach_line: String = _streamed_coach_text.split("。")[0] if _streamed_coach_text.contains("。") else _streamed_coach_text
+		if coach_line.length() > 60:
+			coach_line = coach_line.substr(0, 58) + "…"
+		_cert_coach_label = UI.label("教練評語：「%s」" % coach_line, 12 if is_phone else 13, cert_muted, true)
+		_cert_coach_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if not is_phone else HORIZONTAL_ALIGNMENT_LEFT
+		right_v.add_child(_cert_coach_label)
+	elif coach_pending:
+		_cert_coach_label = UI.label("AI 教練評語產生中……", 12 if is_phone else 13, UI.GOLD, true)
+		_cert_coach_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if not is_phone else HORIZONTAL_ALIGNMENT_LEFT
+		if not Engine.is_editor_hint() and not UI.is_animation_disabled():
+			var tw := _cert_coach_label.create_tween().set_loops()
+			tw.tween_property(_cert_coach_label, "modulate:a", 0.45, 0.7).set_trans(Tween.TRANS_SINE)
+			tw.tween_property(_cert_coach_label, "modulate:a", 1.0, 0.7).set_trans(Tween.TRANS_SINE)
+		right_v.add_child(_cert_coach_label)
 	else:
-		coach_line += "。"
-	var coach_lbl := UI.label("教練評語：「%s」" % coach_line, 12 if is_phone else 13, cert_muted, true)
-	coach_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if not is_phone else HORIZONTAL_ALIGNMENT_LEFT
-	right_v.add_child(coach_lbl)
+		var coach_line := "持續精進需求訪談與專業配置。"
+		_cert_coach_label = UI.label("教練評語：「%s」" % coach_line, 12 if is_phone else 13, cert_muted, true)
+		_cert_coach_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if not is_phone else HORIZONTAL_ALIGNMENT_LEFT
+		right_v.add_child(_cert_coach_label)
 
 	body.add_child(right_v)
 	v.add_child(body)
@@ -463,24 +573,228 @@ func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
 	return card_panel
 
 
-func _download_certificate(card_panel: Control) -> void:
+func _build_export_certificate_card(mine: Dictionary, s: Dictionary) -> Control:
+	var cert_bg := Color("#0d2821")
+	var cert_ivory := Color("#fdfcf7")
+	var cert_muted := Color("#c8ded4")
+
+	var root := Control.new()
+	root.custom_minimum_size = Vector2(1200, 675)
+	root.size = Vector2(1200, 675)
+	root.theme = UI.make_theme()
+
+	var card_panel := UI.panel(cert_bg, 16, 24)
+	var card_sb := UI.box(cert_bg, 16, UI.GOLD, 24, false)
+	card_sb.set_border_width_all(3)
+	card_sb.content_margin_left = 32
+	card_sb.content_margin_right = 32
+	card_sb.content_margin_top = 22
+	card_sb.content_margin_bottom = 20
+	card_panel.add_theme_stylebox_override("panel", card_sb)
+	card_panel.position = Vector2(40, 30)
+	card_panel.size = Vector2(1120, 615)
+	card_panel.custom_minimum_size = Vector2(1120, 615)
+	card_panel.clip_contents = true
+	root.add_child(card_panel)
+
+	var v := UI.vbox(12)
+	card_panel.add_child(v)
+
+	# 1. Header band across full width: 「公平待客面談完訓卡」 large (gold) with 「專業顧問合格證明」 subtitle; small game name on right
+	var head := UI.hbox(10)
+	head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var title_lbl := UI.label("公平待客面談完訓卡", 28, UI.GOLD)
+	head.add_child(title_lbl)
+	var sub_lbl := UI.label("｜ 專業顧問合格證明", 16, cert_muted)
+	head.add_child(sub_lbl)
+	head.add_child(UI.spacer())
+	var game_lbl := UI.label("INSURE QUEST 人生顧問局", 14, Color("#f3d282"))
+	head.add_child(game_lbl)
+	v.add_child(head)
+
+	# 2. Body in two columns filling height: left ~55%, right ~45%
+	var body := UI.hbox(28)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	# Left column: advisor name, date, clients served, stamp, 5-power bars
+	var left_v := UI.vbox(10)
+	left_v.custom_minimum_size = Vector2(580, 0)
+	left_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var info_h := UI.hbox(10)
+	var adv_name: String = str(mine.get("name", "顧問"))
+	info_h.add_child(UI.label("顧問：%s" % adv_name, 22, cert_ivory))
+	var date_str: String = Time.get_date_string_from_system()
+	info_h.add_child(UI.label("（%s 完訓）" % date_str, 15, cert_muted))
+	left_v.add_child(info_h)
+
+	var stats_h := UI.hbox(12)
+	var clients_count: int = int(mine.get("clients", 0))
+	stats_h.add_child(UI.label("服務客戶：%d 位" % clients_count, 16, cert_ivory))
+
+	var red_lights: int = 0
+	for b in Net.me().get("book", []):
+		if bool(b.get("violation", false)):
+			red_lights += 1
+	if red_lights == 0 and mine.has("violations"):
+		red_lights = int(mine.get("violations", 0))
+
+	if red_lights == 0:
+		var gold_stamp := UI.stamp("★ 零違規", UI.GOLD, 15)
+		gold_stamp.scale = Vector2.ONE
+		stats_h.add_child(gold_stamp)
+	else:
+		var red_badge := UI.stamp("⚠ 違規 %d 次" % red_lights, UI.BAD, 15)
+		red_badge.scale = Vector2.ONE
+		stats_h.add_child(red_badge)
+	left_v.add_child(stats_h)
+
+	# Five competency bars (~46 px per row)
+	var skill_dict: Dictionary = mine.get("skill", {})
+	var skills_box := UI.vbox(4)
+	for k: String in ["trust", "insight", "fit", "risk", "compliance"]:
+		var val: float = float(skill_dict.get(k, 50.0))
+		var m_row := UI.hbox(10)
+		m_row.custom_minimum_size = Vector2(0, 46)
+		m_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		var l := UI.label(UI.METRIC_NAMES.get(k, k), 16, cert_ivory)
+		l.custom_minimum_size = Vector2(85, 0)
+		m_row.add_child(l)
+
+		var val_col: Color = UI.GOOD if val >= 75 else (UI.OK if val >= 50 else UI.BAD)
+		var pbar: ProgressBar = UI.bar(val, val_col, 240)
+		pbar.custom_minimum_size = Vector2(240, 12)
+		pbar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pbar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		m_row.add_child(pbar)
+
+		var v_lbl := UI.label(str(int(val)), 16, val_col)
+		v_lbl.custom_minimum_size = Vector2(36, 0)
+		v_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		m_row.add_child(v_lbl)
+
+		skills_box.add_child(m_row)
+	left_v.add_child(skills_box)
+	body.add_child(left_v)
+
+	# Right column: seal, total score, quote box coach comment
+	var right_v := UI.vbox(8)
+	right_v.custom_minimum_size = Vector2(440, 0)
+	right_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_v.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var seal_box := UI.hbox(0)
+	seal_box.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var grade_str: String = str(mine.get("grade", "C"))
+	var grade_col: Color = {"S": UI.GOLD, "A": UI.GOOD, "B": UI.INFO}.get(grade_str, UI.BAD)
+
+	var seal := UI.panel(Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.18), 95, 10)
+	var seal_sb := UI.box(Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.22), 95, UI.GOLD, 5, false)
+	seal_sb.set_border_width_all(4)
+	seal.add_theme_stylebox_override("panel", seal_sb)
+	seal.custom_minimum_size = Vector2(190, 190)
+
+	var seal_v := UI.vbox(0)
+	seal_v.alignment = BoxContainer.ALIGNMENT_CENTER
+	var s_lbl := UI.label(grade_str, 76, UI.GOLD if grade_str == "S" else grade_col)
+	s_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	seal_v.add_child(s_lbl)
+	var s_sub := UI.label("GRADE", 13, UI.GOLD)
+	s_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	seal_v.add_child(s_sub)
+	seal.add_child(seal_v)
+	seal_box.add_child(seal)
+	right_v.add_child(seal_box)
+
+	var score_val: int = int(mine.get("score", 0))
+	var score_lbl := UI.label("綜合得分 %d 分" % score_val, 19, UI.GOLD)
+	score_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	right_v.add_child(score_lbl)
+
+	var quote_panel := UI.panel(Color("#091d17"), 10, 12)
+	var q_sb := UI.box(Color("#091d17"), 10, Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.35), 12, false)
+	q_sb.content_margin_left = 16
+	q_sb.content_margin_right = 16
+	q_sb.content_margin_top = 10
+	q_sb.content_margin_bottom = 10
+	quote_panel.add_theme_stylebox_override("panel", q_sb)
+	quote_panel.custom_minimum_size = Vector2(430, 0)
+	quote_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var qv := UI.vbox(4)
+	qv.add_child(UI.label("★ 教練評語", 13, UI.GOLD))
+
+	var coach_full: String = str(mine.get("coach", "持續精進需求訪談與專業配置。"))
+	var coach_lbl := UI.label("「%s」" % coach_full, 18, cert_ivory, true)
+	coach_lbl.custom_minimum_size = Vector2(400, 0)
+	qv.add_child(coach_lbl)
+	quote_panel.add_child(qv)
+	right_v.add_child(quote_panel)
+
+	body.add_child(right_v)
+	v.add_child(body)
+
+	# Footer strip: thin gold rule + small text
+	var rule := Panel.new()
+	var rule_sb := StyleBoxFlat.new()
+	rule_sb.bg_color = Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.35)
+	rule.add_theme_stylebox_override("panel", rule_sb)
+	rule.custom_minimum_size = Vector2(0, 1)
+	v.add_child(rule)
+
+	var footer_h := UI.hbox(8)
+	var footer_lbl := UI.label("完訓日期 %s · 本證明由 INSURE QUEST 訓練紀錄自動產生" % date_str, 13, cert_muted)
+	footer_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	footer_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	footer_h.add_child(footer_lbl)
+	v.add_child(footer_h)
+
+	return root
+
+
+func _download_certificate(mine: Dictionary, s: Dictionary) -> void:
 	if Engine.is_editor_hint() or not OS.has_feature("web"):
 		return
+	var coach_pending: bool = bool(mine.get("coachPending", false)) or (bool(s.get("aiPending", false)) and Net.ai_enabled and str(mine.get("coach", "")) == "")
+	if coach_pending:
+		return
+	if _downloading_cert:
+		return
+	_downloading_cert = true
+
+	var prev_profile: String = UI.layout_profile
+	UI.layout_profile = "desktop"
+	var export_card: Control = _build_certificate_card(mine, s, true)
+	UI.layout_profile = prev_profile
+
+	var vp := SubViewport.new()
+	vp.size = Vector2i(1200, 675)
+	vp.transparent_bg = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	vp.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_LINEAR
+	vp.add_child(export_card)
+	add_child(vp)
+
 	await get_tree().process_frame
-	var vp := get_viewport()
-	if vp == null:
-		return
+	await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+
 	var tex := vp.get_texture()
-	if tex == null:
-		return
-	var img := tex.get_image()
-	if img == null:
-		return
-	var gr: Rect2 = card_panel.get_global_rect()
-	var r := Rect2i(int(gr.position.x), int(gr.position.y), int(gr.size.x), int(gr.size.y))
-	r = r.intersection(Rect2i(0, 0, img.get_width(), img.get_height()))
-	if r.size.x <= 0 or r.size.y <= 0:
-		return
-	var cropped: Image = img.get_region(r)
-	var buf: PackedByteArray = cropped.save_png_to_buffer()
-	JavaScriptBridge.download_buffer(buf, "fair-treatment-certificate.png", "image/png")
+	var img: Image = tex.get_image() if tex != null else null
+	if img == null or img.is_empty():
+		await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		tex = vp.get_texture()
+		img = tex.get_image() if tex != null else null
+
+	if img != null and not img.is_empty():
+		var buf: PackedByteArray = img.save_png_to_buffer()
+		if not buf.is_empty():
+			JavaScriptBridge.download_buffer(buf, "fair-treatment-certificate.png", "image/png")
+
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	vp.queue_free()
+	_downloading_cert = false

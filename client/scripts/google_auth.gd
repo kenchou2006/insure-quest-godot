@@ -8,9 +8,11 @@ extends Node
 const JS_SETUP := """
 (function () {
   if (window.iqGoogleSignIn) return;
+  // Mount prefix (e.g. /insure-quest when served under a Route); '' when served from root
+  var BASE = window.location.pathname.replace(/\\/[^\\/]*$/, '');
 
   function redirect() {
-    window.location.href = '/api/auth/google/start?return=/';
+    window.location.href = BASE + '/api/auth/google/start?return=/';
   }
 
   // True native FedCM flow (Active / Button Mode)
@@ -20,7 +22,7 @@ const JS_SETUP := """
     }
 
     // 1. First fetch secure nonce from server
-    var nonceRes = await fetch('/api/auth/google/nonce', { credentials: 'same-origin' });
+    var nonceRes = await fetch(BASE + '/api/auth/google/nonce', { credentials: 'same-origin' });
     if (!nonceRes.ok) throw new Error('nonce_fetch_failed');
     var nonceData = await nonceRes.json();
     var nonce = nonceData.nonce;
@@ -76,7 +78,7 @@ const JS_SETUP := """
     }
 
     // 4. Submit ID Token to backend for verification and write session cookie
-    var authRes = await fetch('/api/auth/google/credential', {
+    var authRes = await fetch(BASE + '/api/auth/google/credential', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -131,6 +133,6 @@ func sign_in() -> void:
 func sign_in_redirect() -> void:
 	var login_url: String = Net.base_url + "/api/auth/google/start?return=/"
 	if OS.has_feature("web"):
-		JavaScriptBridge.eval("window.location.href=%s" % JSON.stringify("/api/auth/google/start?return=/"), true)
+		JavaScriptBridge.eval("window.location.href=%s" % JSON.stringify(Net.base_url + "/api/auth/google/start?return=/"), true)
 	else:
 		OS.shell_open(login_url)
