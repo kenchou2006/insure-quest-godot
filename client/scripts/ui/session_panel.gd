@@ -41,6 +41,8 @@ var _hint_used_this_session: bool = false
 
 # Spectator auto-follow state
 var _last_manual_scroll_time: float = -999.0
+var _scroll_step_key := ""
+var _follow_hold_until: float = 0.0
 var _scroll_tween: Tween = null
 var _prev_observed_for_spectator: int = -1
 var _prev_cards_count_for_spectator: int = -1
@@ -277,10 +279,24 @@ func _on_scroll_input(event: InputEvent) -> void:
 				_scroll_tween = null
 
 
+func _scroll_to_top_after_layout() -> void:
+	if _scroll == null or Engine.is_editor_hint() or not is_inside_tree():
+		return
+	# Content is rebuilt in this refresh; reset after layout so the new step's height does not keep the old offset
+	await get_tree().process_frame
+	if _scroll_tween != null and _scroll_tween.is_valid():
+		_scroll_tween.kill()
+	if _scroll != null and is_instance_valid(_scroll):
+		_scroll.scroll_vertical = 0
+
+
 func _auto_follow_deferred(target: Control) -> void:
 	if _actor or target == null or Engine.is_editor_hint():
 		return
 	await get_tree().process_frame
+	var hold: float = _follow_hold_until - Time.get_ticks_msec() / 1000.0
+	if hold > 0.0:
+		await get_tree().create_timer(hold).timeout
 	if not is_instance_valid(target) or not target.is_inside_tree() or _scroll == null:
 		return
 	var now: float = Time.get_ticks_msec() / 1000.0
@@ -451,6 +467,12 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 			_pred_strip_container.visible = false
 		if _scroll != null:
 			_scroll.set_deferred("scroll_vertical", 0)
+	# New step (線索 → 方案 → 異議 → 結果): start at the top; spectators see the top briefly before auto-follow resumes
+	var step_key: String = _sess_prev_id + "/" + str(sess.get("step", ""))
+	if step_key != _scroll_step_key:
+		_scroll_step_key = step_key
+		_follow_hold_until = Time.get_ticks_msec() / 1000.0 + 1.2
+		_scroll_to_top_after_layout()
 	if sess.get("hint") != null:
 		_waiting_hint = false
 
@@ -1843,6 +1865,8 @@ func _card_names(ids: Array) -> String:
 # ───────── ④ Results and Stress Test ─────────
 
 func _build_result() -> void:
+	if _actor and not Engine.is_editor_hint():
+		Tutorial.record_game()
 	var r: Dictionary = _sess.get("result", {})
 	var result_key: String = "%s_%s_%s" % [str(_sess.get("client", {}).get("id", "")), str(r.get("score", "")), str(r.get("signed", ""))]
 	var is_signed: bool = bool(r.get("signed", false))

@@ -51,6 +51,8 @@ var _ping_at := 0.0
 var _hello_sent := false
 var _local := false
 var _local_connected_emitted := false
+var _game_id := ""
+var _local_game_count := 0
 
 
 func _ready() -> void:
@@ -372,12 +374,17 @@ func get_ai_remaining() -> int:
 
 # ───────── WebSocket ─────────
 
+func get_game_id() -> String:
+	return _game_id if _game_id != "" else room_code
+
+
 func join(code: String, resume_seat := false) -> void:
 	# leave() clears the solo flag; preserve it so solo practice is not remembered as a resumable room
 	var solo := is_solo
 	leave(false)
 	is_solo = solo
 	room_code = code.strip_edges().to_upper()
+	_game_id = room_code
 	player_id = str(saved_seat.get("playerId", "")) if resume_seat and str(saved_seat.get("room", "")) == room_code else ""
 	state = {}
 	_want_connected = true
@@ -391,6 +398,8 @@ func join_local() -> void:
 	_local = true
 	_local_connected_emitted = false
 	room_code = "LOCAL"
+	_local_game_count += 1
+	_game_id = "LOCAL_%d_%d" % [int(Time.get_unix_time_from_system()), _local_game_count]
 	player_id = ""
 	state = {}
 	if OS.has_feature("web") and not Engine.is_editor_hint():
@@ -423,6 +432,7 @@ func leave(forget_seat := true) -> void:
 	_ws = null
 	_was_open = false
 	room_code = ""
+	_game_id = ""
 	is_solo = false
 	state = {}
 

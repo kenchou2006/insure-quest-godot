@@ -17,6 +17,7 @@ var _streamed_letter_texts: Dictionary = {}
 
 
 func _ready() -> void:
+	Tutorial.record_game()
 	var m := MarginContainer.new()
 	m.set_anchors_preset(Control.PRESET_FULL_RECT)
 	var pad: int = 12 if UI.is_phone_portrait() else (16 if UI.is_portrait() else 32)

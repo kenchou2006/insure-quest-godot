@@ -826,9 +826,7 @@ func refresh(s: Dictionary) -> void:
 			h.add_child(av_round)
 		else:
 			h.add_child(UI.label("●", 16, p_col))
-		var nm: String = str(p.get("name", "")) + ("（你）" if str(p.get("id", "")) == Net.player_id else "")
-		if bool(p.get("loggedIn", false)):
-			nm += " [會員]"
+		var nm: String = str(p.get("name", "")) + (" (你)" if str(p.get("id", "")) == Net.player_id else "")
 		h.add_child(UI.label(nm, 15, UI.TEXT))
 		var streak: int = int(p.get("complianceStreak", 0))
 		if streak >= 2:

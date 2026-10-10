@@ -285,6 +285,7 @@ func _on_state(state: Dictionary) -> void:
 				g.main = self
 				_set_screen("game", g)
 		"ended":
+			Tutorial.record_game()
 			if _screen_kind != "report":
 				var r := ReportScreen.new()
 				r.main = self

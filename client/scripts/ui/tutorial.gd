@@ -65,6 +65,40 @@ static func mark_step_done(step_id: String) -> void:
 	cfg.save(CFG_PATH)
 
 
+static func get_local_games() -> int:
+	if Engine.is_editor_hint():
+		return 0
+	var cfg := ConfigFile.new()
+	var err := cfg.load(CFG_PATH)
+	if err != OK:
+		return 0
+	return int(cfg.get_value("progress", "local_games", 0))
+
+
+static func record_game(game_id: String = "") -> void:
+	if Engine.is_editor_hint() or is_automation_mode():
+		return
+	if game_id == "" and Net != null:
+		if Net.has_method("get_game_id"):
+			game_id = str(Net.get_game_id())
+		elif Net.room_code != "":
+			game_id = str(Net.room_code)
+	var cfg := ConfigFile.new()
+	cfg.load(CFG_PATH)
+	if game_id != "":
+		var last_id: String = str(cfg.get_value("progress", "last_game_id", ""))
+		if last_id == game_id:
+			return
+		cfg.set_value("progress", "last_game_id", game_id)
+	var games: int = int(cfg.get_value("progress", "local_games", 0))
+	cfg.set_value("progress", "local_games", games + 1)
+	cfg.save(CFG_PATH)
+
+
+static func record_local_game(game_id: String = "") -> void:
+	record_game(game_id)
+
+
 static func reset_all() -> void:
 	if Engine.is_editor_hint():
 		return
@@ -86,6 +120,8 @@ static func should_show(step_id: String, is_actor: bool) -> bool:
 		return false
 	if is_forced():
 		return true
+	if get_local_games() > 0:
+		return false
 	if Net != null and Net.is_logged_in():
 		var lvl: Dictionary = Net.get_level()
 		if lvl.is_empty():
@@ -93,6 +129,7 @@ static func should_show(step_id: String, is_actor: bool) -> bool:
 		if int(lvl.get("games", 0)) > 0:
 			return false
 	return true
+
 
 
 static func show_spotlight(parent: Control, target: Control, step_id: String, text: String, on_dismiss: Callable = Callable()) -> Tutorial:

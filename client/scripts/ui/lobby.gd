@@ -148,7 +148,7 @@ func refresh(s: Dictionary) -> void:
 		elif str(p.get("id", "")) == str(s.get("hostId", "")):
 			tag_str = "房主"
 		if str(p.get("id", "")) == Net.player_id:
-			tag_str = (tag_str + "（你）") if tag_str != "" else "（你）"
+			tag_str = (tag_str + " (你)") if tag_str != "" else "(你)"
 
 		var p_name_lbl := UI.label(str(p.get("name", "")), 18, UI.TEXT)
 		p_name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -157,7 +157,7 @@ func refresh(s: Dictionary) -> void:
 		h.add_child(p_name_lbl)
 
 		if tag_str != "":
-			var tag_p := UI.panel(Color("#143547"), 6, 4)
+			var tag_p := UI.panel(UI.PANEL, 8, 10)
 			tag_p.size_flags_horizontal = Control.SIZE_SHRINK_END
 			var tag_col: Color = UI.GOLD if "房主" in tag_str else (UI.ACCENT_2 if "你" in tag_str else UI.MUTED)
 			var tag_lbl := UI.label(tag_str, 12, tag_col)
