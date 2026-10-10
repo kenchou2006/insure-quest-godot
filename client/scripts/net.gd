@@ -12,6 +12,8 @@ signal quota_changed(used: int, limit: int, exhausted: bool)
 signal auth_changed()
 ## Streaming fragment of client response during interview (currently accumulated text)
 signal stream_text(text: String)
+## Stream client answer finished (coach tip may still be generating)
+signal stream_answer_done()
 ## The room no longer exists (host left, abandoned, or voided); the client should go back to the menu.
 signal room_closed(message: String)
 
@@ -570,6 +572,8 @@ func _handle(text: String) -> void:
 			reaction.emit(str(m.get("from", "")), str(m.get("emoji", "")))
 		"stream":
 			stream_text.emit(str(m.get("text", "")))
+			if bool(m.get("answerDone", false)):
+				stream_answer_done.emit()
 		"quota":
 			var used: int = int(m.get("used", 0))
 			var limit: int = int(m.get("limit", 50))

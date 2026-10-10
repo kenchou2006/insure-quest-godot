@@ -78,8 +78,30 @@ func _build_ui() -> void:
 	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	img.set_anchors_preset(Control.PRESET_FULL_RECT)
-	img.modulate = Color(1, 1, 1, 0.55)
 	art.add_child(img)
+
+	# Left/bottom gradient overlay to ensure text readability while letting morning light shine
+	var grad_rect := TextureRect.new()
+	grad_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	grad_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var grad := Gradient.new()
+	var grad_tex := GradientTexture2D.new()
+	if portrait:
+		grad.set_color(0, Color(0.05, 0.14, 0.12, 0.82))
+		grad.set_color(1, Color(0.05, 0.14, 0.12, 0.35))
+		grad_tex.fill_from = Vector2(0.5, 1.0)
+		grad_tex.fill_to = Vector2(0.5, 0.0)
+	else:
+		# Title text sits bottom-left: darken only the lower part so the morning light stays bright
+		grad.set_color(0, Color(0.05, 0.14, 0.12, 0.85))
+		grad.set_color(1, Color(0.05, 0.14, 0.12, 0.0))
+		grad_tex.fill_from = Vector2(0.5, 1.0)
+		grad_tex.fill_to = Vector2(0.5, 0.45)
+	grad_tex.gradient = grad
+	grad_tex.fill = GradientTexture2D.FILL_LINEAR
+	grad_rect.texture = grad_tex
+	grad_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.add_child(grad_rect)
 
 	var title_box := UI.vbox(3 if UI.is_phone_portrait() else (4 if portrait else 6))
 	if portrait:
@@ -91,7 +113,7 @@ func _build_ui() -> void:
 			margin.add_theme_constant_override("margin_" + s, 12 if UI.is_phone_portrait() else 16)
 		margin.add_child(title_box)
 		art.add_child(margin)
-		title_box.add_child(UI.label("INSURE QUEST", 30 if UI.is_phone_portrait() else 36, UI.ACCENT_2))
+		title_box.add_child(UI.label("INSURE QUEST", 30 if UI.is_phone_portrait() else 36, UI.GOLD))
 		title_box.add_child(UI.label("人生顧問局", 22 if UI.is_phone_portrait() else 26, UI.TEXT))
 		title_box.add_child(UI.label("擲骰走過客戶的人生，練習用需求而不是商品說服人。", 13 if UI.is_phone_portrait() else 14, UI.MUTED, true))
 	else:
@@ -117,7 +139,7 @@ func _build_ui() -> void:
 		var desc1_fs: int = 13 if is_phone_land else 18
 		var desc2_fs: int = 11 if is_phone_land else 14
 
-		title_box.add_child(UI.label("INSURE QUEST", title_fs, UI.ACCENT_2))
+		title_box.add_child(UI.label("INSURE QUEST", title_fs, UI.GOLD))
 		title_box.add_child(UI.label("人生顧問局", sub_fs, UI.TEXT))
 		title_box.add_child(UI.label("擲骰走過客戶的人生，練習用需求而不是商品說服人。", desc1_fs, UI.MUTED, true))
 		title_box.add_child(UI.label("法國巴黎人壽 Cardif InsurHack｜1-1 保險大富翁・銷售與通路賦能", desc2_fs, UI.MUTED, true))
@@ -214,7 +236,7 @@ func _build_ui() -> void:
 
 	v.add_child(HSeparator.new())
 	var row := UI.hbox(8)
-	row.add_child(UI.button("遊戲說明", func(): _howto.visible = true, 15, UI.PANEL_2))
+	row.add_child(UI.button("遊戲說明", func(): _open_howto(), 15, UI.PANEL_2))
 	row.add_child(UI.button("培訓紀錄", func(): _save(); main.show_records(), 15, UI.PANEL_2))
 	var sound_btn: Button = UI.button("音效：關" if Sound.is_muted() else "音效：開", Callable(), 15, UI.PANEL_2)
 	sound_btn.pressed.connect(func():
@@ -452,6 +474,27 @@ func _join() -> void:
 	main.join_room(c)
 
 
+func _open_howto() -> void:
+	if _howto == null:
+		return
+	_howto.visible = true
+	if _howto.get_child_count() > 0:
+		var p = _howto.get_child(0)
+		if p is Control:
+			UI.pop_in(p, 0.22)
+
+
+func _close_howto() -> void:
+	if _howto == null:
+		return
+	if _howto.get_child_count() > 0:
+		var p = _howto.get_child(0)
+		if p is Control:
+			UI.pop_out(p, func(): if is_instance_valid(_howto): _howto.visible = false, 0.18)
+			return
+	_howto.visible = false
+
+
 func _build_howto() -> Control:
 	var portrait: bool = UI.is_portrait()
 	var dim := ColorRect.new()
@@ -476,7 +519,7 @@ func _build_howto() -> Control:
 	head.add_child(UI.spacer())
 	var page_lbl := UI.label("1 / 6", 14, UI.MUTED)
 	head.add_child(page_lbl)
-	var close_btn := UI.button("×", func(): dim.visible = false, 16, UI.PANEL_2)
+	var close_btn := UI.button("×", func(): _close_howto(), 16, UI.PANEL_2)
 	close_btn.custom_minimum_size = Vector2(32, 32)
 	head.add_child(close_btn)
 	v.add_child(head)
@@ -571,7 +614,7 @@ func _build_howto() -> Control:
 	nav.add_child(UI.spacer())
 	next_btn = UI.button("下一步 ▶", func():
 		if int(current_step[0]) >= steps_data.size() - 1:
-			dim.visible = false
+			_close_howto()
 		else:
 			update_page.call(int(current_step[0]) + 1)
 	, 14, UI.ACCENT)

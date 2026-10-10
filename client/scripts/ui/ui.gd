@@ -2,26 +2,26 @@
 class_name UI
 ## UI utilities: color palette, theme, and factory functions for common components. All screens are constructed in code for team maintainability and review.
 
-const BG := Color("#0b1f2a")
-const PANEL := Color("#13303f")
-const PANEL_2 := Color("#1b4052")
-const ACCENT := Color("#00a36c")
-const ACCENT_2 := Color("#2fd197")
-const GOLD := Color("#f2c14e")
-const TEXT := Color("#eef6f3")
-const MUTED := Color("#9fb8c2")
+const BG := Color("#0d231e")
+const PANEL := Color("#14352d")
+const PANEL_2 := Color("#1a4239")
+const ACCENT := Color("#00875a")
+const ACCENT_2 := Color("#2ed59e")
+const GOLD := Color("#e5a93c")
+const TEXT := Color("#f4fbf7")
+const MUTED := Color("#9ebdb3")
 const GOOD := Color("#3ddc97")
-const OK := Color("#f2c14e")
-const BAD := Color("#ff6b6b")
-const INFO := Color("#8ecae6")
+const OK := Color("#e5a93c")
+const BAD := Color("#e63946")
+const INFO := Color("#8fd3c7")
 
 const PLAYER_COLORS := [Color("#3ddc97"), Color("#f2a541"), Color("#7aa2ff"), Color("#ff6bb5")]
 
 const METRIC_NAMES := {"trust": "客戶信任", "insight": "需求洞察", "fit": "方案適配", "risk": "風險管理", "compliance": "合規表達"}
 const RES_NAMES := {"cash": "緊急預備", "protect": "風險保障", "growth": "目標成長"}
 const TILE_COLORS := {
-	"start": Color("#f2c14e"), "client": Color("#00a36c"), "life": Color("#e76f51"), "market": Color("#7aa2ff"),
-	"training": Color("#9d7bea"), "referral": Color("#2fd197"), "audit": Color("#ff6b6b"), "seminar": Color("#8ecae6"),
+	"start": Color("#e5a93c"), "client": Color("#00875a"), "life": Color("#e07a5f"), "market": Color("#4ea8de"),
+	"training": Color("#9b72cf"), "referral": Color("#2ed59e"), "audit": Color("#e63946"), "seminar": Color("#8fd3c7"),
 }
 const TILE_ICONS := {
 	"start": "★", "client": "◎", "life": "✚", "market": "↗", "training": "✓", "referral": "♥", "audit": "⚠", "seminar": "◇",
@@ -86,7 +86,7 @@ static func tone_color(tone: String) -> Color:
 	return INFO
 
 
-static func box(color: Color, radius := 14, border := Color(0, 0, 0, 0), pad := 14, shadow := true) -> StyleBoxFlat:
+static func box(color: Color, radius := 14, border := Color(-1, -1, -1, -1), pad := 14, shadow := true) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = color
 	s.set_corner_radius_all(radius)
@@ -95,12 +95,63 @@ static func box(color: Color, radius := 14, border := Color(0, 0, 0, 0), pad := 
 	s.content_margin_top = pad * 0.75
 	s.content_margin_bottom = pad * 0.75
 	if shadow:
-		s.shadow_color = Color(0, 0, 0, 0.22)
-		s.shadow_size = 4
-		s.shadow_offset = Vector2(0, 2)
-	if border.a > 0:
+		s.shadow_color = Color(0, 0, 0, 0.35)
+		s.shadow_size = 6
+		s.shadow_offset = Vector2(0, 3)
+	if border == Color(-1, -1, -1, -1):
+		s.set_border_width_all(1)
+		s.border_color = Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.25)
+	elif border.a > 0:
 		s.set_border_width_all(2)
 		s.border_color = border
+	return s
+
+
+static func button_stylebox(base_color: Color, state: String, radius := 10, pad := 12) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	var pad_top: float = pad * 0.75
+	var pad_bottom: float = pad * 0.75
+	var bg_col: Color = base_color
+	var border_top_col: Color = Color(0, 0, 0, 0)
+	var border_top_w: int = 0
+
+	match state:
+		"hover":
+			bg_col = base_color.lightened(0.08)
+			border_top_w = 1
+			border_top_col = bg_col.lightened(0.3)
+		"pressed":
+			bg_col = base_color.darkened(0.12)
+			pad_top += 2.0
+			pad_bottom -= 2.0
+			border_top_w = 0
+		"disabled":
+			bg_col = base_color
+			bg_col.s *= 0.5
+			bg_col = bg_col.darkened(0.2)
+			border_top_w = 0
+		"focus":
+			bg_col = Color(0, 0, 0, 0)
+			s.set_border_width_all(2)
+			s.border_color = Color(1, 1, 1, 0.6)
+		_: # "normal"
+			bg_col = base_color
+			border_top_w = 1
+			border_top_col = base_color.lightened(0.25)
+
+	s.bg_color = bg_col
+	s.set_corner_radius_all(radius)
+	s.content_margin_left = pad
+	s.content_margin_right = pad
+	s.content_margin_top = pad_top
+	s.content_margin_bottom = pad_bottom
+	if border_top_w > 0:
+		s.border_width_top = border_top_w
+		s.border_color = border_top_col
+
+	s.shadow_color = Color(0, 0, 0, 0.25)
+	s.shadow_size = 4
+	s.shadow_offset = Vector2(0, 2)
 	return s
 
 
@@ -111,29 +162,21 @@ static func make_theme() -> Theme:
 	t.set_color("font_color", "Label", TEXT)
 	t.set_color("default_color", "RichTextLabel", TEXT)
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-		var c := ACCENT
-		match state:
-			"hover": c = ACCENT_2
-			"pressed": c = ACCENT.darkened(0.2)
-			"disabled": c = Color("#3a5563")
-		var sb := box(c, 10, Color(0, 0, 0, 0), 12)
-		if state == "focus":
-			sb = box(Color(0, 0, 0, 0), 10, Color(1, 1, 1, 0.6), 12)
-		t.set_stylebox(state, "Button", sb)
+		t.set_stylebox(state, "Button", button_stylebox(ACCENT, state, 10, 12))
 	t.set_color("font_color", "Button", Color.WHITE)
 	t.set_color("font_hover_color", "Button", Color.WHITE)
 	t.set_color("font_pressed_color", "Button", Color.WHITE)
-	t.set_color("font_disabled_color", "Button", Color("#9fb8c2"))
+	t.set_color("font_disabled_color", "Button", MUTED)
 	var input_fs := fs(16)
 	t.set_font_size("font_size", "LineEdit", input_fs)
 	t.set_font_size("font_size", "OptionButton", input_fs)
 	t.set_font_size("font_size", "TextEdit", input_fs)
 	t.set_font_size("font_size", "PopupMenu", input_fs)
-	t.set_stylebox("normal", "LineEdit", box(Color("#0e2633"), 10, Color("#2d5a6e"), 10))
-	t.set_stylebox("focus", "LineEdit", box(Color("#0e2633"), 10, ACCENT_2, 10))
+	t.set_stylebox("normal", "LineEdit", box(Color("#0d231e"), 10, Color("#26594a"), 10))
+	t.set_stylebox("focus", "LineEdit", box(Color("#0d231e"), 10, ACCENT_2, 10))
 	t.set_color("font_color", "LineEdit", TEXT)
 	t.set_color("font_placeholder_color", "LineEdit", MUTED)
-	t.set_stylebox("background", "ProgressBar", box(Color("#0e2633"), 6, Color(0, 0, 0, 0), 0))
+	t.set_stylebox("background", "ProgressBar", box(Color("#0d231e"), 6, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("fill", "ProgressBar", box(ACCENT_2, 6, Color(0, 0, 0, 0), 0))
 	t.set_stylebox("panel", "PopupMenu", box(PANEL_2))
 	t.set_stylebox("normal", "OptionButton", box(PANEL_2, 10, Color(0, 0, 0, 0), 12))
@@ -141,7 +184,7 @@ static func make_theme() -> Theme:
 	t.set_stylebox("normal", "SpinBox", box(PANEL_2))
 	# VScrollBar custom style (12px width, high-contrast visibility protection, including hover and pressed states)
 	var sb_scroll := StyleBoxFlat.new()
-	sb_scroll.bg_color = Color("#0b1f2b", 0.85)
+	sb_scroll.bg_color = Color("#0d231e", 0.85)
 	sb_scroll.set_corner_radius_all(6)
 	sb_scroll.content_margin_left = 5
 	sb_scroll.content_margin_right = 5
@@ -149,7 +192,7 @@ static func make_theme() -> Theme:
 	sb_scroll.content_margin_bottom = 4
 
 	var sb_grabber := StyleBoxFlat.new()
-	sb_grabber.bg_color = Color("#2d6a88")
+	sb_grabber.bg_color = Color("#26594a")
 	sb_grabber.set_corner_radius_all(5)
 	sb_grabber.content_margin_left = 5
 	sb_grabber.content_margin_right = 5
@@ -157,7 +200,7 @@ static func make_theme() -> Theme:
 	sb_grabber.content_margin_bottom = 8
 
 	var sb_grabber_hl := StyleBoxFlat.new()
-	sb_grabber_hl.bg_color = Color("#3da8d5")
+	sb_grabber_hl.bg_color = Color("#2ed59e")
 	sb_grabber_hl.set_corner_radius_all(5)
 	sb_grabber_hl.content_margin_left = 5
 	sb_grabber_hl.content_margin_right = 5
@@ -218,10 +261,8 @@ static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> B
 	var b := Button.new()
 	b.text = glue(text)
 	b.add_theme_font_size_override("font_size", fs(size))
-	if color != ACCENT:
-		b.add_theme_stylebox_override("normal", box(color, 10, Color(0, 0, 0, 0), 12))
-		b.add_theme_stylebox_override("hover", box(color.lightened(0.12), 10, Color(0, 0, 0, 0), 12))
-		b.add_theme_stylebox_override("pressed", box(color.darkened(0.2), 10, Color(0, 0, 0, 0), 12))
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		b.add_theme_stylebox_override(state, button_stylebox(color, state, 10, 12))
 	b.pressed.connect(func():
 		Sound.play("click", b)
 		cb.call()
@@ -238,10 +279,15 @@ static func option_button(text: String, cb: Callable, color := PANEL_2) -> Butto
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.custom_minimum_size = Vector2(0, 48)
 	b.add_theme_font_size_override("font_size", fs(15))
-	b.add_theme_stylebox_override("normal", box(color, 10, Color("#2d5a6e"), 12))
-	b.add_theme_stylebox_override("hover", box(color.lightened(0.1), 10, ACCENT_2, 12))
-	b.add_theme_stylebox_override("pressed", box(color.darkened(0.1), 10, ACCENT_2, 12))
-	b.add_theme_stylebox_override("disabled", box(color.darkened(0.25), 10, Color(0, 0, 0, 0), 12))
+	for state in ["normal", "hover", "pressed", "disabled"]:
+		var sb := button_stylebox(color, state, 10, 12)
+		if state == "normal":
+			sb.set_border_width_all(1)
+			sb.border_color = Color("#26594a")
+		elif state == "hover" or state == "pressed":
+			sb.set_border_width_all(1)
+			sb.border_color = ACCENT_2
+		b.add_theme_stylebox_override(state, sb)
 	b.pressed.connect(func():
 		Sound.play("click", b)
 		cb.call()
@@ -249,18 +295,58 @@ static func option_button(text: String, cb: Callable, color := PANEL_2) -> Butto
 	return b
 
 
+static func is_animation_disabled() -> bool:
+	if Engine.is_editor_hint():
+		return true
+	if OS.has_feature("web"):
+		var res = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('automation') === '1'", true)
+		if bool(res):
+			return true
+	return false
+
+
 ## Pop-in animation effect
-static func pop_in(node: CanvasItem, duration := 0.25) -> void:
+static func pop_in(node: CanvasItem, duration := 0.22) -> void:
+	if is_animation_disabled():
+		node.modulate.a = 1.0
+		node.scale = Vector2.ONE
+		return
 	node.modulate.a = 0.0
-	node.scale = Vector2(0.95, 0.95)
-	node.pivot_offset = node.size * 0.5
+	node.scale = Vector2(0.96, 0.96)
+	if node is Control:
+		var c := node as Control
+		var sz: Vector2 = c.size if c.size.x > 0 and c.size.y > 0 else c.get_combined_minimum_size()
+		c.pivot_offset = sz * 0.5
+		if not c.resized.is_connected(func(): if is_instance_valid(c): c.pivot_offset = c.size * 0.5):
+			c.resized.connect(func(): if is_instance_valid(c): c.pivot_offset = c.size * 0.5, CONNECT_ONE_SHOT)
 	var tw: Tween = node.create_tween().set_parallel(true)
 	tw.tween_property(node, "modulate:a", 1.0, duration)
-	tw.tween_property(node, "scale", Vector2.ONE, duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(node, "scale", Vector2.ONE, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+
+## Pop-out animation effect (fade-out on close)
+static func pop_out(node: CanvasItem, on_done := Callable(), duration := 0.18) -> void:
+	if is_animation_disabled():
+		if on_done.is_valid():
+			on_done.call()
+		return
+	if node is Control:
+		var c := node as Control
+		c.pivot_offset = c.size * 0.5
+	var tw: Tween = node.create_tween().set_parallel(true)
+	tw.tween_property(node, "modulate:a", 0.0, duration)
+	tw.tween_property(node, "scale", Vector2(0.96, 0.96), duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.chain().tween_callback(func():
+		if on_done.is_valid():
+			on_done.call()
+	)
 
 
 ## Fade-in float-up animation
 static func fade_in(node: CanvasItem, duration := 0.25, offset_y := 16.0) -> void:
+	if is_animation_disabled():
+		node.modulate.a = 1.0
+		return
 	node.modulate.a = 0.0
 	# Container child positions are managed by container; tweening position writes stale coords, causing overlap with elements above
 	if node.get_parent() is Container:
@@ -273,9 +359,30 @@ static func fade_in(node: CanvasItem, duration := 0.25, offset_y := 16.0) -> voi
 	tw.tween_property(node, "position:y", orig_y, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 
-static func panel(color := PANEL, radius := 14, pad := 14) -> PanelContainer:
+static func chip_box(bg_color: Color, border := Color(0, 0, 0, 0), radius := 6, pad_x := 10, pad_y := 4) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = bg_color
+	s.set_corner_radius_all(radius)
+	s.content_margin_left = pad_x
+	s.content_margin_right = pad_x
+	s.content_margin_top = pad_y
+	s.content_margin_bottom = pad_y
+	if border.a > 0:
+		s.set_border_width_all(1)
+		s.border_color = border
+	return s
+
+
+static func chip(bg_color: Color, border := Color(0, 0, 0, 0), radius := 6, pad_x := 10, pad_y := 4) -> PanelContainer:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", box(color, radius, Color(0, 0, 0, 0), pad))
+	p.add_theme_stylebox_override("panel", chip_box(bg_color, border, radius, pad_x, pad_y))
+	p.mouse_filter = Control.MOUSE_FILTER_PASS
+	return p
+
+
+static func panel(color := PANEL, radius := 14, pad := 14, border := Color(-1, -1, -1, -1)) -> PanelContainer:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", box(color, radius, border, pad))
 	# Allow mouse wheel to pass through card to outer ScrollContainer for scrolling
 	p.mouse_filter = Control.MOUSE_FILTER_PASS
 	return p
@@ -324,14 +431,20 @@ static func metric_row(key: String, value: float) -> HBoxContainer:
 	return h
 
 
-static func scroll(child: Control) -> ScrollContainer:
+static func scroll(child: Control, right_margin := 12) -> ScrollContainer:
 	var s := ScrollContainer.new()
 	s.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	s.mouse_filter = Control.MOUSE_FILTER_PASS
 	s.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var m := MarginContainer.new()
+	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	m.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	m.mouse_filter = Control.MOUSE_FILTER_PASS
+	m.add_theme_constant_override("margin_right", right_margin)
 	child.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	s.add_child(child)
+	m.add_child(child)
+	s.add_child(m)
 	return s
 
 
@@ -420,27 +533,110 @@ void fragment() {
 	COLOR = c;
 }
 """
+
+const ROUNDED_RECT_SHADER := """
+shader_type canvas_item;
+uniform float radius_ratio = 0.16;
+void fragment() {
+	vec4 c = texture(TEXTURE, UV);
+	vec2 d = abs(UV - vec2(0.5)) - vec2(0.5 - radius_ratio);
+	if (d.x > 0.0 && d.y > 0.0) {
+		float dist = length(d);
+		c.a *= 1.0 - smoothstep(radius_ratio - 0.02, radius_ratio, dist);
+	}
+	COLOR = c;
+}
+"""
+
 static var _circle_mat: ShaderMaterial = null
+static var _rounded_mat: ShaderMaterial = null
+
+static func get_circle_material() -> ShaderMaterial:
+	if _circle_mat == null:
+		var sh := Shader.new()
+		sh.code = CIRCLE_SHADER
+		_circle_mat = ShaderMaterial.new()
+		_circle_mat.shader = sh
+	return _circle_mat
+
+static func get_rounded_material(radius_ratio := 0.16) -> ShaderMaterial:
+	if _rounded_mat == null:
+		var sh := Shader.new()
+		sh.code = ROUNDED_RECT_SHADER
+		_rounded_mat = ShaderMaterial.new()
+		_rounded_mat.shader = sh
+		_rounded_mat.set_shader_parameter("radius_ratio", radius_ratio)
+	return _rounded_mat
+
+
+## Portrait image drawn as a cover-cropped rounded rect (or circle) with the frame drawn on top,
+## so the picture always fills the border exactly (shader masks drift with KEEP_ASPECT_COVERED).
+class RoundTex extends Control:
+	var tex: Texture2D
+	var radius := -1.0 ## < 0 = circle
+	var border_color := Color(0, 0, 0, 0)
+	var border_width := 0.0
+
+	func _init(t: Texture2D, sz: Vector2, r := -1.0, bc := Color(0, 0, 0, 0), bw := 0.0) -> void:
+		tex = t
+		radius = r
+		border_color = bc
+		border_width = bw
+		custom_minimum_size = sz
+		size = sz
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		resized.connect(queue_redraw)
+
+	func _corner_r() -> float:
+		var m: float = minf(size.x, size.y) * 0.5
+		return m if radius < 0.0 else minf(radius, m)
+
+	func _draw() -> void:
+		if tex == null or size.x <= 0.0 or size.y <= 0.0:
+			return
+		var r := _corner_r()
+		# Rounded-rect outline, 8 segments per corner
+		var pts := PackedVector2Array()
+		var centers := [Vector2(size.x - r, r), Vector2(size.x - r, size.y - r), Vector2(r, size.y - r), Vector2(r, r)]
+		for ci in range(4):
+			for k in range(9):
+				var a: float = (-PI / 2.0) + (ci + k / 8.0) * (PI / 2.0)
+				pts.append(centers[ci] + Vector2(cos(a), sin(a)) * r)
+		# Cover crop: map rect into the centred sub-region of the texture
+		var ts := tex.get_size()
+		var frac := Vector2.ONE
+		var ta: float = ts.x / maxf(ts.y, 1.0)
+		var ra: float = size.x / size.y
+		if ta > ra:
+			frac.x = ra / ta
+		else:
+			frac.y = ta / ra
+		var off := (Vector2.ONE - frac) * 0.5
+		var uvs := PackedVector2Array()
+		for pt in pts:
+			uvs.append(off + Vector2(pt.x / size.x, pt.y / size.y) * frac)
+		draw_polygon(pts, PackedColorArray([Color.WHITE]), uvs, tex)
+		# Frame on top hides the polygon's aliased edge
+		var sb := StyleBoxFlat.new()
+		sb.draw_center = false
+		sb.set_corner_radius_all(int(r))
+		sb.anti_aliasing = true
+		var bw: float = border_width if border_width > 0.0 else 1.0
+		sb.set_border_width_all(int(ceilf(bw)))
+		sb.border_color = border_color if border_width > 0.0 else Color(PANEL_2.r, PANEL_2.g, PANEL_2.b, 0.9)
+		draw_style_box(sb, Rect2(Vector2.ZERO, size))
 
 ## Circular avatar: crops image to circle if present, otherwise displays first character of name
 static func avatar(tex: Texture2D, name_text: String, size := 40) -> Control:
 	if tex != null:
-		if _circle_mat == null:
-			var sh := Shader.new()
-			sh.code = CIRCLE_SHADER
-			_circle_mat = ShaderMaterial.new()
-			_circle_mat.shader = sh
-		var tr := TextureRect.new()
-		tr.texture = tex
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_SCALE
-		tr.custom_minimum_size = Vector2(size, size)
-		tr.material = _circle_mat
-		tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		tr.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		return tr
+		return RoundTex.new(tex, Vector2(size, size))
 	var av := panel(ACCENT, int(size / 2.0), 0)
 	av.custom_minimum_size = Vector2(size, size)
+	av.size = Vector2(size, size)
+	av.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	av.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	var l := label(name_text.substr(0, 1), int(size * 0.45), Color.WHITE)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -451,20 +647,7 @@ static func avatar(tex: Texture2D, name_text: String, size := 40) -> Control:
 static func portrait(client: Dictionary, size := 96) -> Control:
 	var path := client_scene_path(client)
 	if path != "":
-		var clip_box := PanelContainer.new()
-		clip_box.clip_contents = true
-		clip_box.custom_minimum_size = Vector2(size * 1.35, size)
-		clip_box.add_theme_stylebox_override("panel", box(Color("#10232e"), 10, Color("#1e475b"), 2))
-		var tr := TextureRect.new()
-		tr.texture = load(path)
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		tr.set_anchors_preset(Control.PRESET_FULL_RECT)
-		clip_box.add_child(tr)
-		# In horizontal layouts default stretches to full row height (longer bubble = longer avatar): fixed size, top-aligned
-		clip_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-		clip_box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		return clip_box
+		return RoundTex.new(load(path), Vector2(size * 1.35, size), 10.0, Color("#1a4239"), 2.0)
 	# Clients without illustrations: fallback to surname avatar
 	var p := panel(Color.from_hsv(fmod(str(client.get("name", "?")).hash() / 1000.0, 1.0), 0.45, 0.55), int(size / 2.0), 0)
 	p.custom_minimum_size = Vector2(size, size)
@@ -504,7 +687,7 @@ static func spawn_confetti(parent: Control) -> void:
 	parent.add_child(layer)
 	layer.global_position = parent.global_position
 	layer.size = parent.size
-	var colors: Array = [Color("#f2c14e"), Color("#3ddc97"), Color("#8ecae6"), Color("#ff6bb5"), Color("#ffffff")]
+	var colors: Array = [GOLD, GOOD, INFO, Color("#ff6bb5"), Color("#ffffff")]
 	var longest: float = 0.0
 	for i: int in range(24):
 		var c := ColorRect.new()
@@ -585,8 +768,7 @@ static func letter_card(letter: Dictionary, client_name: String) -> PanelContain
 	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title_lbl)
 
-	var tag_p := panel(Color(accent_col.r, accent_col.g, accent_col.b, 0.15), 6, 4)
-	tag_p.add_theme_stylebox_override("panel", box(Color(accent_col.r, accent_col.g, accent_col.b, 0.15), 6, accent_col, 4, false))
+	var tag_p := chip(Color(accent_col.r, accent_col.g, accent_col.b, 0.15), accent_col, 6, 10, 4)
 	tag_p.add_child(label(tag_text, 12, accent_col))
 	head.add_child(tag_p)
 	v.add_child(head)

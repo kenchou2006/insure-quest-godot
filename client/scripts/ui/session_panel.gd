@@ -23,12 +23,33 @@ static var _last_key: String = ""
 ## Client answer stream: current text and state summary at reception (state change means final answer arrived, stops showing)
 static var _stream_text: String = ""
 static var _stream_key: String = ""
+static var _stream_answer_done: bool = false
+static var _queued_talk: Dictionary = {}
 var _think_label: Label = null
 var _last_result_sound_key: String = ""
 var _prev_asked_len: int = 0
 var _violation_pulse_panel: Panel = null
 var _flashing_hotspots: bool = false
 var _hint_used_this_session: bool = false
+
+# Spectator auto-follow state
+var _last_manual_scroll_time: float = -999.0
+var _scroll_tween: Tween = null
+var _prev_observed_for_spectator: int = -1
+var _prev_cards_count_for_spectator: int = -1
+var _clues_observed: int = 0
+var _clues_control: Control = null
+var _plan_alloc_section: Control = null
+var _plan_cards_section: Control = null
+var _objection_section: Control = null
+var _queued_row: Control = null
+var _pending_row: Control = null
+var _last_client_row: Control = null
+
+# Spectator prediction floating strip
+var _pred_strip_container: MarginContainer = null
+var _pred_strip: PanelContainer = null
+var _pred_strip_shown: bool = false
 
 # Local cache for plan allocation
 var _plan_key: String = ""
@@ -61,23 +82,96 @@ const STANDARD_QUESTIONS := [
 	{"id": "premium", "text": "在預備金、保障和投資之間，你過去是如何分配的？"}
 ]
 
+const CARD_CATEGORY_COLORS := {
+	"medical": Color("#e07a5f"),
+	"income": Color("#e5a93c"),
+	"accident": Color("#e63946"),
+	"tools": Color("#4ea8de"),
+	"legacy": Color("#9b72cf"),
+	"care": Color("#2ed59e"),
+}
+
+const RES_COLORS := {
+	"cash": Color("#e5a93c"),
+	"protect": Color("#2ed59e"),
+	"growth": Color("#4ea8de"),
+}
+
+
+func _client_portrait(c: Dictionary, size: int, is_round: bool = false) -> Control:
+	var cid: String = str(c.get("id", ""))
+	var cname: String = str(c.get("name", "客戶"))
+	var tex: Texture2D = Portraits.get_texture(cid)
+	if tex != null:
+		if is_round:
+			var av := UI.avatar(tex, cname, size)
+			av.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+			return av
+		return UI.RoundTex.new(tex, Vector2(size, size), 12.0, UI.ACCENT, 2.0)
+
+	# Fallback to scene thumbnail, then initial
+	if is_round:
+		var scene_p := UI.client_scene_path(c)
+		var sc_tex: Texture2D = load(scene_p) if scene_p != "" and ResourceLoader.exists(scene_p) else null
+		var av := UI.avatar(sc_tex, cname, size)
+		av.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		return av
+	var p := UI.portrait(c, size)
+	p.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	return p
+
 
 func _ready() -> void:
+	UI.pop_in(self, 0.22)
 	# Interview state doesn't change when server rejects action; proactively dismiss "thinking", otherwise stuck
 	if not Engine.is_editor_hint() and not Net.server_error.is_connected(_on_server_error):
 		Net.server_error.connect(_on_server_error)
 	if not Engine.is_editor_hint() and not Net.stream_text.is_connected(_on_stream_text):
 		Net.stream_text.connect(_on_stream_text)
+	if not Engine.is_editor_hint() and not Net.stream_answer_done.is_connected(_on_stream_answer_done):
+		Net.stream_answer_done.connect(_on_stream_answer_done)
 	var pad: int = 10 if UI.is_phone_portrait() else (14 if UI.is_portrait() else 16)
-	add_theme_stylebox_override("panel", UI.box(Color("#102a37"), 18, Color("#2d5a6e"), pad))
+	add_theme_stylebox_override("panel", UI.box(UI.PANEL, 18, UI.ACCENT, pad))
 	_body = UI.vbox(10 if UI.is_phone_portrait() else 12)
 	_scroll = UI.scroll(_body)
 	add_child(_scroll)
+	if not Engine.is_editor_hint():
+		_scroll.gui_input.connect(_on_scroll_input)
+		var v_bar := _scroll.get_v_scroll_bar()
+		if v_bar != null:
+			v_bar.gui_input.connect(_on_scroll_input)
 	_build_header_container()
 	_steps = UI.hbox(2 if UI.is_phone() else 6)
 	_body.add_child(_steps)
 	_content = UI.vbox(10 if UI.is_phone_portrait() else 12)
 	_body.add_child(_content)
+	_build_spectator_prediction_overlay()
+
+
+func _build_spectator_prediction_overlay() -> void:
+	if _pred_strip_container != null and is_instance_valid(_pred_strip_container):
+		return
+	_pred_strip_container = MarginContainer.new()
+	_pred_strip_container.name = "SpectatorPredOverlay"
+	_pred_strip_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_pred_strip_container.size_flags_vertical = Control.SIZE_SHRINK_END
+	_pred_strip_container.size_flags_horizontal = Control.SIZE_FILL
+	_pred_strip_container.z_index = 20
+	var pad_x: int = 8 if UI.is_phone_portrait() else 12
+	var pad_b: int = 8 if UI.is_phone_portrait() else 10
+	_pred_strip_container.add_theme_constant_override("margin_left", pad_x)
+	_pred_strip_container.add_theme_constant_override("margin_right", pad_x)
+	_pred_strip_container.add_theme_constant_override("margin_bottom", pad_b)
+	_pred_strip_container.add_theme_constant_override("margin_top", 0)
+	_pred_strip_container.visible = false
+	add_child(_pred_strip_container)
+
+	_pred_strip = PanelContainer.new()
+	_pred_strip.name = "PredStrip"
+	_pred_strip.mouse_filter = Control.MOUSE_FILTER_STOP
+	_pred_strip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_pred_strip.size_flags_vertical = Control.SIZE_SHRINK_END
+	_pred_strip_container.add_child(_pred_strip)
 
 
 func _build_header_container() -> void:
@@ -99,8 +193,17 @@ func _on_stream_text(text: String) -> void:
 	if not first and _think_label != null and is_instance_valid(_think_label):
 		_think_label.text = text
 		_think_label.add_theme_color_override("font_color", UI.TEXT)
+		if not _actor:
+			_auto_follow_deferred(_think_label)
 	else:
 		refresh(_sess, _actor_name_cache)
+
+
+func _on_stream_answer_done() -> void:
+	if _sess.is_empty() or str(_sess.get("step", "")) != "discover":
+		return
+	_stream_answer_done = true
+	refresh(_sess, _actor_name_cache)
 
 
 func _streaming() -> bool:
@@ -108,12 +211,122 @@ func _streaming() -> bool:
 
 
 func _on_server_error(_msg: String) -> void:
-	if not (_waiting_ai or _waiting_hint):
+	if not (_waiting_ai or _waiting_hint or not _queued_talk.is_empty()):
 		return
 	_waiting_ai = false
 	_waiting_hint = false
 	_pending_talk = {}
+	_queued_talk = {}
+	_stream_answer_done = false
 	if is_inside_tree() and not _sess.is_empty():
+		refresh(_sess, _actor_name_cache)
+
+
+func _on_scroll_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN] or mb.pressed:
+			_last_manual_scroll_time = Time.get_ticks_msec() / 1000.0
+			if _scroll_tween != null and _scroll_tween.is_valid():
+				_scroll_tween.kill()
+				_scroll_tween = null
+	elif event is InputEventPanGesture or event is InputEventScreenDrag:
+		_last_manual_scroll_time = Time.get_ticks_msec() / 1000.0
+		if _scroll_tween != null and _scroll_tween.is_valid():
+			_scroll_tween.kill()
+			_scroll_tween = null
+	elif event is InputEventMouseMotion:
+		var mm := event as InputEventMouseMotion
+		if mm.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE) != 0:
+			_last_manual_scroll_time = Time.get_ticks_msec() / 1000.0
+			if _scroll_tween != null and _scroll_tween.is_valid():
+				_scroll_tween.kill()
+				_scroll_tween = null
+
+
+func _auto_follow_deferred(target: Control) -> void:
+	if _actor or target == null or Engine.is_editor_hint():
+		return
+	await get_tree().process_frame
+	if not is_instance_valid(target) or not target.is_inside_tree() or _scroll == null:
+		return
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if now - _last_manual_scroll_time < 4.0:
+		return
+	_smooth_scroll_to(target, 0.3)
+
+
+func _get_spectator_pred_strip_height() -> float:
+	if _actor or _pred_strip_container == null or not is_instance_valid(_pred_strip_container) or not _pred_strip_container.visible:
+		return 0.0
+	if str(_sess.get("step", "")) not in ["discover", "plan", "objection"]:
+		return 0.0
+	var h: float = _pred_strip_container.get_combined_minimum_size().y
+	if _pred_strip_container.size.y > h:
+		h = _pred_strip_container.size.y
+	return h
+
+
+func _smooth_scroll_to(target: Control, duration: float = 0.3) -> void:
+	if target == null or not is_instance_valid(target) or not target.is_inside_tree() or _scroll == null:
+		return
+	var s_rect := _scroll.get_global_rect()
+	var t_rect := target.get_global_rect()
+	if s_rect.size.y <= 0:
+		return
+	var strip_h: float = _get_spectator_pred_strip_height()
+	var visible_viewport_h: float = maxf(s_rect.size.y - strip_h, 1.0)
+	var diff_top: float = t_rect.position.y - s_rect.position.y
+	var diff_bottom: float = (t_rect.position.y + t_rect.size.y) - (s_rect.position.y + visible_viewport_h)
+	var current_scroll: int = _scroll.scroll_vertical
+	var target_scroll: int = current_scroll
+
+	if t_rect.size.y >= visible_viewport_h:
+		if absf(diff_top) > 4.0:
+			target_scroll = int(current_scroll + diff_top - 12.0)
+		else:
+			return
+	elif diff_top < 0:
+		target_scroll = int(current_scroll + diff_top - 12.0)
+	elif diff_bottom > 0:
+		target_scroll = int(current_scroll + diff_bottom + 20.0)
+	else:
+		return
+
+	target_scroll = maxi(0, target_scroll)
+	var v_bar := _scroll.get_v_scroll_bar()
+	if v_bar != null:
+		var max_v: int = maxi(0, int(v_bar.max_value - v_bar.page))
+		target_scroll = mini(target_scroll, max_v)
+
+	if target_scroll == current_scroll:
+		return
+
+	if _scroll_tween != null and _scroll_tween.is_valid():
+		_scroll_tween.kill()
+	_scroll_tween = create_tween()
+	_scroll_tween.tween_property(_scroll, "scroll_vertical", target_scroll, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+
+func _send_talk(text: String, suggested: String = "") -> void:
+	var comp := Compliance.check(text)
+	var talk_data := {
+		"text": text,
+		"suggested": suggested,
+		"level": comp.level,
+		"issues": comp.issues,
+	}
+	var is_waiting: bool = _waiting_ai or bool(_sess.get("aiBusy", false)) or _streaming()
+	if is_waiting:
+		_queued_talk = talk_data
+		refresh(_sess, _actor_name_cache)
+	else:
+		_pending_talk = talk_data
+		_waiting_ai = true
+		var act := {"type": "talk", "text": text}
+		if suggested != "":
+			act["suggested"] = suggested
+		Net.act(act)
 		refresh(_sess, _actor_name_cache)
 
 
@@ -155,13 +368,31 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 		_waiting_ai = false
 		_pending_talk = {}
 		_stream_text = ""
+		_stream_answer_done = false
+		if str(sess.get("step", "")) != "discover":
+			_queued_talk = {}
+		elif not _queued_talk.is_empty() and not bool(sess.get("aiBusy", false)):
+			var q: Dictionary = _queued_talk.duplicate()
+			_queued_talk = {}
+			_pending_talk = q
+			_waiting_ai = true
+			var act := {"type": "talk", "text": str(q.get("text", ""))}
+			if str(q.get("suggested", "")) != "":
+				act["suggested"] = str(q.get("suggested", ""))
+			Net.act(act)
 
 	# Red-light violation juice detection for newly arrived entries
 	var asked_arr: Array = sess.get("asked", []) as Array if sess.get("asked") is Array else []
 	var cur_client_sess_id: String = str(sess.get("client", {}).get("id", "")) + str(sess.get("playerId", ""))
 	if cur_client_sess_id != str(_sess_prev_id):
+		_queued_talk = {}
+		_pending_talk = {}
+		_waiting_ai = false
+		_stream_answer_done = false
 		_prev_asked_len = asked_arr.size()
 		_hint_used_this_session = false
+		_prev_observed_for_spectator = -1
+		_prev_cards_count_for_spectator = -1
 	else:
 		if asked_arr.size() > _prev_asked_len:
 			for chk_idx in range(_prev_asked_len, asked_arr.size()):
@@ -176,6 +407,9 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 	if str(sess.get("client", {}).get("id", "")) + str(sess.get("playerId", "")) != str(_sess_prev_id):
 		_sess_prev_id = str(sess.get("client", {}).get("id", "")) + str(sess.get("playerId", ""))
 		_prev_metrics.clear()
+		_pred_strip_shown = false
+		if _pred_strip_container != null and is_instance_valid(_pred_strip_container):
+			_pred_strip_container.visible = false
 		if _scroll != null:
 			_scroll.set_deferred("scroll_vertical", 0)
 	if sess.get("hint") != null:
@@ -199,9 +433,12 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 	# Show the AI coach hint button or hint bar
 	_render_coach_hint()
 
-	# Spectator prediction bar (shown when spectating other players)
+	# Spectator prediction floating strip (shown when spectating other players)
 	if not _actor and str(sess.get("step", "")) in ["discover", "plan", "objection"]:
 		_render_spectator_prediction()
+	else:
+		if _pred_strip_container != null and is_instance_valid(_pred_strip_container):
+			_pred_strip_container.visible = false
 
 	match str(sess.get("step", "")):
 		"discover": _build_discover()
@@ -209,12 +446,62 @@ func refresh(sess: Dictionary, actor_name: String) -> void:
 		"objection": _build_objection()
 		"result": _build_result()
 
+	if not _actor and str(sess.get("step", "")) in ["discover", "plan", "objection"]:
+		var strip_h: float = _get_spectator_pred_strip_height()
+		if strip_h > 0.0:
+			var pad_ctl := Control.new()
+			pad_ctl.name = "PredBottomPadding"
+			pad_ctl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			pad_ctl.custom_minimum_size = Vector2(0, strip_h)
+			_content.add_child(pad_ctl)
+
+	if not _actor:
+		_schedule_spectator_auto_follow(str(sess.get("step", "")))
+
 	# Only fade in on scene change (client, advisor, or step); updates within same step redraw directly to avoid flickering
 	var scene_key: String = "%s/%s/%s" % [str(sess.get("client", {}).get("id", "")), str(sess.get("playerId", "")), str(sess.get("step", ""))]
 	if scene_key != _fade_key:
 		_fade_key = scene_key
 		UI.fade_in(_content, 0.2)
 	UI.pass_wheel(_body)
+
+
+func _schedule_spectator_auto_follow(step: String) -> void:
+	var target_node: Control = null
+	match step:
+		"discover":
+			if _think_label != null and is_instance_valid(_think_label):
+				target_node = _think_label
+			elif _queued_row != null and is_instance_valid(_queued_row):
+				target_node = _queued_row
+			elif _pending_row != null and is_instance_valid(_pending_row):
+				target_node = _pending_row
+			elif _clues_observed != _prev_observed_for_spectator and _clues_control != null and is_instance_valid(_clues_control):
+				target_node = _clues_control
+			elif _last_client_row != null and is_instance_valid(_last_client_row):
+				target_node = _last_client_row
+			elif _clues_control != null and is_instance_valid(_clues_control):
+				target_node = _clues_control
+			_prev_observed_for_spectator = _clues_observed
+		"plan":
+			var card_count: int = _cards.size()
+			if _sess.get("plan") != null and _sess.get("plan") is Dictionary:
+				card_count = (_sess.get("plan", {}).get("cards", []) as Array).size()
+			if _plan_cards_section != null and is_instance_valid(_plan_cards_section) and _prev_cards_count_for_spectator != -1 and card_count != _prev_cards_count_for_spectator:
+				target_node = _plan_cards_section
+			elif _plan_alloc_section != null and is_instance_valid(_plan_alloc_section):
+				target_node = _plan_alloc_section
+			elif _plan_cards_section != null and is_instance_valid(_plan_cards_section):
+				target_node = _plan_cards_section
+			_prev_cards_count_for_spectator = card_count
+		"objection":
+			if _objection_section != null and is_instance_valid(_objection_section):
+				target_node = _objection_section
+		"result":
+			if _content != null and _content.get_child_count() > 0:
+				target_node = _content.get_child(0) as Control
+	if target_node != null:
+		_auto_follow_deferred(target_node)
 
 
 func _spawn_metric_delta(m_name: String, delta: int) -> void:
@@ -249,8 +536,8 @@ func _build_header(actor_name: String) -> void:
 
 	# Client profile card frame
 	var pad_val: int = 6 if is_phone_land else (8 if is_phone else 10)
-	var card_panel := UI.panel(Color("#0d2432"), 14, pad_val)
-	card_panel.add_theme_stylebox_override("panel", UI.box(Color("#0d2432"), 14, UI.GOLD if referral else Color("#1e475b"), pad_val))
+	var card_panel := UI.panel(UI.PANEL, 14, pad_val)
+	card_panel.add_theme_stylebox_override("panel", UI.box(UI.PANEL, 14, UI.GOLD if referral else UI.ACCENT, pad_val))
 	card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	# Phone landscape compact 3 rows, desktop single row, phone portrait two rows
@@ -261,7 +548,7 @@ func _build_header(actor_name: String) -> void:
 		# Row 1: portrait + name + age/job (ellipsized) + badges
 		var row1 := UI.hbox(6)
 		row1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var avatar_box := UI.portrait(c, 36)
+		var avatar_box := _client_portrait(c, 48)
 		row1.add_child(avatar_box)
 
 		var c_name: String = str(c.get("name", "客戶"))
@@ -277,7 +564,7 @@ func _build_header(actor_name: String) -> void:
 
 		var tag_str: String = str(c.get("tag", ""))
 		if tag_str != "":
-			var tag_p := UI.panel(Color("#133647"), 4, 2)
+			var tag_p := UI.panel(UI.PANEL_2, 4, 2)
 			tag_p.add_child(UI.label("［%s］" % tag_str, 10, UI.ACCENT_2))
 			row1.add_child(tag_p)
 
@@ -299,12 +586,12 @@ func _build_header(actor_name: String) -> void:
 			row1.add_child(ref_p)
 
 		if generated:
-			var ai_p := UI.panel(Color("#1a2b38"), 4, 2)
+			var ai_p := UI.panel(UI.PANEL_2, 4, 2)
 			ai_p.add_child(UI.label("AI 客戶" if Net.ai_enabled else "規則版客戶", 10, UI.INFO if Net.ai_enabled else UI.MUTED))
 			row1.add_child(ai_p)
 
 		if not _actor:
-			var obs_p := UI.panel(Color("#1c3340"), 4, 2)
+			var obs_p := UI.panel(UI.PANEL_2, 4, 2)
 			obs_p.add_child(UI.label("觀摩：%s" % actor_name, 10, UI.GOLD))
 			row1.add_child(obs_p)
 
@@ -341,13 +628,13 @@ func _build_header(actor_name: String) -> void:
 		v_all.add_child(_metrics)
 
 	elif not is_phone:
-		# Desktop single row: avatar 64px + client info + mini competency bars
+		# Desktop single row: avatar 88px + client info + mini competency bars
 		var h_row := UI.hbox(10)
 		h_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		card_panel.add_child(h_row)
 
-		# Avatar 64px
-		var avatar_box := UI.portrait(c, 64)
+		# Avatar 88px desktop
+		var avatar_box := _client_portrait(c, 88)
 		h_row.add_child(avatar_box)
 
 		# Info column
@@ -369,30 +656,29 @@ func _build_header(actor_name: String) -> void:
 
 		var tag_str: String = str(c.get("tag", ""))
 		if tag_str != "":
-			var tag_p := UI.panel(Color("#133647"), 6, 2)
+			var tag_p := UI.chip(UI.PANEL_2, Color(0, 0, 0, 0), 6, 10, 4)
 			tag_p.add_child(UI.label("［%s］" % tag_str, 11, UI.ACCENT_2))
 			top_line.add_child(tag_p)
 
 		# Dynamic life variable twist tag (twist title)
 		if not twist.is_empty() and twist.get("title") != null:
-			var tw_p := UI.panel(Color("#2e2614"), 6, 2)
-			tw_p.add_theme_stylebox_override("panel", UI.box(Color("#2e2614"), 6, UI.GOLD, 2, false))
+			var tw_p := UI.chip(Color("#2e2614"), UI.GOLD, 6, 10, 4)
 			tw_p.add_child(UI.label("※ " + str(twist.get("title")), 11, UI.GOLD))
 			top_line.add_child(tw_p)
 
 		var diff: String = str(c.get("difficulty", "normal"))
 		var diff_stars: String = "★☆☆" if diff == "easy" else ("★★☆" if diff == "normal" else "★★★")
-		var diff_p := UI.panel(Color("#262214"), 6, 2)
+		var diff_p := UI.chip(Color("#262214"), Color(0, 0, 0, 0), 6, 10, 4)
 		diff_p.add_child(UI.label(diff_stars, 11, UI.GOLD))
 		top_line.add_child(diff_p)
 
 		if referral:
-			var ref_p := UI.panel(Color("#183d2a"), 6, 2)
+			var ref_p := UI.chip(Color("#183d2a"), Color(0, 0, 0, 0), 6, 10, 4)
 			ref_p.add_child(UI.label("♥ 轉介紹", 11, UI.GOOD))
 			top_line.add_child(ref_p)
 
 		if generated:
-			var ai_p := UI.panel(Color("#1a2b38"), 6, 2)
+			var ai_p := UI.chip(UI.PANEL_2, Color(0, 0, 0, 0), 6, 10, 4)
 			ai_p.add_child(UI.label("AI 客戶" if Net.ai_enabled else "規則版客戶", 11, UI.INFO if Net.ai_enabled else UI.MUTED))
 			top_line.add_child(ai_p)
 
@@ -430,12 +716,12 @@ func _build_header(actor_name: String) -> void:
 		h_row.add_child(_metrics)
 
 	else:
-		# Phone portrait two rows: top row avatar and profile, bottom row mini competency bars
+		# Phone portrait two rows: top row avatar 64px and profile, bottom row mini competency bars
 		var v_all := UI.vbox(6)
 		card_panel.add_child(v_all)
 
 		var top_row := UI.hbox(8)
-		var avatar_box := UI.portrait(c, 56)
+		var avatar_box := _client_portrait(c, 64)
 		top_row.add_child(avatar_box)
 
 		var info_v := UI.vbox(2)
@@ -449,15 +735,14 @@ func _build_header(actor_name: String) -> void:
 		name_row.add_child(UI.label(c_name, 15, UI.GOLD if referral else UI.TEXT))
 		var tag_str: String = str(c.get("tag", ""))
 		if tag_str != "":
-			var tag_p := UI.panel(Color("#133647"), 4, 2)
+			var tag_p := UI.chip(UI.PANEL_2, Color(0, 0, 0, 0), 6, 10, 4)
 			tag_p.add_child(UI.label("［%s］" % tag_str, 10, UI.ACCENT_2))
 			name_row.add_child(tag_p)
 		info_v.add_child(name_row)
 		if not twist.is_empty() and twist.get("title") != null:
 			var tw_row := HFlowContainer.new()
 			tw_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var tw_p := UI.panel(Color("#2e2614"), 4, 2)
-			tw_p.add_theme_stylebox_override("panel", UI.box(Color("#2e2614"), 4, UI.GOLD, 2, false))
+			var tw_p := UI.chip(Color("#2e2614"), UI.GOLD, 6, 10, 4)
 			tw_p.add_child(UI.label("※ " + str(twist.get("title")), 11, UI.GOLD))
 			tw_row.add_child(tw_p)
 			info_v.add_child(tw_row)
@@ -505,8 +790,8 @@ func _build_steps() -> void:
 	for i: int in range(4):
 		var is_past: bool = i < cur_idx
 		var is_curr: bool = i == cur_idx
-		var bg_col: Color = UI.ACCENT.darkened(0.2) if is_curr else (Color("#133647") if is_past else Color("#0d202b"))
-		var border_col: Color = UI.GOLD if is_curr else (UI.GOOD.darkened(0.4) if is_past else Color("#173748"))
+		var bg_col: Color = UI.ACCENT.darkened(0.2) if is_curr else (UI.PANEL_2 if is_past else UI.PANEL.darkened(0.2))
+		var border_col: Color = UI.GOLD if is_curr else (UI.GOOD.darkened(0.4) if is_past else UI.ACCENT.darkened(0.5))
 
 		var s_box := UI.panel(bg_col, 6 if is_phone else 8, 2 if is_phone else 6)
 		s_box.add_theme_stylebox_override("panel", UI.box(bg_col, 6 if is_phone else 8, border_col, 2 if is_phone else 6, false))
@@ -549,7 +834,7 @@ func _render_coach_hint() -> void:
 		if _waiting_hint:
 			hint_bar.add_child(UI.label("教練思考中……", 14, UI.GOLD, true))
 		else:
-			var hint_btn := UI.button("求助教練（扣聲望 2）", func():
+			var hint_btn := UI.button("求助教練", func():
 				_waiting_hint = true
 				Net.act({"type": "hint"})
 				refresh(_sess, "")
@@ -562,26 +847,63 @@ func _render_coach_hint() -> void:
 
 
 func _render_spectator_prediction() -> void:
+	if _pred_strip_container == null or not is_instance_valid(_pred_strip_container):
+		_build_spectator_prediction_overlay()
+	if _pred_strip == null or not is_instance_valid(_pred_strip):
+		return
+
 	var preds: Dictionary = _sess.get("predictions", {}) if _sess.get("predictions") is Dictionary else {}
 	var mine_pred: Variant = preds.get("mine")
-	var p_card := UI.panel(UI.PANEL_2, 10, 8)
-	var p_box: BoxContainer = UI.vbox(6) if UI.is_phone_portrait() else UI.hbox(8)
-	p_card.add_child(p_box)
+	var has_predicted: bool = mine_pred != null and str(mine_pred) != ""
 
-	if mine_pred != null and str(mine_pred) != "":
-		p_box.add_child(UI.label("★ 旁觀競猜：你已預測該顧問評級為 ［%s］（共 %d 人參與預測）" % [str(mine_pred), int(preds.get("count", 1))], 14, UI.GOLD, true))
+	var pad_x: int = 8 if UI.is_phone_portrait() else 12
+	var pad_b: int = 8 if UI.is_phone_portrait() else 10
+	_pred_strip_container.add_theme_constant_override("margin_left", pad_x)
+	_pred_strip_container.add_theme_constant_override("margin_right", pad_x)
+	_pred_strip_container.add_theme_constant_override("margin_bottom", pad_b)
+
+	UI.clear(_pred_strip)
+
+	if has_predicted:
+		# After predicting: collapse to a small pill 「已預測［A］· N 人參與」 (still floating, no buttons)
+		var pill_sb := UI.box(UI.PANEL_2, 14, Color(-1, -1, -1, -1), 8, true)
+		_pred_strip.add_theme_stylebox_override("panel", pill_sb)
+		var pill_h := UI.hbox(6)
+		pill_h.mouse_filter = Control.MOUSE_FILTER_PASS
+		var count_val: int = int(preds.get("count", 1))
+		var pill_lbl := UI.label("已預測［%s］· %d 人參與" % [str(mine_pred), count_val], 12 if UI.is_phone_portrait() else 13, UI.GOLD)
+		pill_h.add_child(pill_lbl)
+		_pred_strip.add_child(pill_h)
 	else:
-		p_box.add_child(UI.label("旁觀競猜（預測其評級，猜中聲望 +2）：", 13, UI.GOLD, true))
+		# Before predicting: compact one-line strip 「旁觀競猜：猜評級，猜中聲望 +2」 + S A B C buttons
+		var strip_sb := UI.box(UI.PANEL_2, 12, Color(-1, -1, -1, -1), 8, true)
+		_pred_strip.add_theme_stylebox_override("panel", strip_sb)
+		var is_narrow: bool = UI.is_phone_portrait()
+		var box_c: BoxContainer = UI.vbox(4) if is_narrow else UI.hbox(8)
+		box_c.mouse_filter = Control.MOUSE_FILTER_PASS
+		var prompt_lbl := UI.label("旁觀競猜：猜評級，猜中聲望 +2", 12 if is_narrow else 13, UI.GOLD)
+		box_c.add_child(prompt_lbl)
+
 		var btn_row := UI.hbox(6)
+		btn_row.mouse_filter = Control.MOUSE_FILTER_PASS
+		if is_narrow:
+			btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
 		for g: String in ["S", "A", "B", "C"]:
 			var grade_val: String = g
 			var btn := UI.button(grade_val, func():
-				Net.send({"t": "predict", "grade": grade_val})
+				if not Engine.is_editor_hint():
+					Net.send({"t": "predict", "grade": grade_val})
 			, 13, UI.PANEL)
 			btn.custom_minimum_size = Vector2(36, 30)
 			btn_row.add_child(btn)
-		p_box.add_child(btn_row)
-	_content.add_child(p_card)
+		box_c.add_child(btn_row)
+		_pred_strip.add_child(box_c)
+
+	_pred_strip_container.visible = true
+
+	if not _pred_strip_shown:
+		_pred_strip_shown = true
+		UI.pop_in(_pred_strip, 0.22)
 
 
 func _section(title: String) -> VBoxContainer:
@@ -619,19 +941,19 @@ func _build_discover() -> void:
 	# Client opening message
 	var open_row := UI.hbox(8)
 	open_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	open_row.add_child(UI.portrait(c_dict, 36))
+	open_row.add_child(_client_portrait(c_dict, 36, true))
 
 	var open_v := UI.vbox(2)
 	open_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var open_h := UI.hbox(6)
 	open_h.add_child(UI.label(c_short, 13, UI.TEXT))
 	var emo_tag: String = "情境透露" if has_twist else "開場"
-	var emo_p := UI.panel(Color("#133647"), 4, 2)
+	var emo_p := UI.panel(UI.PANEL_2, 4, 2)
 	emo_p.add_child(UI.label("［%s］" % emo_tag, 11, UI.ACCENT_2))
 	open_h.add_child(emo_p)
 	open_v.add_child(open_h)
 
-	var open_bubble := UI.panel(Color("#102b3a"), 10, 8)
+	var open_bubble := UI.panel(UI.PANEL_2, 10, 8)
 	open_bubble.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var open_txt: String = str(twist_dict.get("hint", "")) if has_twist else str(c_dict.get("quote", "您好，想了解一下您能提供哪些規劃建議……"))
 	open_bubble.add_child(UI.label(open_txt, 14, UI.TEXT, true))
@@ -642,12 +964,13 @@ func _build_discover() -> void:
 	# Dialogue history
 	var asked: Array = _sess.get("asked", [])
 	var idx: int = 0
+	_last_client_row = null
 	for a: Dictionary in asked:
 		var q_text: String = str(a.get("question", ""))
 		var ans_text: String = str(a.get("answer", ""))
 		var a_idx: int = idx
 
-		# 1. Advisor statement (right side, blue bubble)
+		# 1. Advisor statement (right side, soft dark bubble)
 		var cons_row := UI.hbox(8)
 		cons_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var cons_pad := UI.spacer()
@@ -659,8 +982,8 @@ func _build_discover() -> void:
 		var cons_v := UI.vbox(3)
 		cons_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-		var cons_bubble := UI.panel(Color("#144d70"), 10, 8)
-		cons_bubble.add_theme_stylebox_override("panel", UI.box(Color("#144d70"), 10, Color("#206894"), 8, false))
+		var cons_bubble := UI.panel(UI.PANEL_2.lightened(0.06), 10, 8)
+		cons_bubble.add_theme_stylebox_override("panel", UI.box(UI.PANEL_2.lightened(0.06), 10, UI.ACCENT.lightened(0.12), 8, false))
 		var q_lbl := UI.label(q_text, 14, Color.WHITE, true)
 		cons_bubble.add_child(q_lbl)
 		cons_v.add_child(cons_bubble)
@@ -705,8 +1028,7 @@ func _build_discover() -> void:
 			else:
 				var comp_h := UI.hbox(6)
 				comp_h.add_child(UI.spacer())
-				var badge_p := UI.panel(Color(UI.BAD.r, UI.BAD.g, UI.BAD.b, 0.18), 4, 2)
-				badge_p.add_theme_stylebox_override("panel", UI.box(Color(UI.BAD.r, UI.BAD.g, UI.BAD.b, 0.18), 4, UI.BAD, 2, false))
+				var badge_p := UI.chip(Color(UI.BAD.r, UI.BAD.g, UI.BAD.b, 0.18), UI.BAD, 4, 10, 4)
 				badge_p.add_child(UI.label("× 違規", 11, UI.BAD))
 				comp_h.add_child(badge_p)
 				var exp_btn := UI.button("［查看合規分析 ▼］", func():
@@ -719,8 +1041,7 @@ func _build_discover() -> void:
 			var comp_h := UI.hbox(6)
 			comp_h.add_child(UI.spacer())
 			var badge_col: Color = Compliance.level_color(comp_level)
-			var badge_p := UI.panel(Color(badge_col.r, badge_col.g, badge_col.b, 0.18), 4, 2)
-			badge_p.add_theme_stylebox_override("panel", UI.box(Color(badge_col.r, badge_col.g, badge_col.b, 0.18), 4, badge_col, 2, false))
+			var badge_p := UI.chip(Color(badge_col.r, badge_col.g, badge_col.b, 0.18), badge_col, 4, 10, 4)
 			badge_p.add_child(UI.label(Compliance.level_tag(comp_level), 11, badge_col))
 			comp_h.add_child(badge_p)
 
@@ -734,8 +1055,8 @@ func _build_discover() -> void:
 			cons_v.add_child(comp_h)
 
 			if comp_level == "warning" and bool(_expanded_compliance_issues.get(a_idx, false)) and not comp_issues.is_empty():
-				var issues_p := UI.panel(Color("#0d202c"), 8, 8)
-				issues_p.add_theme_stylebox_override("panel", UI.box(Color("#0d202c"), 8, badge_col, 6, false))
+				var issues_p := UI.panel(UI.PANEL_2, 8, 8)
+				issues_p.add_theme_stylebox_override("panel", UI.box(UI.PANEL_2, 8, badge_col, 6, false))
 				var iv_item := UI.vbox(4)
 				for iss: Dictionary in comp_issues:
 					var q_str: String = str(iss.get("quote", ""))
@@ -762,7 +1083,9 @@ func _build_discover() -> void:
 		# 2. Client response (left side, light bubble)
 		var client_row := UI.hbox(8)
 		client_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		client_row.add_child(UI.portrait(c_dict, 36))
+		var c_port := _client_portrait(c_dict, 40, true)
+		c_port.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		client_row.add_child(c_port)
 
 		var client_v := UI.vbox(2)
 		client_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -771,14 +1094,14 @@ func _build_discover() -> void:
 		c_head.add_child(UI.label(c_short, 13, UI.TEXT))
 		var emo_str: String = str(a.get("emotion", ""))
 		if emo_str != "" and emo_str != "null":
-			var ep := UI.panel(Color("#133647"), 4, 2)
+			var ep := UI.chip(UI.PANEL_2, Color(0, 0, 0, 0), 4, 10, 4)
 			var emo_names := {"receptive": "願意多聊", "neutral": "平靜", "defensive": "有點防備", "impatient": "不耐煩"}
 			var emo_cols := {"receptive": UI.GOOD, "neutral": UI.INFO, "defensive": UI.OK, "impatient": UI.BAD}
 			ep.add_child(UI.label("［%s］" % str(emo_names.get(emo_str, emo_str)), 11, emo_cols.get(emo_str, UI.INFO)))
 			c_head.add_child(ep)
 		client_v.add_child(c_head)
 
-		var client_bubble := UI.panel(Color("#0e2b3b"), 10, 8)
+		var client_bubble := UI.panel(UI.PANEL_2, 10, 8)
 		client_bubble.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		client_bubble.add_child(UI.label(ans_text, 14, UI.TEXT, true))
 		client_v.add_child(client_bubble)
@@ -788,20 +1111,25 @@ func _build_discover() -> void:
 
 		client_row.add_child(client_v)
 		dv.add_child(client_row)
+		_last_client_row = client_row
 
 		idx += 1
 
 	# Local real-time radar statement (sending)
+	_pending_row = null
 	if _waiting_ai and not _pending_talk.is_empty():
 		var pend_row := UI.hbox(8)
 		pend_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		pend_row.add_child(UI.spacer())
+		var pend_pad := UI.spacer()
+		if UI.is_phone():
+			pend_pad.size_flags_stretch_ratio = 0.25
+		pend_row.add_child(pend_pad)
 
 		var pend_v := UI.vbox(3)
 		pend_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-		var pend_bubble := UI.panel(Color("#144d70"), 10, 8)
-		pend_bubble.add_theme_stylebox_override("panel", UI.box(Color("#144d70"), 10, Color("#206894"), 8, false))
+		var pend_bubble := UI.panel(UI.ACCENT.darkened(0.2), 10, 8)
+		pend_bubble.add_theme_stylebox_override("panel", UI.box(UI.ACCENT.darkened(0.2), 10, UI.ACCENT_2, 8, false))
 		pend_bubble.add_child(UI.label(str(_pending_talk.get("text", "")), 14, Color.WHITE, true))
 		pend_v.add_child(pend_bubble)
 
@@ -809,35 +1137,76 @@ func _build_discover() -> void:
 		pend_h.add_child(UI.spacer())
 		var pend_lvl: String = str(_pending_talk.get("level", "pass"))
 		var pend_col: Color = Compliance.level_color(pend_lvl)
-		var p_badge := UI.panel(Color(pend_col.r, pend_col.g, pend_col.b, 0.18), 4, 2)
+		var p_badge := UI.chip(Color(pend_col.r, pend_col.g, pend_col.b, 0.18), pend_col, 4, 10, 4)
 		p_badge.add_child(UI.label(Compliance.level_tag(pend_lvl), 11, pend_col))
 		pend_h.add_child(p_badge)
-		pend_h.add_child(UI.label("（送出中……）", 11, UI.MUTED))
+		if _stream_answer_done:
+			pend_h.add_child(UI.label("（教練短評整理中……）", 11, UI.MUTED))
+		else:
+			pend_h.add_child(UI.label("（送出中……）", 11, UI.MUTED))
 		pend_v.add_child(pend_h)
+
+		if _stream_answer_done:
+			pend_v.add_child(UI.label("教練短評整理中……", 12, UI.MUTED, true))
 
 		pend_row.add_child(pend_v)
 		dv.add_child(pend_row)
+		_pending_row = pend_row
 
 	# Waiting for AI typing animation
 	_think_label = null
 	if _waiting_ai or bool(_sess.get("aiBusy", false)) or _streaming():
 		var think_row := UI.hbox(8)
 		think_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		think_row.add_child(UI.portrait(c_dict, 36))
+		var t_port := _client_portrait(c_dict, 40, true)
+		t_port.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		think_row.add_child(t_port)
 
 		var think_v := UI.vbox(2)
 		think_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		think_v.add_child(UI.label(c_short, 13, UI.TEXT))
 
-		var think_bubble := UI.panel(Color("#0e2b3b"), 10, 8)
+		var think_bubble := UI.panel(UI.PANEL_2, 10, 8)
 		think_bubble.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		# Streaming: client answer appears word by word; shows "thinking" before first chunk
-		_think_label = UI.label(_stream_text if _streaming() else "客戶思考中……", 14, UI.TEXT if _streaming() else UI.GOLD, true)
+		_think_label = UI.label(_stream_text if (_streaming() or _stream_answer_done) else "客戶思考中……", 14, UI.TEXT if (_streaming() or _stream_answer_done) else UI.GOLD, true)
 		think_bubble.add_child(_think_label)
 		think_v.add_child(think_bubble)
 
 		think_row.add_child(think_v)
 		dv.add_child(think_row)
+
+	# Queued advisor statement (waiting for previous exchange to finish)
+	_queued_row = null
+	if not _queued_talk.is_empty():
+		var q_row := UI.hbox(8)
+		q_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var q_pad := UI.spacer()
+		if UI.is_phone():
+			q_pad.size_flags_stretch_ratio = 0.25
+		q_row.add_child(q_pad)
+
+		var q_v := UI.vbox(3)
+		q_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		var q_bubble := UI.panel(UI.PANEL_2.lightened(0.06), 10, 8)
+		q_bubble.add_theme_stylebox_override("panel", UI.box(UI.PANEL_2.lightened(0.06), 10, UI.ACCENT.lightened(0.12), 8, false))
+		q_bubble.add_child(UI.label(str(_queued_talk.get("text", "")), 14, Color.WHITE, true))
+		q_v.add_child(q_bubble)
+
+		var q_h := UI.hbox(6)
+		q_h.add_child(UI.spacer())
+		var q_lvl: String = str(_queued_talk.get("level", "pass"))
+		var q_col: Color = Compliance.level_color(q_lvl)
+		var q_badge := UI.chip(Color(q_col.r, q_col.g, q_col.b, 0.18), q_col, 4, 10, 4)
+		q_badge.add_child(UI.label(Compliance.level_tag(q_lvl), 11, q_col))
+		q_h.add_child(q_badge)
+		q_h.add_child(UI.label("（排隊中）", 11, UI.MUTED))
+		q_v.add_child(q_h)
+
+		q_row.add_child(q_v)
+		dv.add_child(q_row)
+		_queued_row = q_row
 
 	# ───────── Bottom Input Area ─────────
 	var talk_left: int = int(_sess.get("talkLeft", 3))
@@ -856,19 +1225,20 @@ func _build_discover() -> void:
 	var asked_qids: Array = asked.map(func(x: Dictionary): return str(x.get("qid", "")))
 	var covered_qids: Array = _sess.get("covered", []) if _sess.get("covered") != null else []
 
+	var is_waiting: bool = _waiting_ai or bool(_sess.get("aiBusy", false)) or _streaming()
+	var can_queue: bool = is_waiting and _stream_answer_done and _queued_talk.is_empty() and talk_left > 1
+	var can_act: bool = not is_waiting and talk_left > 0 and _queued_talk.is_empty()
+	var can_talk: bool = _actor and (can_act or can_queue)
+
 	for q_item in questions_src:
 		var qid: String = str(q_item.get("id", ""))
 		var qtext: String = str(q_item.get("text", ""))
 		var was_asked: bool = (qid in asked_qids) or (qid in covered_qids)
 
 		var b := UI.option_button(qtext, func():
-			var comp := Compliance.check(qtext)
-			_pending_talk = {"text": qtext, "level": comp.level, "issues": comp.issues}
-			_waiting_ai = true
-			Net.act({"type": "talk", "text": qtext, "suggested": qid})
-			refresh(_sess, "")
+			_send_talk(qtext, qid)
 		)
-		b.disabled = not _actor or was_asked or talk_left <= 0 or _waiting_ai
+		b.disabled = not can_talk or was_asked
 		if was_asked:
 			b.text = UI.glue("✓ " + qtext)
 		iv.add_child(b)
@@ -877,13 +1247,15 @@ func _build_discover() -> void:
 	if _actor:
 		if talk_left > 0:
 			iv.add_child(UI.label("自由提問／溝通：", 13, UI.MUTED))
-			iv.add_child(UI.text_input("輸入你想向客戶詢問或溝通的話語……", func(t: String):
-				var comp := Compliance.check(t)
-				_pending_talk = {"text": t, "level": comp.level, "issues": comp.issues}
-				_waiting_ai = true
-				Net.act({"type": "talk", "text": t})
-				refresh(_sess, "")
-			, 150))
+			var ti := UI.text_input("輸入你想向客戶詢問或溝通的話語……", func(t: String):
+				_send_talk(t, "")
+			, 150)
+			for child in ti.get_children():
+				if child is LineEdit:
+					child.editable = can_talk
+				elif child is Button:
+					child.disabled = not can_talk
+			iv.add_child(ti)
 		else:
 			iv.add_child(UI.label("3 輪對話已完成，請點選下方進入方案配置", 13, UI.GOLD, true))
 	else:
@@ -893,14 +1265,17 @@ func _build_discover() -> void:
 		Tutorial.show_spotlight(self, iv, "talk", "可以點建議提問，也可以自己打字；違規說法會被合規雷達抓到", func(): refresh(_sess, ""))
 
 	# Proceed to plan allocation button
-	var ready_to_plan: bool = bool(_sess.get("ready", false)) or talk_left <= 0
+	var busy: bool = bool(_sess.get("aiBusy", false)) or _waiting_ai or _streaming() or not _queued_talk.is_empty()
+	var ready_to_plan: bool = (bool(_sess.get("ready", false)) or talk_left <= 0) and not busy
 	var go := UI.button("進入方案配置 →", func(): Net.act({"type": "to_plan"}), 18)
 	go.disabled = not _actor or not ready_to_plan
 	_content.add_child(go)
 
 
 func _build_clues_grid(clues: Array, observed: int) -> void:
+	_clues_observed = observed
 	var cv := _section("◎ 觀察線索（%d/3）— 場景中有 3 個需求線索與 1 個干擾物" % observed)
+	_clues_control = cv.get_parent() as Control
 	var grid := GridContainer.new()
 	grid.columns = 1 if UI.is_phone_portrait() else 2
 	grid.add_theme_constant_override("h_separation", 8)
@@ -910,7 +1285,7 @@ func _build_clues_grid(clues: Array, observed: int) -> void:
 		var idx: int = i
 		if cl.get("observed", false):
 			var real: bool = bool(cl.get("real", false))
-			var p := UI.panel(UI.GOOD.darkened(0.65) if real else Color("#2b3a42"), 10, 10)
+			var p := UI.panel(UI.GOOD.darkened(0.65) if real else UI.PANEL_2, 10, 10)
 			p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var v := UI.vbox(2)
 			v.add_child(UI.label(("✓ " if real else "× ") + str(cl.get("title", "")), 15, UI.GOOD if real else UI.MUTED, true))
@@ -929,10 +1304,12 @@ func _build_clues_grid(clues: Array, observed: int) -> void:
 
 
 func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> void:
+	_clues_observed = observed
 	var cv := _section("◎ 生活場景探索（%d/3）— 共 3 個需求線索與 1 個干擾物" % observed)
+	_clues_control = cv.get_parent() as Control
 	var toggle_h := UI.hbox(8)
 	toggle_h.add_child(UI.spacer())
-	var hint_btn := UI.button("提示" if _hint_used_this_session else "提示 💡", func():
+	var hint_btn := UI.button("提示", func():
 		_flashing_hotspots = true
 		_hint_used_this_session = true
 		refresh(_sess, "")
@@ -1089,7 +1466,7 @@ func _build_scene_hotspots(scene_path: String, clues: Array, observed: int) -> v
 		if cl.get("observed", false):
 			any_obs = true
 			var real: bool = bool(cl.get("real", false))
-			var p := UI.panel(UI.GOOD.darkened(0.65) if real else Color("#2b3a42"), 8, 8)
+			var p := UI.panel(UI.GOOD.darkened(0.65) if real else UI.PANEL_2, 8, 8)
 			var bv := UI.vbox(2)
 			bv.add_child(UI.label(("✓ " if real else "× ") + str(cl.get("title", "")), 14, UI.GOOD if real else UI.MUTED, true))
 			bv.add_child(UI.label(str(cl.get("detail", "")), 13, UI.TEXT, true))
@@ -1113,6 +1490,7 @@ func _build_plan() -> void:
 		_cards = []
 	_plan_ui = {"rows": {}, "cards": {}}
 	var av := _section("")
+	_plan_alloc_section = av.get_parent() as Control
 	_plan_ui["alloc_title"] = av.get_child(0)
 	if _actor:
 		Tutorial.show_spotlight(self, av, "plan", "10 枚資源幣代表客戶每月可運用的錢；保障卡選 2–3 張", func(): refresh(_sess, ""))
@@ -1129,7 +1507,24 @@ func _build_plan() -> void:
 		var plus := UI.button("＋", func(): _bump(res, 1), 16, UI.PANEL_2)
 		plus.custom_minimum_size = Vector2(44, 44)
 		plus.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		var coins := UI.label("", 15 if is_narrow else 16, UI.ACCENT_2)
+
+		# Tray containing the round chips in resource color
+		var tray := PanelContainer.new()
+		var tray_sb := StyleBoxFlat.new()
+		tray_sb.bg_color = Color("#091714")
+		tray_sb.set_corner_radius_all(8)
+		tray_sb.border_color = Color(UI.ACCENT.r, UI.ACCENT.g, UI.ACCENT.b, 0.25)
+		tray_sb.set_border_width_all(1)
+		tray_sb.content_margin_left = 8
+		tray_sb.content_margin_right = 8
+		tray_sb.content_margin_top = 4
+		tray_sb.content_margin_bottom = 4
+		tray.add_theme_stylebox_override("panel", tray_sb)
+		tray.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
+		var coins := UI.label("", 15 if is_narrow else 16, RES_COLORS[r])
+		coins.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		tray.add_child(coins)
 
 		if UI.is_portrait():
 			var row_v := UI.vbox(2)
@@ -1141,8 +1536,8 @@ func _build_plan() -> void:
 			h.add_child(minus)
 			h.add_child(value)
 			h.add_child(plus)
-			coins.custom_minimum_size = Vector2(28 if is_narrow else 60, 0)
-			h.add_child(coins)
+			tray.custom_minimum_size = Vector2(48 if is_narrow else 80, 0)
+			h.add_child(tray)
 			row_v.add_child(h)
 			var desc := UI.label(hints[r], 11 if is_narrow else 12, UI.MUTED, true)
 			row_v.add_child(desc)
@@ -1157,12 +1552,14 @@ func _build_plan() -> void:
 			h.add_child(minus)
 			h.add_child(value)
 			h.add_child(plus)
-			h.add_child(coins)
+			tray.custom_minimum_size = Vector2(120, 0)
+			h.add_child(tray)
 			av.add_child(h)
 
-		_plan_ui["rows"][r] = {"minus": minus, "plus": plus, "value": value, "coins": coins}
+		_plan_ui["rows"][r] = {"minus": minus, "plus": plus, "value": value, "coins": coins, "tray": tray}
 
 	var cv := _section("")
+	_plan_cards_section = cv.get_parent() as Control
 	_plan_ui["cards_title"] = cv.get_child(0)
 	var grid := GridContainer.new()
 	# Phone portrait 480 width uses 1 column, tablet portrait 2 columns, landscape 3 columns
@@ -1171,14 +1568,69 @@ func _build_plan() -> void:
 	grid.add_theme_constant_override("v_separation", 8)
 	for card: Dictionary in Net.static_data.get("cards", []):
 		var cid: String = str(card.get("id", ""))
+		var cat_col: Color = CARD_CATEGORY_COLORS.get(cid, UI.ACCENT_2)
 		var b := UI.option_button("", func(): _toggle(cid))
-		# In phone modes (portrait 1 col, landscape 3 cols), cards need sufficient vertical room for wrapped text without clipping
-		var min_h: int = 86 if UI.is_phone_portrait() else (128 if UI.is_phone_landscape() else (110 if UI.is_portrait() else 104))
-		b.custom_minimum_size = Vector2(0, min_h)
-		b.add_theme_font_size_override("font_size", UI.fs(13))
+		b.clip_text = false
+		var card_w: float = 130.0 if not UI.is_phone_portrait() else 240.0
+		b.custom_minimum_size = Vector2(card_w, 0)
+		# Native text stays only for automation; keep it tiny so it does not inflate the card
+		b.add_theme_font_size_override("font_size", 1)
+		b.add_theme_color_override("font_color", Color(0, 0, 0, 0))
+		b.add_theme_color_override("font_hover_color", Color(0, 0, 0, 0))
+		b.add_theme_color_override("font_pressed_color", Color(0, 0, 0, 0))
+		b.add_theme_color_override("font_focus_color", Color(0, 0, 0, 0))
+		b.add_theme_color_override("font_disabled_color", Color(0, 0, 0, 0))
 		b.disabled = not _actor
 		b.set_meta("card", card)
+
+		# Playing card top category colour band
+		var band := Panel.new()
+		band.name = "Band"
+		var band_sb := StyleBoxFlat.new()
+		band_sb.bg_color = cat_col
+		band_sb.set_corner_radius_all(3)
+		band_sb.anti_aliasing = true
+		band.add_theme_stylebox_override("panel", band_sb)
+		band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		band.anchor_left = 0.0
+		band.anchor_right = 1.0
+		band.anchor_top = 0.0
+		band.anchor_bottom = 0.0
+		band.offset_left = 12.0
+		band.offset_right = -12.0
+		band.offset_top = 5.0
+		band.offset_bottom = 10.0
+		b.add_child(band)
+
+		var mc := MarginContainer.new()
+		mc.name = "Margin"
+		mc.set_anchors_preset(Control.PRESET_FULL_RECT)
+		mc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mc.add_theme_constant_override("margin_left", 10)
+		mc.add_theme_constant_override("margin_right", 10)
+		mc.add_theme_constant_override("margin_top", 12)
+		mc.add_theme_constant_override("margin_bottom", 10)
+		b.add_child(mc)
+
+		var v := UI.vbox(3)
+		v.name = "VBox"
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mc.add_child(v)
+
+		var title_lbl := UI.label("", 14, UI.TEXT, true)
+		title_lbl.name = "Title"
+		title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(title_lbl)
+
+		var detail_lbl := UI.label("", 12, UI.MUTED, true)
+		detail_lbl.name = "Detail"
+		detail_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		detail_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		v.add_child(detail_lbl)
+
 		grid.add_child(b)
+		# Card height follows the wrapped text at the card's real width (re-fit whenever it resizes)
+		b.resized.connect(_fit_card.bind(b), CONNECT_DEFERRED)
 		_plan_ui["cards"][cid] = b
 	cv.add_child(grid)
 
@@ -1191,6 +1643,22 @@ func _build_plan() -> void:
 	_sync_plan()
 
 
+func _fit_card(b: Button) -> void:
+	if not is_instance_valid(b):
+		return
+	var title_lbl: Label = b.get_node_or_null("Margin/VBox/Title")
+	var detail_lbl: Label = b.get_node_or_null("Margin/VBox/Detail")
+	if title_lbl == null or detail_lbl == null:
+		return
+	# Measure wrapping at the card's current inner width (child labels may not be laid out yet)
+	detail_lbl.size.x = maxf(b.size.x - 20.0, 1.0)
+	# 12 + 10 margins, 3 vbox gap, 8 slack for the colour band
+	var h := 12.0 + title_lbl.get_minimum_size().y + 3.0 + detail_lbl.get_line_count() * detail_lbl.get_line_height() + 10.0 + 8.0
+	h = maxf(h, 56.0)
+	if absf(b.custom_minimum_size.y - h) > 1.0:
+		b.custom_minimum_size.y = h
+
+
 ## Only updates text and button states without rebuilding nodes (prevents missing rapid clicks)
 func _sync_plan() -> void:
 	var left: int = 10 - int(_alloc["cash"]) - int(_alloc["protect"]) - int(_alloc["growth"])
@@ -1199,10 +1667,12 @@ func _sync_plan() -> void:
 	for r: String in _plan_ui["rows"]:
 		var row: Dictionary = _plan_ui["rows"][r]
 		(row["value"] as Label).text = str(_alloc[r])
+		var c_cnt: int = int(_alloc[r])
 		if is_narrow:
-			(row["coins"] as Label).text = "●%d" % int(_alloc[r])
+			(row["coins"] as Label).text = "● %d" % c_cnt
 		else:
-			(row["coins"] as Label).text = "●".repeat(int(_alloc[r])) + "○".repeat(max(0, left))
+			var chips_str := "● ".repeat(c_cnt) + "○ ".repeat(max(0, left))
+			(row["coins"] as Label).text = chips_str.strip_edges() if chips_str != "" else "―"
 		(row["minus"] as Button).disabled = not _actor or int(_alloc[r]) <= 0
 		(row["plus"] as Button).disabled = not _actor or left <= 0
 	(_plan_ui["cards_title"] as Label).text = "◎ 選擇 2–3 張保障卡（已選 %d）— 避免過度配置" % _cards.size()
@@ -1211,9 +1681,40 @@ func _sync_plan() -> void:
 		var card: Dictionary = b.get_meta("card")
 		var on: bool = cid in _cards
 		b.text = "%s%s\n［%s］%s" % ["✓ " if on else "", card.get("title", ""), card.get("tag", ""), card.get("detail", "")]
-		var col: Color = UI.ACCENT.darkened(0.35) if on else UI.PANEL_2
-		b.add_theme_stylebox_override("normal", UI.box(col, 10, Color("#2d5a6e"), 10))
-		b.add_theme_stylebox_override("hover", UI.box(col.lightened(0.1), 10, UI.ACCENT_2, 10))
+
+		var title_lbl: Label = b.get_node_or_null("Margin/VBox/Title")
+		var detail_lbl: Label = b.get_node_or_null("Margin/VBox/Detail")
+		if title_lbl != null:
+			title_lbl.text = ("✓ " if on else "") + str(card.get("title", ""))
+			title_lbl.add_theme_color_override("font_color", UI.GOLD if on else UI.TEXT)
+		if detail_lbl != null:
+			detail_lbl.text = "［%s］%s" % [card.get("tag", ""), card.get("detail", "")]
+			detail_lbl.add_theme_color_override("font_color", UI.ACCENT_2.lightened(0.2) if on else UI.MUTED)
+
+		_fit_card.call_deferred(b)
+
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(10)
+		sb.content_margin_left = 10
+		sb.content_margin_right = 10
+		sb.content_margin_top = 12
+		sb.content_margin_bottom = 10
+		if on:
+			sb.bg_color = UI.PANEL_2.lightened(0.04)
+			sb.set_border_width_all(3)
+			sb.border_color = UI.ACCENT_2
+			sb.shadow_color = Color(UI.ACCENT_2.r, UI.ACCENT_2.g, UI.ACCENT_2.b, 0.45)
+			sb.shadow_size = 6
+			sb.shadow_offset = Vector2.ZERO
+		else:
+			sb.bg_color = UI.PANEL_2
+			sb.set_border_width_all(1)
+			sb.border_color = Color(UI.ACCENT.r, UI.ACCENT.g, UI.ACCENT.b, 0.25)
+			sb.shadow_color = Color(0, 0, 0, 0.25)
+			sb.shadow_size = 4
+			sb.shadow_offset = Vector2(0, 2)
+		b.add_theme_stylebox_override("normal", sb)
+		b.add_theme_stylebox_override("hover", sb)
 	if _plan_ui.has("submit"):
 		(_plan_ui["submit"] as Button).disabled = left != 0 or _cards.size() < 2 or _cards.size() > 3
 
@@ -1243,6 +1744,7 @@ func _build_objection() -> void:
 		for n in plan.get("notes", []):
 			pv.add_child(UI.label("・" + str(n), 14, UI.OK, true))
 	var v := _section("◎ 客戶提出異議")
+	_objection_section = v.get_parent() as Control
 	v.add_child(UI.label(str(o.get("text", "")), 18 if UI.is_portrait() else 20, UI.GOLD, true))
 	var raw_options: Array = o.get("options", [])
 	var indices: Array = range(raw_options.size())
@@ -1288,15 +1790,16 @@ func _card_names(ids: Array) -> String:
 func _build_result() -> void:
 	var r: Dictionary = _sess.get("result", {})
 	var result_key: String = "%s_%s_%s" % [str(_sess.get("client", {}).get("id", "")), str(r.get("score", "")), str(r.get("signed", ""))]
-	if result_key != _last_result_sound_key:
+	var is_signed: bool = bool(r.get("signed", false))
+	var is_new_result: bool = (result_key != _last_result_sound_key)
+	if is_new_result:
 		_last_result_sound_key = result_key
-		var is_signed: bool = bool(r.get("signed", false))
 		var is_s_grade: bool = str(r.get("grade", "")) == "S"
 		if is_signed:
 			Sound.play("win", self)
 		else:
 			Sound.play("fail", self)
-		if is_signed or is_s_grade:
+		if is_signed:
 			UI.spawn_confetti(self)
 
 	var is_phone: bool = UI.is_phone_portrait()
@@ -1315,12 +1818,15 @@ func _build_result() -> void:
 	gp.custom_minimum_size = Vector2(70 if is_phone else 110, 70 if is_phone else 110)
 	var gl := UI.label(str(r.get("grade", "?")), 38 if is_phone else 60, Color.WHITE)
 	gl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	gl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	gp.add_child(gl)
+	# Keep the badge a circle: do not let the row stretch it to the text column's height
+	gp.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	top.add_child(gp)
 
 	var tv := UI.vbox(3 if is_phone else 4)
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var status_stamp: Control = UI.stamp("✓ 簽約成功", UI.GOOD, 14 if is_phone else 16) if bool(r.get("signed", false)) else UI.stamp("未簽約・再考慮", UI.MUTED, 14 if is_phone else 16)
+	var status_stamp: Control = UI.stamp("已簽約", UI.GOLD, 14 if is_phone else 16) if is_signed else UI.stamp("再考慮", UI.MUTED, 14 if is_phone else 16)
 	var final_score: int = int(r.get("score", 0))
 	var score_lbl := UI.label("評分 0 分", 18 if is_phone else 22, UI.TEXT)
 	var stamp_row := UI.hbox(8)
@@ -1329,27 +1835,43 @@ func _build_result() -> void:
 	tv.add_child(stamp_row)
 
 	# Number rolling animation (0.45s)
-	var score_tw := create_tween()
-	score_tw.tween_method(func(val: int):
-		score_lbl.text = "評分 %d 分" % val
-	, 0, final_score, 0.45).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	if is_new_result and not Engine.is_editor_hint():
+		var score_tw := create_tween()
+		score_tw.tween_method(func(val: int):
+			score_lbl.text = "評分 %d 分" % val
+		, 0, final_score, 0.45).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	else:
+		score_lbl.text = "評分 %d 分" % final_score
 
-	# Stamp bounce and subtle vibration animation (0.24s)
-	status_stamp.pivot_offset = Vector2(40, 14)
-	status_stamp.scale = Vector2(1.8, 1.8)
-	status_stamp.modulate.a = 0.0
-	var stamp_tw := create_tween()
-	stamp_tw.set_parallel(true)
-	stamp_tw.tween_property(status_stamp, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	stamp_tw.tween_property(status_stamp, "modulate:a", 1.0, 0.15)
-	stamp_tw.chain().tween_callback(func():
-		var punch_tw := tv.create_tween()
-		punch_tw.tween_property(tv, "position:y", tv.position.y + 3.0, 0.04)
-		punch_tw.tween_property(tv, "position:y", tv.position.y, 0.05)
-	)
+	# Stamp scaling from 1.6 with slight rotation (0.28s) + stamp sound on impact
+	if is_new_result and not Engine.is_editor_hint():
+		status_stamp.pivot_offset = Vector2(40, 14)
+		status_stamp.scale = Vector2(1.6, 1.6)
+		status_stamp.rotation = -0.12
+		status_stamp.modulate.a = 0.0
+		var stamp_tw := create_tween()
+		stamp_tw.set_parallel(true)
+		stamp_tw.tween_property(status_stamp, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		stamp_tw.tween_property(status_stamp, "rotation", 0.0, 0.28).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		stamp_tw.tween_property(status_stamp, "modulate:a", 1.0, 0.18)
+		stamp_tw.chain().tween_callback(func():
+			Sound.play("stamp", self)
+			var punch_tw := tv.create_tween()
+			punch_tw.tween_property(tv, "position:y", tv.position.y + 3.0, 0.04)
+			punch_tw.tween_property(tv, "position:y", tv.position.y, 0.05)
+		)
+
 	tv.add_child(UI.label(str(r.get("summary", "")), 14 if is_phone else 15, UI.TEXT, true))
-	if r.get("signed", false):
-		tv.add_child(UI.label("業績 +%d" % int(r.get("commission", 0)), 15, UI.GOLD))
+	if is_signed:
+		var comm_val: int = int(r.get("commission", 0))
+		var comm_lbl: Label = UI.label("業績 +%d" % (0 if (is_new_result and not Engine.is_editor_hint()) else comm_val), 15, UI.GOLD)
+		tv.add_child(comm_lbl)
+		if is_new_result and not Engine.is_editor_hint() and comm_val > 0:
+			var comm_tw := create_tween()
+			comm_tw.tween_method(func(val: int):
+				if comm_lbl and is_instance_valid(comm_lbl):
+					comm_lbl.text = "業績 +%d" % val
+			, 0, comm_val, 0.6).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	for cap in r.get("caps", []):
 		tv.add_child(UI.label("評級上限：" + str(cap), 13, UI.OK, true))
 	top.add_child(tv)
@@ -1373,12 +1895,13 @@ func _build_result() -> void:
 	var stress: Array = _sess.get("stress", []) if _sess.get("stress") != null else []
 	if not stress.is_empty():
 		var sv := _section("◎ 90 天壓力預演（事件承接測試）")
+		var s_idx: int = 0
 		for e: Dictionary in stress:
 			var res: String = str(e.get("result", ""))
 			var tone: String = "good" if res == "held" else ("ok" if res == "partial" else "bad")
 			var tag_text: String = "● 穩健承接" if res == "held" else ("▲ 部分承受" if res == "partial" else "× 風險擊穿")
 
-			var card := UI.panel(UI.PANEL_2, 10, 10)
+			var card := UI.panel(UI.PANEL_2, 10, 14)
 			var cv := UI.vbox(5 if is_phone else 6)
 			card.add_child(cv)
 
@@ -1405,6 +1928,33 @@ func _build_result() -> void:
 
 			cv.add_child(UI.label(str(e.get("text", "")), 13, UI.MUTED, true))
 			sv.add_child(card)
+
+			# 90-day stress events reveal one by one every 0.6s with sound
+			if is_new_result and not Engine.is_editor_hint():
+				card.modulate.a = 0.0
+				var cur_card := card
+				var cur_cv := cv
+				var cur_res := res
+				var delay: float = float(s_idx) * 0.6
+				var row_tw := create_tween()
+				row_tw.tween_interval(delay)
+				row_tw.tween_callback(func():
+					if cur_res == "held":
+						Sound.play("shield", self)
+					elif cur_res == "broken":
+						Sound.play("crack", self)
+					else:
+						Sound.play("shield", self)
+				)
+				row_tw.tween_callback(func():
+					# Slide from 12 px below the container-assigned position, not from y=0 (that ignores the padding)
+					var base_y: float = cur_cv.position.y
+					cur_cv.position.y = base_y + 12.0
+					cur_cv.create_tween().tween_property(cur_cv, "position:y", base_y, 0.35).set_ease(Tween.EASE_OUT)
+				)
+				row_tw.tween_property(cur_card, "modulate:a", 1.0, 0.35)
+
+			s_idx += 1
 
 	# Dedicated ending and no-plan comparison
 	var ep: Dictionary = r.get("epilogue", {}) if r.get("epilogue") is Dictionary else {}

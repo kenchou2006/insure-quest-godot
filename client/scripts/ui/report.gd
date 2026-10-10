@@ -18,6 +18,7 @@ func _ready() -> void:
 	_v = UI.vbox(14)
 	_scroll = UI.scroll(_v)
 	m.add_child(_scroll)
+	UI.pop_in(self)
 	if not Net.state.is_empty():
 		refresh(Net.state)
 
@@ -61,7 +62,7 @@ func refresh(s: Dictionary) -> void:
 			head.add_child(UI.button("培訓紀錄", func(): Net.leave(); main.show_records(), 15, UI.PANEL_2))
 		head.add_child(UI.button("回主選單", func(): main.leave_to_menu(), 15))
 		_v.add_child(head)
-	_v.add_child(UI.label("評分＝專業五力 50%＋滿意度 25%＋聲望 15%＋業績 10%。不適合的銷售會在稽核中被扣分。", 13 if portrait else 14, UI.MUTED, true))
+	_v.add_child(UI.label("評分＝能力 50%＋服務 15%＋守護 10%＋聲望 15%＋業績 10%。不適合的銷售會在稽核中被扣分。", 13 if portrait else 14, UI.MUTED, true))
 
 	var final: Array = s.get("final", []) if s.get("final") != null else []
 	var mine: Dictionary = {}
@@ -87,7 +88,24 @@ func refresh(s: Dictionary) -> void:
 		var nv := UI.vbox(2)
 		nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		nv.add_child(UI.label("%s%s　%d 分" % [r.get("name", ""), "（電腦）" if r.get("isBot", false) else "", int(r.get("score", 0))], 16 if UI.is_phone_portrait() else (18 if portrait else 20), UI.TEXT, true))
-		nv.add_child(UI.label("客戶 %d 位・滿意度 %d・聲望 %d・業績 %d" % [int(r.get("clients", 0)), int(r.get("service", 0)), int(r.get("reputation", 0)), int(r.get("commission", 0))], 12 if UI.is_phone_portrait() else (13 if portrait else 14), UI.MUTED, true))
+
+		# Score breakdown row under grade: 能力 / 服務 / 守護 / 聲望 / 業績 with weights (50/15/10/15/10)
+		var sk_dict: Dictionary = r.get("skill", {}) if r.get("skill") is Dictionary else {}
+		var sk_val: int = 0
+		if not sk_dict.is_empty():
+			var sum_sk: float = 0.0
+			for k in ["trust", "insight", "fit", "risk", "compliance"]:
+				sum_sk += float(sk_dict.get(k, 0.0))
+			sk_val = int(round(sum_sk / 5.0))
+		var s_val: int = int(r.get("service", 0))
+		var p_val: int = int(r.get("protection", 0))
+		var rep_val: int = int(r.get("reputation", 0))
+		var com_val: int = int(r.get("commission", 0))
+
+		var breakdown_txt := "能力(50%%) %d ｜ 服務(15%%) %d ｜ 守護(10%%) %d ｜ 聲望(15%%) %d ｜ 業績(10%%) %d" % [sk_val, s_val, p_val, rep_val, com_val]
+		nv.add_child(UI.label(breakdown_txt, 11 if UI.is_phone_portrait() else 12, UI.ACCENT_2, true))
+
+		nv.add_child(UI.label("客戶 %d 位・滿意度 %d・守護分 %d・聲望 %d・業績 %d" % [int(r.get("clients", 0)), s_val, p_val, rep_val, com_val], 11 if UI.is_phone_portrait() else 12, UI.MUTED, true))
 		for cap in (r.get("caps", []) as Array):
 			nv.add_child(UI.label("評級上限：" + str(cap), 12 if UI.is_phone_portrait() else 13, UI.OK, true))
 		h.add_child(nv)
@@ -98,8 +116,8 @@ func refresh(s: Dictionary) -> void:
 	# Honor medal wall (endgame special awards)
 	var awards: Array = s.get("awards", []) if s.get("awards") != null else []
 	if not awards.is_empty():
-		var aw_panel := UI.panel(Color("#102b3a"), 14, 12)
-		aw_panel.add_theme_stylebox_override("panel", UI.box(Color("#102b3a"), 14, UI.GOLD, 8, false))
+		var aw_panel := UI.panel(UI.PANEL, 14, 12)
+		aw_panel.add_theme_stylebox_override("panel", UI.box(UI.PANEL, 14, UI.GOLD, 8, false))
 		var aw_v := UI.vbox(8)
 		var aw_head := UI.hbox(8)
 		aw_head.add_child(UI.label("★ 本局榮譽勳章", 18 if portrait else 20, UI.GOLD))
@@ -116,8 +134,8 @@ func refresh(s: Dictionary) -> void:
 		for a: Dictionary in awards:
 			var wid: String = str(a.get("winnerId", ""))
 			var is_my_award: bool = wid != "" and wid == Net.player_id
-			var card_bg: Color = Color("#173c52") if is_my_award else Color("#0e222e")
-			var card_border: Color = UI.GOLD if is_my_award else Color("#21495e")
+			var card_bg: Color = UI.PANEL_2 if is_my_award else UI.PANEL
+			var card_border: Color = UI.GOLD if is_my_award else Color(UI.ACCENT.r, UI.ACCENT.g, UI.ACCENT.b, 0.3)
 			var ac := UI.panel(card_bg, 10, 10)
 			ac.add_theme_stylebox_override("panel", UI.box(card_bg, 10, card_border, 8, false))
 			# Autowrapped Label has min width 0; cells must expand or text gets squeezed into one character per line
@@ -236,7 +254,7 @@ func refresh(s: Dictionary) -> void:
 				match_timeline = timelines_arr[_letter_idx]
 
 		if not match_timeline.is_empty():
-			var chart_card := UI.panel(Color("#0d2432"), 8, 8)
+			var chart_card := UI.panel(UI.PANEL, 8, 8)
 			var chart_v := UI.vbox(3)
 			chart_v.add_child(UI.label("十年財務人生軌跡（有規劃 vs 沒有規劃）：", 12, UI.MUTED))
 			var tc := TimelineChart.new()
@@ -250,7 +268,7 @@ func refresh(s: Dictionary) -> void:
 	var me: Dictionary = Net.me()
 	var ds: Array = me.get("decisions", [])
 	if not ds.is_empty():
-		var dp := UI.panel(Color("#0d2432"), 14, 14)
+		var dp := UI.panel(UI.PANEL, 14, 14)
 		var dv := UI.vbox(10)
 
 		# Phone portrait: title and quality counts stack, side by side they exceed the screen width
@@ -290,7 +308,7 @@ func refresh(s: Dictionary) -> void:
 			var top_row := UI.hbox(6)
 
 			# Quality tag chip
-			var badge := UI.panel(Color(q_col.r, q_col.g, q_col.b, 0.2), 4, 3)
+			var badge := UI.chip(Color(q_col.r, q_col.g, q_col.b, 0.2), Color(0, 0, 0, 0), 4, 8, 3)
 			badge.add_child(UI.label(q_label, 11, q_col))
 			top_row.add_child(badge)
 
@@ -328,8 +346,13 @@ func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
 	var portrait: bool = UI.is_portrait()
 	var is_phone: bool = UI.is_phone_portrait()
 
-	var card_panel := UI.panel(Color("#0c2433"), 16, 14 if is_phone else 18)
-	card_panel.add_theme_stylebox_override("panel", UI.box(Color("#0c2433"), 16, UI.GOLD, 8 if is_phone else 12, false))
+	# Warm palette: Ivory text on deep green background with gold borders
+	var cert_bg := Color("#0d2821")
+	var cert_ivory := Color("#fdfcf7")
+	var cert_muted := Color("#c8ded4")
+
+	var card_panel := UI.panel(cert_bg, 16, 14 if is_phone else 18)
+	card_panel.add_theme_stylebox_override("panel", UI.box(cert_bg, 16, UI.GOLD, 8 if is_phone else 12, false))
 	card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	if not portrait and not UI.is_phone():
@@ -342,7 +365,7 @@ func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
 	var head := UI.hbox(8)
 	var title_lbl := UI.label("公平待客面談完訓卡", 20 if is_phone else 24, UI.GOLD)
 	head.add_child(title_lbl)
-	var sub_lbl := UI.label("｜ 專業顧問合格證明", 12 if is_phone else 14, UI.MUTED)
+	var sub_lbl := UI.label("｜ 專業顧問合格證明", 12 if is_phone else 14, cert_muted)
 	head.add_child(sub_lbl)
 	head.add_child(UI.spacer())
 
@@ -362,14 +385,14 @@ func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
 	left_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var info_h := UI.hbox(8)
-	info_h.add_child(UI.label("顧問：%s" % str(mine.get("name", "顧問")), 16 if is_phone else 18, Color.WHITE))
+	info_h.add_child(UI.label("顧問：%s" % str(mine.get("name", "顧問")), 16 if is_phone else 18, cert_ivory))
 	var date_str: String = Time.get_date_string_from_system()
-	info_h.add_child(UI.label("（%s 完訓）" % date_str, 12 if is_phone else 13, UI.MUTED))
+	info_h.add_child(UI.label("（%s 完訓）" % date_str, 12 if is_phone else 13, cert_muted))
 	left_v.add_child(info_h)
 
 	var stats_h := UI.hbox(8)
 	var clients_count: int = int(mine.get("clients", 0))
-	stats_h.add_child(UI.label("服務客戶：%d 位" % clients_count, 13 if is_phone else 14, UI.TEXT))
+	stats_h.add_child(UI.label("服務客戶：%d 位" % clients_count, 13 if is_phone else 14, cert_ivory))
 
 	# Red-light count & stamp
 	var red_lights: int = 0
@@ -405,18 +428,18 @@ func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
 	var seal_box := UI.hbox(10)
 	seal_box.alignment = BoxContainer.ALIGNMENT_CENTER
 
-	# Seal-like badge
+	# Seal-like badge in gold
 	var grade_str: String = str(mine.get("grade", "C"))
 	var grade_col: Color = {"S": UI.GOLD, "A": UI.GOOD, "B": UI.INFO}.get(grade_str, UI.BAD)
-	var seal := UI.panel(grade_col.darkened(0.4), 48 if is_phone else 64, 8)
-	seal.add_theme_stylebox_override("panel", UI.box(grade_col.darkened(0.45), 48 if is_phone else 64, grade_col, 4, false))
+	var seal := UI.panel(Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.18), 48 if is_phone else 64, 8)
+	seal.add_theme_stylebox_override("panel", UI.box(Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.22), 48 if is_phone else 64, UI.GOLD, 4, false))
 	seal.custom_minimum_size = Vector2(80 if is_phone else 100, 80 if is_phone else 100)
 	var seal_v := UI.vbox(0)
 	seal_v.alignment = BoxContainer.ALIGNMENT_CENTER
-	var s_lbl := UI.label(grade_str, 40 if is_phone else 52, Color.WHITE)
+	var s_lbl := UI.label(grade_str, 40 if is_phone else 52, UI.GOLD if grade_str == "S" else grade_col)
 	s_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	seal_v.add_child(s_lbl)
-	var s_sub := UI.label("GRADE", 10, grade_col)
+	var s_sub := UI.label("GRADE", 10, UI.GOLD)
 	s_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	seal_v.add_child(s_sub)
 	seal.add_child(seal_v)
@@ -430,7 +453,7 @@ func _build_certificate_card(mine: Dictionary, _s: Dictionary) -> Control:
 		coach_line = coach_line.substr(0, 58) + "…"
 	else:
 		coach_line += "。"
-	var coach_lbl := UI.label("教練評語：「%s」" % coach_line, 12 if is_phone else 13, UI.MUTED, true)
+	var coach_lbl := UI.label("教練評語：「%s」" % coach_line, 12 if is_phone else 13, cert_muted, true)
 	coach_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if not is_phone else HORIZONTAL_ALIGNMENT_LEFT
 	right_v.add_child(coach_lbl)
 

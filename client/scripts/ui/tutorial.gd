@@ -31,6 +31,16 @@ static func is_automation_mode() -> bool:
 	return false
 
 
+static func is_forced() -> bool:
+	if Engine.is_editor_hint():
+		return false
+	var cfg := ConfigFile.new()
+	var err := cfg.load(CFG_PATH)
+	if err != OK:
+		return false
+	return bool(cfg.get_value("tutorial", "forced", false))
+
+
 static func is_step_done(step_id: String) -> bool:
 	if Engine.is_editor_hint():
 		return true
@@ -47,6 +57,11 @@ static func mark_step_done(step_id: String) -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(CFG_PATH)
 	cfg.set_value("tutorial", step_id, true)
+	var discover_done: bool = bool(cfg.get_value("tutorial", "discover", false))
+	var talk_done: bool = bool(cfg.get_value("tutorial", "talk", false))
+	var plan_done: bool = bool(cfg.get_value("tutorial", "plan", false))
+	if discover_done and talk_done and plan_done:
+		cfg.set_value("tutorial", "forced", false)
 	cfg.save(CFG_PATH)
 
 
@@ -54,9 +69,11 @@ static func reset_all() -> void:
 	if Engine.is_editor_hint():
 		return
 	var cfg := ConfigFile.new()
+	cfg.load(CFG_PATH)
 	cfg.set_value("tutorial", "discover", false)
 	cfg.set_value("tutorial", "talk", false)
 	cfg.set_value("tutorial", "plan", false)
+	cfg.set_value("tutorial", "forced", true)
 	cfg.save(CFG_PATH)
 
 
@@ -65,7 +82,17 @@ static func should_show(step_id: String, is_actor: bool) -> bool:
 		return false
 	if is_automation_mode():
 		return false
-	return not is_step_done(step_id)
+	if is_step_done(step_id):
+		return false
+	if is_forced():
+		return true
+	if Net != null and Net.is_logged_in():
+		var lvl: Dictionary = Net.get_level()
+		if lvl.is_empty():
+			return false
+		if int(lvl.get("games", 0)) > 0:
+			return false
+	return true
 
 
 static func show_spotlight(parent: Control, target: Control, step_id: String, text: String, on_dismiss: Callable = Callable()) -> Tutorial:
@@ -117,6 +144,12 @@ func _ready() -> void:
 
 	_build_card()
 	queue_redraw()
+	if not UI.is_animation_disabled():
+		modulate.a = 0.0
+		var tw := create_tween()
+		tw.tween_property(self, "modulate:a", 1.0, 0.22)
+		if _card_panel != null:
+			UI.pop_in(_card_panel, 0.22)
 
 
 func _exit_tree() -> void:
@@ -227,11 +260,25 @@ func _gui_input(event: InputEvent) -> void:
 		accept_event()
 
 
+var _dismissing: bool = false
+
 func dismiss() -> void:
+	if _dismissing:
+		return
+	_dismissing = true
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _step_id != "":
 		mark_step_done(_step_id)
 	if _active == self:
 		_active = null
 	if _on_dismiss.is_valid():
 		_on_dismiss.call()
-	queue_free()
+	if UI.is_animation_disabled():
+		queue_free()
+		return
+	var tw := create_tween()
+	tw.tween_property(self, "modulate:a", 0.0, 0.18)
+	if _card_panel != null and is_instance_valid(_card_panel):
+		UI.pop_out(_card_panel, func(): queue_free(), 0.18)
+	else:
+		tw.tween_callback(queue_free)

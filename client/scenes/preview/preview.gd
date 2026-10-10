@@ -31,6 +31,14 @@ var _pending := false
 
 
 func _ready() -> void:
+	# Optional -- --screen=plan --layout=desktop --scroll=1 overrides (for command-line captures)
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--screen="):
+			screen = a.substr(9)
+		elif a.begins_with("--layout="):
+			layout = a.substr(9)
+		elif a.begins_with("--scroll="):
+			scroll = float(a.substr(9))
 	# Deferred rebuild: prevents sound playback errors in screen _ready while parent node is still adding children
 	_queue_rebuild()
 	# Run with -- --capture=path.png: captures screenshot after animations complete and exits (for docs and verification)
@@ -38,7 +46,11 @@ func _ready() -> void:
 		if a.begins_with("--capture="):
 			get_window().size = SIZES.get(layout, SIZES["desktop"])
 			get_tree().root.content_scale_size = SIZES.get(layout, SIZES["desktop"])
-			await get_tree().create_timer(6.0 if scroll > 0.0 else 3.0).timeout
+			var delay := 6.0 if scroll > 0.0 else 3.0
+			for d in OS.get_cmdline_user_args():
+				if d.begins_with("--delay="):
+					delay = float(d.substr(8))
+			await get_tree().create_timer(delay).timeout
 			get_viewport().get_texture().get_image().save_png(a.substr(10))
 			get_tree().quit()
 

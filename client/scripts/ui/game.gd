@@ -27,6 +27,7 @@ var _announcement_modal: Control = null
 var _prev_last_roll: int = 0
 var _prev_turn_player_id: String = ""
 var _prev_round_num: int = -1
+var _local_roll_in_flight: bool = false
 var _dice_cutscene_layer: Control = null
 var _cutscene_center_box: Control = null
 var _dice_roll_info_lbl: Label = null
@@ -38,6 +39,8 @@ var _screen_glow: Panel = null
 var _btn_pulse := 0.0
 var _actor_avatar_panel: PanelContainer = null
 var _actor_avatar_label: Label = null
+var _client_strip: PanelContainer = null
+var _client_avatars_box: HBoxContainer = null
 
 # Deferred overlay display (waiting for dice and pawn animations to complete)
 var _is_overlay_deferred: bool = false
@@ -64,7 +67,7 @@ var _dice_ctl: DiceControl
 class DiceControl extends Control:
 	var value: int = 0
 	var rolling: bool = false
-	var dot_color: Color = Color("#f2c14e")
+	var dot_color: Color = UI.GOLD
 
 	func _init() -> void:
 		var sz: float = 72.0 if UI.is_phone_portrait() else (48.0 if UI.is_phone_landscape() else 84.0)
@@ -84,8 +87,8 @@ class DiceControl extends Control:
 
 	func _draw() -> void:
 		var r := Rect2(Vector2.ZERO, size).grow(-3 if UI.is_phone() else -4)
-		var bg_col := Color("#173748") if not rolling else Color("#225068")
-		var border_col := Color("#f2c14e") if not rolling else Color("#2fd197")
+		var bg_col := Color("#14352d") if not rolling else Color("#1a4239")
+		var border_col := UI.GOLD if not rolling else UI.ACCENT_2
 		draw_style_box(UI.box(bg_col, int(size.x * 0.16), border_col, 0), r)
 
 		if value <= 0 or value > 6:
@@ -166,6 +169,22 @@ func _build_ui() -> void:
 	_left_stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(_left_stack)
 
+	# Subtle radial vignette behind the board
+	var vignette := TextureRect.new()
+	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.08, 0.22, 0.18, 0.0))
+	grad.set_color(1, Color(0.02, 0.06, 0.05, 0.65))
+	var grad_tex := GradientTexture2D.new()
+	grad_tex.gradient = grad
+	grad_tex.fill = GradientTexture2D.FILL_RADIAL
+	grad_tex.fill_from = Vector2(0.5, 0.5)
+	grad_tex.fill_to = Vector2(1.0, 1.0)
+	vignette.texture = grad_tex
+	vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_left_stack.add_child(vignette)
+
 	_board = Board.new()
 	_board.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_left_stack.add_child(_board)
@@ -184,8 +203,8 @@ func _build_ui() -> void:
 	_left_stack.add_child(_center)
 
 	# Prominent full-width banner when it's your turn
-	_my_turn_banner = UI.panel(Color("#133647"), 12, 6)
-	_my_turn_banner.add_theme_stylebox_override("panel", UI.box(Color("#133647"), 12, UI.GOLD, 8, false))
+	_my_turn_banner = UI.panel(Color("#1a4239"), 12, 6)
+	_my_turn_banner.add_theme_stylebox_override("panel", UI.box(Color("#1a4239"), 12, UI.GOLD, 8, false))
 	_my_turn_banner.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	var banner_l := UI.label("★ 輪到你了！請擲骰前進 ★", 14 if UI.is_phone_landscape() else (16 if UI.is_phone_portrait() else 18), UI.GOLD)
 	banner_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -194,7 +213,7 @@ func _build_ui() -> void:
 	_center.add_child(_my_turn_banner)
 
 	# Spectator ribbon during other players' turns
-	_spectator_ribbon = UI.panel(Color("#0d2432"), 10, 6)
+	_spectator_ribbon = UI.panel(Color("#0f2922"), 10, 6)
 	_spectator_ribbon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_spectator_ribbon_lbl = UI.label("觀看中：其他顧問的回合", 12 if UI.is_phone_landscape() else (13 if UI.is_phone_portrait() else 14), UI.MUTED)
 	_spectator_ribbon_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -221,6 +240,20 @@ func _build_ui() -> void:
 	actor_row.add_child(_turn_label)
 	_center.add_child(actor_row)
 
+	# Compact client book strip in board center (up to 6 signed clients)
+	_client_strip = UI.panel(Color("#102821", 0.85), 8, 4)
+	_client_strip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var strip_inner := UI.vbox(2)
+	strip_inner.alignment = BoxContainer.ALIGNMENT_CENTER
+	var strip_head := UI.hbox(4)
+	strip_head.alignment = BoxContainer.ALIGNMENT_CENTER
+	strip_head.add_child(UI.label("客戶簿", 11 if UI.is_phone() else 12, UI.GOLD))
+	strip_inner.add_child(strip_head)
+	_client_avatars_box = UI.hbox(4 if UI.is_phone() else 6)
+	_client_avatars_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	strip_inner.add_child(_client_avatars_box)
+	_client_strip.add_child(strip_inner)
+
 	_dice_ctl = DiceControl.new()
 	_dice_ctl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_center.add_child(_dice_ctl)
@@ -230,12 +263,15 @@ func _build_ui() -> void:
 	_center.add_child(_dice_roll_info_lbl)
 
 	_roll_btn = UI.button("▶ 擲骰子", func():
+		_local_roll_in_flight = true
+		_roll_btn.disabled = true
 		Sound.play("dice", self)
 		Net.act({"type": "roll"})
 	, 16 if UI.is_phone_landscape() else (22 if UI.is_phone_portrait() else (22 if portrait else 24)), UI.ACCENT)
 	_roll_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_roll_btn.custom_minimum_size = Vector2(160 if UI.is_phone_landscape() else (180 if UI.is_phone_portrait() else (180 if portrait else 220)), 38 if UI.is_phone_landscape() else (54 if UI.is_phone_portrait() else (50 if portrait else 56)))
 	_center.add_child(_roll_btn)
+	_center.add_child(_client_strip)
 
 	if not UI.is_phone():
 		var leg_text: String = "◎客戶 ✚事件 ↗市場 ✓合規 ⚠稽核 ♥介紹 ◇研討 ★結算"
@@ -309,8 +345,8 @@ func _build_ui() -> void:
 	sv.add_child(top)
 
 	# Collapsible match quest card (collapsed by default into one line "★ 任務 2/3 ▼", click to expand)
-	_quests_card = UI.panel(Color("#102b3a"), 8, 8)
-	_quests_card.add_theme_stylebox_override("panel", UI.box(Color("#102b3a"), 8, UI.GOLD.darkened(0.3), 8, false))
+	_quests_card = UI.panel(Color("#14352d"), 8, 8)
+	_quests_card.add_theme_stylebox_override("panel", UI.box(Color("#14352d"), 8, UI.GOLD.darkened(0.3), 8, false))
 	var q_box := UI.vbox(4)
 	var q_head := UI.hbox(6)
 	_quests_title_lbl = UI.label("★ 任務 0/0 ▼", 14 if UI.is_phone() else 15, UI.GOLD)
@@ -370,6 +406,23 @@ func _build_ui() -> void:
 			btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			_tab_buttons.append(btn)
 			_tab_bar.add_child(btn)
+
+	if not Engine.is_editor_hint():
+		Portraits.add_player_avatar_callback(_on_player_avatar_loaded)
+		if Net != null:
+			Net.avatar_loaded.connect(_on_player_avatar_loaded)
+
+
+func _exit_tree() -> void:
+	if not Engine.is_editor_hint():
+		Portraits.remove_player_avatar_callback(_on_player_avatar_loaded)
+		if Net != null and Net.avatar_loaded.is_connected(_on_player_avatar_loaded):
+			Net.avatar_loaded.disconnect(_on_player_avatar_loaded)
+
+
+func _on_player_avatar_loaded(_arg1: Variant = null, _arg2: Variant = null) -> void:
+	if Net.state != null and not Net.state.is_empty():
+		refresh(Net.state)
 
 
 func _sync_center_bounds() -> void:
@@ -509,8 +562,9 @@ func _process(delta: float) -> void:
 			_dice_ctl.rotation = 0.0
 			_show_die()
 			var tw := create_tween()
-			_dice_ctl.scale = Vector2(1.2, 1.2)
-			tw.tween_property(_dice_ctl, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			_dice_ctl.scale = Vector2(1.4, 1.4)
+			tw.tween_property(_dice_ctl, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			Sound.play("dice_settle", self)
 
 
 func _show_die() -> void:
@@ -542,22 +596,27 @@ func refresh(s: Dictionary) -> void:
 	if cur_id != "" and (cur_id != _prev_turn_player_id or round_num != _prev_round_num):
 		_prev_turn_player_id = cur_id
 		_prev_round_num = round_num
+		_prev_last_roll = 0
 		var cur_player_idx: int = int(s.get("turn", 0)) % 4
 		var player_col: Color = UI.PLAYER_COLORS[cur_player_idx]
 		_show_turn_transition(round_num, cur_name, player_col, mine)
 		if mine:
 			Sound.play("step", self)
 
-	# Dice roll cutscene trigger: when stage changes from roll or lastRoll changes
-	if last_roll_val > 0 and last_roll_val != _prev_last_roll:
+	# Dice roll cutscene trigger: when stage changes from roll, lastRoll changes, or local roll was in flight
+	# lastRoll is never cleared on the server, so only fire once the turn has left the roll stage
+	var trigger_cutscene: bool = stage != "roll" and last_roll_val > 0 and (last_roll_val != _prev_last_roll or _prev_stage == "roll" or _local_roll_in_flight)
+	if trigger_cutscene:
 		_prev_last_roll = last_roll_val
+		_local_roll_in_flight = false
 		_play_dice_cutscene(cur_name, last_roll_val, mine)
-		# Defer interview/event panel display: dice roll animation (1.0s) + pawn 1/6s per tile + buffer (0.35s)
-		var total_anim_time: float = 1.0 + (float(last_roll_val) * (1.0 / 6.0)) + 0.35
+		# Defer interview/event panel display: dice roll animation (1.0s) + pawn 1/6s per tile + buffer (0.45s)
+		var total_anim_time: float = 1.0 + (float(last_roll_val) * (1.0 / 6.0)) + 0.45
 		_is_overlay_deferred = true
 		_deferred_overlay_timer = total_anim_time
 
-	_board.set_data(Net.static_data.get("board", []), s.get("players", []), cur_id)
+	_board.set_data(Net.static_data.get("board", []), s.get("players", []), cur_id, s.get("territory", {}))
+	_update_center_client_strip()
 	_top_label.text = "第 %d / %d 回合 ｜ 名單剩 %d 位" % [round_num, int(s.get("settings", {}).get("rounds", 6)), int(s.get("deckLeft", 0))]
 
 	# Own turn vs spectating other player turn indicator
@@ -566,6 +625,8 @@ func refresh(s: Dictionary) -> void:
 	if _actor_avatar_panel != null:
 		_actor_avatar_panel.add_theme_stylebox_override("panel", UI.box(player_col, 12, Color.WHITE if mine else Color(0, 0, 0, 0), 0))
 		_actor_avatar_label.text = cur_name.substr(0, 1) if cur_name != "" else "顧"
+	if _actor_avatar_panel != null:
+		_actor_avatar_panel.visible = false
 	if mine:
 		_turn_label.text = ""
 		_my_turn_banner.visible = true
@@ -576,21 +637,22 @@ func refresh(s: Dictionary) -> void:
 		_roll_btn.visible = stage == "roll"
 		_roll_btn.disabled = false
 	else:
-		_turn_label.text = "【%s】行動中……" % cur_name
-		_turn_label.add_theme_color_override("font_color", player_col.lightened(0.2))
 		_my_turn_banner.visible = false
 		_spectator_ribbon.visible = true
-		_spectator_ribbon_lbl.text = "觀看中：【%s】的回合（觀察其決策與作答）" % cur_name
+		_spectator_ribbon_lbl.text = "觀看中：【%s】的回合（行動中）" % cur_name
+		_turn_label.text = ""
 		_screen_glow.visible = true
-		_screen_glow.add_theme_stylebox_override("panel", UI.box(Color(0, 0, 0, 0), 12, Color("#1e4256"), 2, false))
+		_screen_glow.add_theme_stylebox_override("panel", UI.box(Color(0, 0, 0, 0), 12, Color("#1a4239"), 2, false))
 		_screen_glow.modulate.a = 0.45
 		_roll_btn.visible = false
 		_roll_btn.disabled = true
 		_center.modulate = Color(0.85, 0.92, 0.98)
 
 	if stage == "roll":
-		_is_overlay_deferred = false
-		_deferred_overlay_timer = 0.0
+		_prev_last_roll = 0
+		if not _local_roll_in_flight:
+			_is_overlay_deferred = false
+			_deferred_overlay_timer = 0.0
 		_dice_ctl.set_value(0)
 		if _dice_roll_info_lbl != null:
 			_dice_roll_info_lbl.text = "請點選下方擲骰" if mine else "等待【%s】擲骰……" % cur_name
@@ -663,7 +725,7 @@ func refresh(s: Dictionary) -> void:
 		UI.clear(_quests_content)
 		var done_count: int = 0
 		for q: Dictionary in quests:
-			var q_row := UI.panel(Color("#0c202c"), 6, 6)
+			var q_row := UI.panel(Color("#0d231e"), 6, 6)
 			var qv := UI.vbox(2)
 			var qh := UI.hbox(4)
 			var q_title: String = str(q.get("title", "任務"))
@@ -677,7 +739,9 @@ func refresh(s: Dictionary) -> void:
 			qh.add_child(UI.label(q_title, 13 if UI.is_phone() else 14, UI.GOLD if is_done else UI.TEXT, true))
 			qh.add_child(UI.spacer())
 			if is_done:
-				qh.add_child(UI.label("✓ 達成", 12 if UI.is_phone() else 13, UI.GOLD))
+				var done_chip := UI.chip(Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.18), UI.GOLD, 4, 8, 3)
+				done_chip.add_child(UI.label("✓ 達成", 11 if UI.is_phone() else 12, UI.GOLD))
+				qh.add_child(done_chip)
 			else:
 				qh.add_child(UI.label("%d/%d" % [cur_p, target_p], 12 if UI.is_phone() else 13, UI.ACCENT_2))
 			qv.add_child(qh)
@@ -711,19 +775,38 @@ func refresh(s: Dictionary) -> void:
 	var i: int = 0
 	for p: Dictionary in s.get("players", []):
 		var is_cur: bool = str(p.get("id", "")) == cur_id
-		var card := UI.panel(UI.PANEL_2 if is_cur else Color("#0f2733"), 10, 8)
+		var card := UI.panel(UI.PANEL_2 if is_cur else Color("#112d26"), 10, 8)
 		var v := UI.vbox(2)
 		var h := UI.hbox(6)
-		h.add_child(UI.label("●", 16, UI.PLAYER_COLORS[i % 4]))
+		var p_col: Color = UI.PLAYER_COLORS[i % 4]
+		var av_tex: Texture2D = null
+		if not Engine.is_editor_hint():
+			if str(p.get("id", "")) == Net.player_id and Net.avatar_tex != null:
+				av_tex = Net.avatar_tex
+			else:
+				var av_url: String = str(p.get("avatar", ""))
+				if av_url != "" and av_url != "null" and av_url.begins_with("https://"):
+					av_tex = Portraits.get_player_avatar(av_url)
+		if av_tex != null:
+			var dot_size: float = 20.0
+			var av_round := UI.RoundTex.new(av_tex, Vector2(dot_size, dot_size), -1.0, p_col, 2.0)
+			av_round.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			h.add_child(av_round)
+		else:
+			h.add_child(UI.label("●", 16, p_col))
 		var nm: String = str(p.get("name", "")) + ("（你）" if str(p.get("id", "")) == Net.player_id else "")
 		if bool(p.get("loggedIn", false)):
 			nm += " [會員]"
 		h.add_child(UI.label(nm, 15, UI.TEXT))
 		var streak: int = int(p.get("complianceStreak", 0))
 		if streak >= 2:
-			h.add_child(UI.label("★ 合規連擊 ×%d" % streak, 12, UI.GOLD))
+			var strk_chip := UI.chip(Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.18), UI.GOLD, 4, 8, 3)
+			strk_chip.add_child(UI.label("★ 合規連擊 ×%d" % streak, 11, UI.GOLD))
+			h.add_child(strk_chip)
 		if not p.get("connected", true) and not p.get("isBot", false):
-			h.add_child(UI.label("斷線", 12, UI.BAD))
+			var dis_chip := UI.chip(Color(UI.BAD.r, UI.BAD.g, UI.BAD.b, 0.18), UI.BAD, 4, 8, 3)
+			dis_chip.add_child(UI.label("斷線", 11, UI.BAD))
+			h.add_child(dis_chip)
 		if is_cur:
 			h.add_child(UI.label("◀", 14, UI.GOLD))
 		v.add_child(h)
@@ -748,6 +831,55 @@ func _update_quests_title() -> void:
 		_quests_title_lbl.text = "★ 任務 %d/%d ▼" % [done_count, quests.size()]
 	else:
 		_quests_title_lbl.text = "★ 任務 %d/%d ▲" % [done_count, quests.size()]
+
+
+func _update_center_client_strip() -> void:
+	if _client_avatars_box == null or not is_instance_valid(_client_avatars_box):
+		return
+	UI.clear(_client_avatars_box)
+	var me: Dictionary = Net.me()
+	var book: Array = me.get("book", [])
+	var av_sz: int = 22 if UI.is_phone_landscape() else (26 if UI.is_phone_portrait() else 32)
+	var count: int = mini(book.size(), 6)
+	# Hide the strip until the first signing so it never crowds the dice area
+	if _client_strip != null:
+		_client_strip.visible = count > 0
+	if count == 0:
+		return
+
+	for idx_c in range(count):
+		var b: Dictionary = book[idx_c]
+		var c_id: String = str(b.get("clientId", b.get("id", "")))
+		var c_name: String = str(b.get("name", "客戶"))
+		var sat: int = int(b.get("satisfaction", 50))
+
+		var item := Control.new()
+		item.custom_minimum_size = Vector2(av_sz, av_sz)
+
+		item.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		item.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		item.mouse_filter = Control.MOUSE_FILTER_PASS
+		var av := Portraits.create_avatar(c_id, c_name, av_sz)
+		av.position = Vector2.ZERO
+		av.size = Vector2(av_sz, av_sz)
+		item.add_child(av)
+
+		# Round satisfaction dot with a dark rim at the bottom-right
+		var dot_sz: float = maxf(8.0, av_sz * 0.3)
+		var dot := Panel.new()
+		var dot_sb := StyleBoxFlat.new()
+		dot_sb.bg_color = UI.GOOD if sat >= 75 else (UI.OK if sat >= 50 else UI.BAD)
+		dot_sb.set_corner_radius_all(int(dot_sz))
+		dot_sb.set_border_width_all(2)
+		dot_sb.border_color = Color("#102821")
+		dot.add_theme_stylebox_override("panel", dot_sb)
+		dot.size = Vector2(dot_sz, dot_sz)
+		dot.position = Vector2(av_sz - dot_sz * 0.85, av_sz - dot_sz * 0.85)
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		item.add_child(dot)
+
+		item.tooltip_text = "%s（滿意度 %d）" % [c_name, sat]
+		_client_avatars_box.add_child(item)
 
 
 func _apply_deferred_overlay() -> void:
@@ -786,6 +918,7 @@ func _apply_deferred_overlay() -> void:
 		_event.refresh(ev, cur_name)
 
 	_sync_tabs()
+	_update_center_client_strip()
 
 	# My client book
 	UI.clear(_book_box)
@@ -830,16 +963,26 @@ func _play_dice_cutscene(roller_name: String, roll_val: int, is_self: bool) -> v
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cutscene.add_child(dim)
 
-	var center_box := UI.vbox(10)
-	var box_w: float = 240.0
-	var box_h: float = 160.0
-	center_box.custom_minimum_size = Vector2(box_w, box_h)
-	center_box.size = Vector2(box_w, box_h)
+	if _center != null:
+		_center.visible = false
+
 	var inner_r: Rect2 = _board.get_inner_rect()
-	center_box.position = inner_r.get_center() - Vector2(box_w * 0.5, box_h * 0.5)
+	var box_w: float = clampf(inner_r.size.x * 0.85, 280.0, 360.0)
+	var box_h: float = 170.0
+
+	var card := UI.panel(Color("#102821", 0.96), 14, 12)
+	card.add_theme_stylebox_override("panel", UI.box(Color("#102821", 0.96), 14, UI.GOLD, 2, false))
+	card.custom_minimum_size = Vector2(box_w, box_h)
+	card.size = Vector2(box_w, box_h)
+	card.pivot_offset = Vector2(box_w * 0.5, box_h * 0.5)
+	card.position = inner_r.get_center() - Vector2(box_w * 0.5, box_h * 0.5)
+	cutscene.add_child(card)
+	_cutscene_center_box = card
+
+	var center_box := UI.vbox(10)
 	center_box.alignment = BoxContainer.ALIGNMENT_CENTER
-	cutscene.add_child(center_box)
-	_cutscene_center_box = center_box
+	center_box.set_anchors_preset(Control.PRESET_FULL_RECT)
+	card.add_child(center_box)
 
 	var big_dice := DiceControl.new()
 	big_dice.custom_minimum_size = Vector2(96, 96)
@@ -850,6 +993,8 @@ func _play_dice_cutscene(roller_name: String, roll_val: int, is_self: bool) -> v
 	var text_lbl := UI.label("【%s】擲骰中……" % roller_name, 20, UI.TEXT)
 	text_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center_box.add_child(text_lbl)
+
+	UI.pop_in(card, 0.2)
 
 	var tw: Tween = cutscene.create_tween()
 	for step: int in range(6):
@@ -866,11 +1011,11 @@ func _play_dice_cutscene(roller_name: String, roll_val: int, is_self: bool) -> v
 		big_dice.set_value(roll_val)
 		text_lbl.text = "【%s】擲出 %d 點！" % [roller_name, roll_val]
 		text_lbl.add_theme_color_override("font_color", UI.GOLD)
-		Sound.play("dice", self)
+		Sound.play("dice_settle", self)
 
 		var bounce_tw: Tween = big_dice.create_tween()
 		big_dice.scale = Vector2(1.4, 1.4)
-		bounce_tw.tween_property(big_dice, "scale", Vector2.ONE, 0.24).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		bounce_tw.tween_property(big_dice, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 		if is_self:
 			_trigger_screen_shake()
@@ -881,6 +1026,10 @@ func _play_dice_cutscene(roller_name: String, roll_val: int, is_self: bool) -> v
 	tw.tween_callback(func():
 		_cutscene_center_box = null
 		cutscene.queue_free()
+		if _center != null:
+			var s_curr: Dictionary = Net.state
+			var has_overlay_curr: bool = (s_curr.get("session") is Dictionary) or (s_curr.get("event") is Dictionary)
+			_center.visible = not has_overlay_curr and not _is_overlay_deferred
 	)
 
 
@@ -909,9 +1058,16 @@ func _show_turn_transition(round_num: int, player_name: String, player_col: Colo
 	_turn_toast_layer = card_layer
 
 	var p := UI.panel(UI.PANEL_2, 14, 10)
-	p.add_theme_stylebox_override("panel", UI.box(Color("#102e3f"), 14, UI.GOLD if is_self else player_col, 10))
-	p.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	p.position = Vector2((_left_stack.size.x - 340) * 0.5, 14)
+	p.add_theme_stylebox_override("panel", UI.box(Color("#14352d"), 14, UI.GOLD if is_self else player_col, 10))
+	# Centre horizontally at the top: anchor both sides to 0.5 and grow both ways (no manual x offset)
+	p.anchor_left = 0.5
+	p.anchor_right = 0.5
+	p.anchor_top = 0.0
+	p.anchor_bottom = 0.0
+	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	p.offset_left = 0.0
+	p.offset_right = 0.0
+	p.offset_top = 14.0
 	p.custom_minimum_size = Vector2(340, 0)
 	card_layer.add_child(p)
 
@@ -954,6 +1110,7 @@ func _show_announcement(ann: Dictionary) -> void:
 	p.offset_top = 20 if UI.is_phone_portrait() else (36 if portrait else 60)
 	p.offset_bottom = -20 if UI.is_phone_portrait() else (-36 if portrait else -60)
 	dim.add_child(p)
+	UI.pop_in(p, 0.22)
 
 	var v := UI.vbox(12)
 	p.add_child(v)
@@ -978,8 +1135,11 @@ func _show_announcement(ann: Dictionary) -> void:
 
 	var close_btn := UI.button("知道了", func():
 		if _announcement_modal != null:
-			_announcement_modal.queue_free()
-			_announcement_modal = null
+			UI.pop_out(p, func():
+				if _announcement_modal != null:
+					_announcement_modal.queue_free()
+					_announcement_modal = null
+			, 0.18)
 	, 18)
 	v.add_child(close_btn)
 	Sound.play("alarm", self)
@@ -998,6 +1158,7 @@ func _confirm_leave() -> void:
 	var is_phone := UI.is_phone()
 	p.custom_minimum_size = Vector2(300, 150) if is_phone else Vector2(380, 170)
 	dim.add_child(p)
+	UI.pop_in(p, 0.2)
 
 	var v := UI.vbox(14)
 	p.add_child(v)
@@ -1007,10 +1168,14 @@ func _confirm_leave() -> void:
 
 	var btn_row := UI.hbox(12)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
-	var stay_btn := UI.button("留下", func(): dim.queue_free(), 14, UI.PANEL_2)
+	var stay_btn := UI.button("留下", func():
+		UI.pop_out(p, dim.queue_free, 0.16)
+	, 14, UI.PANEL_2)
 	var leave_btn := UI.button("離開", func():
-		dim.queue_free()
-		main.leave_to_menu()
+		UI.pop_out(p, func():
+			dim.queue_free()
+			main.leave_to_menu()
+		, 0.16)
 	, 14, UI.BAD)
 	btn_row.add_child(stay_btn)
 	btn_row.add_child(leave_btn)

@@ -45,7 +45,7 @@ func _ready() -> void:
 		bg_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		bg_tex.set_anchors_preset(Control.PRESET_FULL_RECT)
 		bg_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		bg_tex.modulate = Color(0.35, 0.45, 0.55, 0.16)
+		bg_tex.modulate = Color(0.7, 0.85, 0.75, 0.16)
 		add_child(bg_tex)
 
 	_toasts = UI.vbox(6)
@@ -181,6 +181,7 @@ func toast(text: String, color := UI.TEXT, secs := 3.0) -> void:
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toasts.add_child(p)
 	_toasts.position.x = (size.x - 420) / 2.0
+	UI.pop_in(p, 0.2)
 	var tw := create_tween()
 	tw.tween_interval(secs)
 	tw.tween_property(p, "modulate:a", 0.0, 0.4)

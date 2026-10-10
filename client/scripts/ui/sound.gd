@@ -55,6 +55,16 @@ static func _get_or_create_stream(name: String) -> AudioStreamWAV:
 			stream = _gen_tone(1174.66, 0.12, 0.18)
 		"violation":
 			stream = _gen_violation(0.35, 0.28)
+		"dice_settle":
+			stream = _gen_dice_settle()
+		"shield":
+			stream = _gen_shield()
+		"crack":
+			stream = _gen_crack()
+		"stamp":
+			stream = _gen_stamp()
+		"claim":
+			stream = _gen_claim()
 	if stream != null:
 		_streams[name] = stream
 	return stream
@@ -180,3 +190,108 @@ static func _gen_slide(start_f: float, end_f: float, duration: float, volume: fl
 	wav.stereo = false
 	wav.data = data
 	return wav
+
+
+static func _gen_dice_settle(duration: float = 0.09, volume: float = 0.22) -> AudioStreamWAV:
+	var mix_rate: int = 22050
+	var samples: int = int(duration * mix_rate)
+	var data: PackedByteArray = PackedByteArray()
+	data.resize(samples * 2)
+	for i in range(samples):
+		var t: float = float(i) / float(mix_rate)
+		var env: float = 1.0 - (float(i) / float(samples))
+		env = env * env
+		var f: float = 520.0 + sin(t * 120.0) * 100.0
+		var tone: float = sin(2.0 * PI * f * t) * 0.7
+		var click: float = (randf() * 2.0 - 1.0) * 0.3 if i < int(samples * 0.15) else 0.0
+		var wave: float = (tone + click) * env * volume
+		var val: int = clampi(int(wave * 32767.0), -32768, 32767)
+		var idx: int = i * 2
+		data[idx] = val & 0xFF
+		data[idx + 1] = (val >> 8) & 0xFF
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = mix_rate
+	wav.stereo = false
+	wav.data = data
+	return wav
+
+
+static func _gen_shield(duration: float = 0.28, volume: float = 0.25) -> AudioStreamWAV:
+	var mix_rate: int = 22050
+	var samples: int = int(duration * mix_rate)
+	var data: PackedByteArray = PackedByteArray()
+	data.resize(samples * 2)
+	for i in range(samples):
+		var t: float = float(i) / float(mix_rate)
+		var env: float = (1.0 - (float(i) / float(samples)))
+		env = env * env
+		var tone1: float = sin(2.0 * PI * 659.25 * t)
+		var tone2: float = sin(2.0 * PI * 987.77 * t) * 0.6
+		var tone3: float = sin(2.0 * PI * 1318.51 * t) * 0.35
+		var wave: float = (tone1 + tone2 + tone3) * 0.5 * env * volume
+		var val: int = clampi(int(wave * 32767.0), -32768, 32767)
+		var idx: int = i * 2
+		data[idx] = val & 0xFF
+		data[idx + 1] = (val >> 8) & 0xFF
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = mix_rate
+	wav.stereo = false
+	wav.data = data
+	return wav
+
+
+static func _gen_crack(duration: float = 0.22, volume: float = 0.28) -> AudioStreamWAV:
+	var mix_rate: int = 22050
+	var samples: int = int(duration * mix_rate)
+	var data: PackedByteArray = PackedByteArray()
+	data.resize(samples * 2)
+	var phase: float = 0.0
+	for i in range(samples):
+		var frac: float = float(i) / float(samples)
+		var freq: float = lerpf(340.0, 90.0, frac)
+		phase += 2.0 * PI * freq / float(mix_rate)
+		var env: float = 1.0 - frac
+		var noise: float = (randf() * 2.0 - 1.0) * (0.8 if frac < 0.2 else 0.15)
+		var wave: float = (sin(phase) * 0.6 + noise * 0.4) * env * volume
+		var val: int = clampi(int(wave * 32767.0), -32768, 32767)
+		var idx: int = i * 2
+		data[idx] = val & 0xFF
+		data[idx + 1] = (val >> 8) & 0xFF
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = mix_rate
+	wav.stereo = false
+	wav.data = data
+	return wav
+
+
+static func _gen_stamp(duration: float = 0.18, volume: float = 0.32) -> AudioStreamWAV:
+	var mix_rate: int = 22050
+	var samples: int = int(duration * mix_rate)
+	var data: PackedByteArray = PackedByteArray()
+	data.resize(samples * 2)
+	var phase: float = 0.0
+	for i in range(samples):
+		var frac: float = float(i) / float(samples)
+		var freq: float = lerpf(160.0, 50.0, frac)
+		phase += 2.0 * PI * freq / float(mix_rate)
+		var env: float = (1.0 - frac) * (1.0 - frac)
+		var slap: float = (randf() * 2.0 - 1.0) * (0.6 if frac < 0.08 else 0.05)
+		var wave: float = (sin(phase) * 0.75 + slap * 0.25) * env * volume
+		var val: int = clampi(int(wave * 32767.0), -32768, 32767)
+		var idx: int = i * 2
+		data[idx] = val & 0xFF
+		data[idx + 1] = (val >> 8) & 0xFF
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = mix_rate
+	wav.stereo = false
+	wav.data = data
+	return wav
+
+
+static func _gen_claim(duration: float = 0.35, volume: float = 0.25) -> AudioStreamWAV:
+	return _gen_arpeggio([523.25, 659.25, 783.99, 1046.5], 0.08, volume)
+

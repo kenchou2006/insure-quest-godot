@@ -102,6 +102,7 @@ class TrendChart extends Control:
 
 func _ready() -> void:
 	_build_ui()
+	UI.pop_in(self)
 
 
 func on_layout_changed(_is_portrait: bool) -> void:
@@ -262,9 +263,9 @@ func _switch_tab(tab_idx: int) -> void:
 # ──────────────────────────────────────────────────────────────────
 
 func _render_overview_tab() -> void:
-	var scroll: ScrollContainer = UI.scroll(UI.vbox(14))
+	var content := UI.vbox(14)
+	var scroll: ScrollContainer = UI.scroll(content)
 	_body_area.add_child(scroll)
-	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
 
 	content.add_child(UI.label("載入個人學習檔案中……", 15, UI.MUTED))
 
@@ -401,15 +402,14 @@ const PROVIDER_NAMES := {
 	"nvidia-nim": "NVIDIA NIM（不計額度）",
 	"nvidia-nim-backup": "NVIDIA NIM 備援 DeepSeek（不計額度）",
 	"workers-ai": "Cloudflare Workers AI（計入額度）",
-	"claude": "Claude（計入額度）",
 	"mock": "本機模擬",
 }
 
 
 func _render_ai_tab() -> void:
-	var scroll: ScrollContainer = UI.scroll(UI.vbox(14))
+	var content := UI.vbox(14)
+	var scroll: ScrollContainer = UI.scroll(content)
 	_body_area.add_child(scroll)
-	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
 	content.add_child(UI.label("載入 AI 使用紀錄中……", 15, UI.MUTED))
 
 	var res: Array = await Net.http_json(HTTPClient.METHOD_GET, "/api/ai-usage")
@@ -519,10 +519,9 @@ func _render_ai_tab() -> void:
 # ──────────────────────────────────────────────────────────────────
 
 func _render_codex_tab() -> void:
-	var scroll: ScrollContainer = UI.scroll(UI.vbox(14))
+	var content := UI.vbox(14)
+	var scroll: ScrollContainer = UI.scroll(content)
 	_body_area.add_child(scroll)
-	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
-
 	content.add_child(UI.label("載入客戶圖鑑資料中……", 15, UI.MUTED))
 
 	if _profile.is_empty():
@@ -811,9 +810,9 @@ func _show_history_detail(rec: Dictionary) -> void:
 # ──────────────────────────────────────────────────────────────────
 
 func _render_trainer_tab() -> void:
-	var scroll: ScrollContainer = UI.scroll(UI.vbox(12))
+	var content := UI.vbox(12)
+	var scroll: ScrollContainer = UI.scroll(content)
 	_body_area.add_child(scroll)
-	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
 
 	var top_bar := UI.hbox(8)
 	top_bar.custom_minimum_size = Vector2(0, 44)
@@ -920,9 +919,9 @@ func _load_trainer_learners(_container: VBoxContainer) -> void:
 # ──────────────────────────────────────────────────────────────────
 
 func _render_insights_tab() -> void:
-	var scroll: ScrollContainer = UI.scroll(UI.vbox(14))
+	var content := UI.vbox(14)
+	var scroll: ScrollContainer = UI.scroll(content)
 	_body_area.add_child(scroll)
-	var content: VBoxContainer = scroll.get_child(0) as VBoxContainer
 	content.add_child(UI.label("載入培訓弱點洞察中……", 15, UI.MUTED))
 
 	var res: Array = await Net.fetch_insights()

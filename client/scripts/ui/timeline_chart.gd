@@ -7,12 +7,19 @@ class_name TimelineChart
 
 var timeline_data: Dictionary = {}
 var compact: bool = false
+var anim_progress: float = 1.0:
+	set(v):
+		anim_progress = v
+		queue_redraw()
+
+var _tween: Tween = null
+var _last_data_hash: int = 0
 
 const COLOR_PLAN := Color("#3ddc97")       # Accent green
 const COLOR_NO_PLAN := Color("#e76f51")    # Muted red
 const COLOR_ZERO_LINE := Color("#7a4646")  # Zero debt boundary
 const COLOR_DEBT_BG := Color(0.9, 0.2, 0.2, 0.09)
-const COLOR_GRID := Color(0.18, 0.35, 0.45, 0.3)
+const COLOR_GRID := Color(0.15, 0.45, 0.35, 0.3)
 
 
 func _ready() -> void:
@@ -30,10 +37,27 @@ func _update_min_size() -> void:
 
 
 func set_data(data: Dictionary, is_compact: bool = false) -> void:
+	var new_hash: int = data.hash()
+	var is_new: bool = (new_hash != _last_data_hash)
+	_last_data_hash = new_hash
 	timeline_data = data
 	compact = is_compact
 	_update_min_size()
-	queue_redraw()
+
+	if _tween != null and _tween.is_valid():
+		_tween.kill()
+		_tween = null
+
+	if compact or Engine.is_editor_hint():
+		anim_progress = 1.0
+		queue_redraw()
+	elif is_new and is_inside_tree():
+		anim_progress = 0.0
+		_tween = create_tween()
+		_tween.tween_property(self, "anim_progress", 1.0, 1.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	else:
+		anim_progress = 1.0
+		queue_redraw()
 
 
 func _draw() -> void:
@@ -88,8 +112,8 @@ func _draw() -> void:
 		var ratio: float = (val - y_min) / maxf(1.0, y_max - y_min)
 		return plot_rect.end.y - ratio * plot_rect.size.y
 
-	var to_x: Callable = func(yr: int) -> float:
-		var ratio: float = float(yr) / 10.0
+	var to_x: Callable = func(yr: float) -> float:
+		var ratio: float = yr / 10.0
 		return plot_rect.position.x + ratio * plot_rect.size.x
 
 	# 3. Debt below zero shaded & zero line
@@ -107,7 +131,7 @@ func _draw() -> void:
 			y_ticks.append(roundf(y_max * 0.5 / 100000.0) * 100000.0)
 			y_ticks.append(roundf(y_max * 0.95 / 100000.0) * 100000.0)
 		else:
-			y_ticks.append(roundf(y_max * 0.8 / 10000.0) * 10000.0)
+			y_ticks.append(roundf(y_max * 0.8 / 100000.0) * 100000.0)
 		if y_min < -50000.0:
 			y_ticks.append(roundf(y_min * 0.8 / 100000.0) * 100000.0)
 
@@ -121,26 +145,21 @@ func _draw() -> void:
 
 		# X axis labels
 		for yr in [0, 2, 5, 8, 10]:
-			var gx: float = to_x.call(yr)
+			var gx: float = to_x.call(float(yr))
 			var yr_txt: String = "%d年" % yr
 			draw_string(font, Vector2(gx - 18, plot_rect.end.y + 18), yr_txt, HORIZONTAL_ALIGNMENT_CENTER, 36, font_size, UI.MUTED)
 
-	# 5. Polylines
-	var no_plan_pts := PackedVector2Array()
-	var count_pts: int = min(years.size(), no_plan.size())
-	for i in range(count_pts):
-		var yr: int = int(years[i])
-		no_plan_pts.append(Vector2(to_x.call(yr), to_y.call(float(no_plan[i]))))
+	var cur_prog: float = 1.0 if (compact or Engine.is_editor_hint()) else anim_progress
+	var max_year: float = cur_prog * 10.0
 
+	# 5. Polylines
+	var no_plan_pts := _sample_polyline(years, no_plan, max_year, to_x, to_y)
 	if no_plan_pts.size() >= 2:
 		draw_polyline(no_plan_pts, COLOR_NO_PLAN, 2.0 if compact else 2.5, true)
 
 	var with_plan_pts := PackedVector2Array()
 	if adopted and not with_plan.is_empty():
-		var wp_count: int = min(years.size(), with_plan.size())
-		for i in range(wp_count):
-			var yr: int = int(years[i])
-			with_plan_pts.append(Vector2(to_x.call(yr), to_y.call(float(with_plan[i]))))
+		with_plan_pts = _sample_polyline(years, with_plan, max_year, to_x, to_y)
 		if with_plan_pts.size() >= 2:
 			draw_polyline(with_plan_pts, COLOR_PLAN, 2.0 if compact else 2.5, true)
 
@@ -148,7 +167,9 @@ func _draw() -> void:
 	for ev in events:
 		var yr: int = int(ev.get("year", 0))
 		if yr >= 0 and yr <= 10:
-			var ex: float = to_x.call(yr)
+			if not (compact or Engine.is_editor_hint()) and float(yr) > max_year:
+				continue
+			var ex: float = to_x.call(float(yr))
 			var ey: float = to_y.call(float(no_plan[yr]) if yr < no_plan.size() else 0.0)
 			if adopted and yr < with_plan.size():
 				ey = to_y.call(float(with_plan[yr]))
@@ -177,3 +198,26 @@ func _draw() -> void:
 			var leg_x2: float = leg_x + 85.0
 			draw_line(Vector2(leg_x2, leg_y - 4), Vector2(leg_x2 + 16, leg_y - 4), COLOR_NO_PLAN, 2.5)
 			draw_string(font, Vector2(leg_x2 + 20, leg_y), "沒有規劃", HORIZONTAL_ALIGNMENT_LEFT, 65, font_size, UI.TEXT)
+
+
+func _sample_polyline(years: Array, values: Array, max_year: float, to_x: Callable, to_y: Callable) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	var count: int = min(years.size(), values.size())
+	if count < 2:
+		return pts
+	for i in range(count):
+		var yr := float(years[i])
+		if yr <= max_year:
+			pts.append(Vector2(to_x.call(yr), to_y.call(float(values[i]))))
+		else:
+			if i > 0:
+				var prev_yr := float(years[i - 1])
+				var prev_val := float(values[i - 1])
+				var cur_val := float(values[i])
+				var span := maxf(0.0001, yr - prev_yr)
+				var t := (max_year - prev_yr) / span
+				var interp_val := lerpf(prev_val, cur_val, t)
+				pts.append(Vector2(to_x.call(max_year), to_y.call(interp_val)))
+			break
+	return pts
+
