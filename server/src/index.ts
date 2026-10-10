@@ -15,18 +15,18 @@ export interface Env {
   ASSETS?: Fetcher;
   /** Workers AI binding */
   AI?: Ai;
-  /** workers-ai (default) | claude | mock | rules */
+  /** default chain NVIDIA NIM -> Workers AI | nvidia-only | workers-ai-only | mock | rules */
   AI_PROVIDER?: string;
   WORKERS_AI_MODEL?: string;
   /** Daily AI call quota per account (default 10, resets at Taipei midnight) */
   AI_DAILY_LIMIT?: string;
-  ANTHROPIC_API_KEY?: string;
-  AI_MODEL?: string;
   /** NVIDIA NIM configuration (preferred when filled and connected normally) */
   NVIDIA_API_KEY?: string;
   NVIDIA_MODEL?: string;
   NVIDIA_FALLBACK_MODEL?: string;
   NVIDIA_BASE_URL?: string;
+  /** NIM image model for the local-only /api/dev/gen-img (default black-forest-labs/flux.1-dev) */
+  NVIDIA_IMAGE_MODEL?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   /** Trainer emails allowed to view all learner records, comma-separated */
@@ -75,13 +75,52 @@ export default {
       if (!prompt) {
         return json({ error: '缺少 prompt 參數' }, 400);
       }
-      if (!env.AI) {
-        return json({ error: 'Workers AI (env.AI) 未設定' }, 500);
+      const clampDim = (val: string | null) => {
+        if (!val) return undefined;
+        const n = parseInt(val, 10);
+        return Number.isFinite(n) ? Math.max(256, Math.min(1536, Math.round(n))) : undefined;
+      };
+      const width = clampDim(url.searchParams.get('w') ?? url.searchParams.get('width'));
+      const height = clampDim(url.searchParams.get('h') ?? url.searchParams.get('height'));
+      const jpeg = (bytes: Uint8Array, provider: string) => new Response(bytes, {
+        status: 200,
+        headers: { 'Content-Type': 'image/jpeg', 'X-Image-Provider': provider, ...CORS },
+      });
+
+      // 1. NVIDIA NIM (preferred): hosted FLUX.1-dev; sizes must be multiples of 64
+      if (env.NVIDIA_API_KEY) {
+        const snap = (n: number | undefined) => n ? Math.max(768, Math.min(1344, Math.round(n / 64) * 64)) : 1024;
+        const model = env.NVIDIA_IMAGE_MODEL || 'black-forest-labs/flux.1-dev';
+        // NIM's content filter is sensitive to some wordings (e.g. numeric ages, clothing terms): retry with the short `alt` prompt before Workers AI
+        const alt = url.searchParams.get('alt');
+        for (const p of alt ? [prompt, alt] : [prompt]) try {
+          const r = await fetch(`https://ai.api.nvidia.com/v1/genai/${model}`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${env.NVIDIA_API_KEY}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ prompt: p, width: snap(width), height: snap(height), seed: 0, steps: 28 }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          const data = r.ok ? await r.json<{ artifacts?: { base64?: string; finishReason?: string }[] }>() : null;
+          const art = data?.artifacts?.[0];
+          if (art?.base64 && (!art.finishReason || art.finishReason === 'SUCCESS')) {
+            return jpeg(Buffer.from(art.base64, 'base64'), 'nvidia-nim');
+          }
+          console.warn('NIM image attempt failed', r.status, art?.finishReason);
+        } catch (err) {
+          console.warn('NIM image attempt error', err);
+        }
       }
+
+      // 2. Workers AI FLUX schnell (fallback)
+      if (!env.AI) {
+        return json({ error: 'NVIDIA NIM 失敗且 Workers AI (env.AI) 未設定' }, 502);
+      }
+      // Workers AI flux-1-schnell rejects width/height (always square)
+      const modelInput = { prompt, steps: 8 };
       try {
         const res = await (env.AI as unknown as { run: (model: string, input: unknown) => Promise<any> }).run(
           '@cf/black-forest-labs/flux-1-schnell',
-          { prompt, steps: 8 },
+          modelInput,
         );
         let bytes: Uint8Array;
         const b64 = (res as any)?.image ?? (res as any)?.response?.image;
@@ -96,13 +135,7 @@ export default {
         } else {
           return json({ error: 'Workers AI 回傳圖片格式無效' }, 500);
         }
-        return new Response(bytes, {
-          status: 200,
-          headers: {
-            'Content-Type': 'image/jpeg',
-            ...CORS,
-          },
-        });
+        return jpeg(bytes, 'workers-ai');
       } catch (err: any) {
         console.error('FLUX 生圖失敗', err);
         return json({ error: err?.message || '生圖失敗' }, 500);
@@ -177,7 +210,10 @@ export default {
         try { if (origin) sameOrigin = new URL(origin).host === url.host; } catch { sameOrigin = false; }
         const user = sameOrigin ? await currentUser(req, env) : null;
         // Headers only accept ASCII, encode Chinese name first
-        if (user) fwd.headers.set(ACCOUNT_HEADER, encodeURIComponent(JSON.stringify({ id: user.id, name: user.name } satisfies AccountHeader)));
+        if (user) {
+          const pic = typeof user.picture === 'string' && user.picture.startsWith('https://') ? user.picture : undefined;
+          fwd.headers.set(ACCOUNT_HEADER, encodeURIComponent(JSON.stringify({ id: user.id, name: user.name, ...(pic ? { picture: pic } : {}) } satisfies AccountHeader)));
+        }
       }
       const res = await stub.fetch(fwd);
       if (m[2] === 'ws') return res;

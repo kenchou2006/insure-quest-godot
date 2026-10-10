@@ -131,7 +131,7 @@ export class LocalRoom {
           id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'p_' + Math.random().toString(36).slice(2);
           const typed = (msg.name || '').trim();
           const name = typed && typed !== '顧問' ? typed : '顧問';
-          const e = addPlayer(g, { id, name, accountId: null });
+          const e = addPlayer(g, { id, name, accountId: null, avatar: null });
           if (e) {
             id = null;
             this.err(e);

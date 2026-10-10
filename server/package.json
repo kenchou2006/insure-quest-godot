@@ -13,7 +13,6 @@
     "dev:remote-ai": "wrangler dev"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.132.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {

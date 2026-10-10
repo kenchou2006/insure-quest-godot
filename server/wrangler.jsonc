@@ -28,7 +28,7 @@
     "NVIDIA_FALLBACK_MODEL": "deepseek-ai/deepseek-v4.1-flash",
     "AI_DAILY_LIMIT": "10"
   },
-  // Set secrets via wrangler secret put: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, (optional) NVIDIA_API_KEY, (optional) ANTHROPIC_API_KEY, TRAINER_EMAILS (comma-separated trainer emails allowed to view all learner records)
+  // Set secrets via wrangler secret put: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, (optional) NVIDIA_API_KEY, TRAINER_EMAILS (comma-separated trainer emails allowed to view all learner records)
   "observability": { "enabled": true },
   // Local dev environment (npm run dev = wrangler dev --env local): Workers AI binding calls remote, requires wrangler login.
   // When offline, set AI_PROVIDER=mock in .dev.vars (overrides vars below).

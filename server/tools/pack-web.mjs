@@ -66,16 +66,54 @@ const TIPS = `<style id="iq-tips-style">
   min-height: 22px;
   transition: opacity 0.3s ease;
 }
-#iq-tips-sub {
-  font-size: 11px;
-  color: #94a3b8;
-  margin-top: 5px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+/* Brand block replaces Godot's boot logo (boot_splash/show_image=false) */
+body, #canvas { background-color: #0d231e; }
+#iq-brand {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif;
+  pointer-events: none;
+  z-index: 10;
+  animation: iq-fade-in 0.6s ease both;
 }
+#iq-brand-icon svg {
+  width: min(28vmin, 180px);
+  height: auto;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.45));
+}
+#iq-brand-title {
+  margin-top: 18px;
+  font-size: min(7vmin, 44px);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #f4fbf7;
+  white-space: nowrap;
+}
+#iq-brand-sub {
+  margin-top: 4px;
+  font-size: min(4.2vmin, 24px);
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  color: #e5a93c;
+}
+@keyframes iq-fade-in {
+  from { opacity: 0; transform: translate(-50%, -46%); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+#status-progress { accent-color: #2ed59e; }
+#status-progress::-webkit-progress-value { background-color: #2ed59e; }
+#status-progress::-moz-progress-bar { background-color: #2ed59e; }
 </style>
+<div id="iq-brand">
+  <div id="iq-brand-icon">__ICON_SVG__</div>
+  <div id="iq-brand-title">INSURE QUEST</div>
+  <div id="iq-brand-sub">人生顧問局</div>
+</div>
 <div id="iq-tips-overlay">
   <div id="iq-tips-text">先問需求，再談商品</div>
-  <div id="iq-tips-sub">首次載入約 10 MB，之後會從快取秒開</div>
 </div>
 <script id="iq-tips-script">
 (function () {
@@ -107,6 +145,8 @@ const TIPS = `<style id="iq-tips-style">
   function cleanup() {
     clearInterval(timer);
     if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    var brand = document.getElementById("iq-brand");
+    if (brand && brand.parentNode) brand.parentNode.removeChild(brand);
     var style = document.getElementById("iq-tips-style");
     if (style && style.parentNode) style.parentNode.removeChild(style);
   }
@@ -148,7 +188,9 @@ console.log('index.html：已注入解壓縮 shim');
 
 page = readFileSync(html, 'utf8');
 if (!page.includes('iq-tips-script')) {
-  page = page.replace('<script src="index.js"></script>', `${TIPS}\n\t\t<script src="index.js"></script>`);
+  // Inline the app icon so the loading screen needs no extra request
+  const iconSvg = readFileSync(new URL('../../client/icon.svg', import.meta.url), 'utf8').trim();
+  page = page.replace('<script src="index.js"></script>', `${TIPS.replace('__ICON_SVG__', iconSvg)}\n\t\t<script src="index.js"></script>`);
   if (!page.includes('iq-tips-script')) { console.error('index.html 結構不符，無法注入 tips'); process.exit(1); }
   writeFileSync(html, page);
 }

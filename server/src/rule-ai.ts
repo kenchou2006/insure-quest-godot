@@ -1,5 +1,5 @@
 /* INSURE QUEST | Rule-based AI and shared AI interfaces.
- * Kept free of the Anthropic SDK and zod so it can also be bundled for the browser (src/local/local-room.ts).
+ * Kept free of zod so it can also be bundled for the browser (src/local/local-room.ts).
  * Re-exported from ai.ts; server code keeps importing from './ai.ts'.
  */
 import type { ClientProfile, Quality, QuestionId, SessionState, FinalRow, MarketEvent, PlayerState } from './game/types.ts';
@@ -37,13 +37,13 @@ export interface CombinedDialogue {
   coachTip: string;
 }
 
-/** AI provider (Workers AI / Claude / mock): returns null unconditionally on failure without falling back to rule-based */
+/** AI provider (NVIDIA NIM / Workers AI / mock): returns null unconditionally on failure without falling back to rule-based */
 export interface RawAI {
   readonly provider: string;
   readonly unmetered?: boolean;
   freeQuestion(c: ClientProfile, text: string, history: SessionState['asked']): Promise<FreeAnswer | null>;
   /** onAnswer: providers supporting streaming report current text as client answers are generated incrementally (optional) */
-  talk(c: ClientProfile, twist: LifeTwist | null | undefined, history: SessionState['asked'], text: string, onAnswer?: (partial: string) => void): Promise<CombinedDialogue | null>;
+  talk(c: ClientProfile, twist: LifeTwist | null | undefined, history: SessionState['asked'], text: string, onAnswer?: (partial: string, answerDone?: boolean) => void): Promise<CombinedDialogue | null>;
   letter(c: ClientProfile, twist: LifeTwist | null | undefined, facts: LetterFacts): Promise<string | null>;
   gradeObjection(c: ClientProfile, reply: string): Promise<Grade | null>;
   marketNews(ev: MarketEvent): Promise<string | null>;
@@ -57,7 +57,7 @@ export interface RawAI {
 export interface AIService {
   readonly enabled: boolean;
   freeQuestion(c: ClientProfile, text: string, history: SessionState['asked']): Promise<FreeAnswer>;
-  talk(c: ClientProfile, twist: LifeTwist | null | undefined, history: SessionState['asked'], text: string, suggested?: QuestionId, onAnswer?: (partial: string) => void): Promise<CombinedDialogue>;
+  talk(c: ClientProfile, twist: LifeTwist | null | undefined, history: SessionState['asked'], text: string, suggested?: QuestionId, onAnswer?: (partial: string, answerDone?: boolean) => void): Promise<CombinedDialogue>;
   letter(c: ClientProfile, twist: LifeTwist | null | undefined, facts: LetterFacts): Promise<string>;
   gradeObjection(c: ClientProfile, reply: string): Promise<Grade>;
   marketNews(ev: MarketEvent): Promise<string | null>;

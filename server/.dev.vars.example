@@ -7,14 +7,13 @@ GOOGLE_CLIENT_SECRET=
 # 本機測試登入（不需 Google 憑證，僅限 localhost）：/api/auth/dev-login?name=小陳
 DEV_LOGIN=1
 
-# AI 供應者：workers-ai（需 wrangler login）｜mock（本機模擬，不連外）｜claude（需 ANTHROPIC_API_KEY）｜rules
+# AI 供應者：workers-ai（需 wrangler login）｜mock（本機模擬，不連外）｜rules
 # 若設定 NVIDIA_API_KEY，依序嘗試 NIM 主模型 → NIM 備援模型 → Workers AI（只有 Workers AI 扣每日額度）
 AI_PROVIDER=mock
 # NVIDIA_API_KEY=nvapi-xxxx
 # NVIDIA_MODEL=nvidia/nemotron-3-super-120b-a12b
 # NVIDIA_FALLBACK_MODEL=deepseek-ai/deepseek-v4.1-flash   # NIM 備援模型；none 關閉
 # NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
-# ANTHROPIC_API_KEY=
 # 評審體驗碼（逗號分隔，每組至少 8 字元；正式環境請用 wrangler secret 設定不同的值）
 DEMO_CODES=CARDIF-DEMO-2026
 DEMO_AI_LIMIT=30

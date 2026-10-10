@@ -12,7 +12,7 @@ import { computeAwards, DILEMMAS, DILEMMA_EFFECT, emptyStats, pickLifeChange, re
 import { LIFE_TWISTS, applyTwist, type LifeTwist } from './twists.ts';
 import { ruleCompliance, mergeCompliance } from './compliance.ts';
 import { determineLetter, generateTemplateLetter, type LetterFacts, type ClientLetter } from './letters.ts';
-import { simulateTimeline } from './finance.ts';
+import { calculateClaim, formatWan, simulateTimeline } from './finance.ts';
 
 /** Mulberry32 32-bit seeded PRNG for reproducible runs */
 export function mulberry32(seed: number): () => number {
@@ -28,7 +28,7 @@ export function mulberry32(seed: number): () => number {
 export interface Ctx {
   ai: AIService; rng: () => number; now: () => number;
   /** Current text streamed during interview dialogue for client answer (relayed by room to all connections) */
-  onStream?: (text: string) => void;
+  onStream?: (text: string, answerDone?: boolean) => void;
   /** Action processing finished: discard unsent stream chunks (prevents arriving after final state) */
   endStream?: () => void;
 }
@@ -51,17 +51,18 @@ export function createGame(code: string): GameState {
     players: [], turn: 0, round: 1, turnStage: 'roll', lastRoll: null,
     deck: [], marketDeck: [], quizDeck: [],
     clients: Object.fromEntries(CLIENTS.map(c => [c.id, structuredClone(c)])),
-    session: null, event: null, log: [], final: null, version: 0,
+    session: null, event: null, territory: {}, log: [], final: null, version: 0,
   };
 }
 
-export function addPlayer(s: GameState, p: { id: string; name: string; isBot?: boolean; botLevel?: BotLevel; accountId?: string | null }): string | null {
+export function addPlayer(s: GameState, p: { id: string; name: string; isBot?: boolean; botLevel?: BotLevel; accountId?: string | null; avatar?: string | null }): string | null {
   if (s.phase !== 'lobby') return '遊戲已開始';
   if (s.players.length >= MAX_PLAYERS) return `房間已滿（最多 ${MAX_PLAYERS} 人）`;
   if (s.players.some(x => x.id === p.id)) return null;
   const name = (p.name || '顧問').trim().slice(0, 12) || '顧問';
   s.players.push({
     id: p.id, name, isBot: !!p.isBot, botLevel: p.isBot ? (p.botLevel || 'pro') : null, accountId: p.isBot ? null : (p.accountId ?? null),
+    avatar: p.isBot ? null : (p.avatar ?? null),
     connected: !p.isBot, disconnectedAt: null,
     pos: 0, reputation: 50, commission: 0, skillSum: zero(), sessions: 0,
     book: [], decisions: [], quizCorrect: 0, quizTotal: 0, stats: emptyStats(), complianceStreak: 0,
@@ -145,7 +146,7 @@ function startSession(s: GameState, p: PlayerState, c: ClientProfile, referral: 
   const decoy = c.decoy ?? DECOYS[Math.floor(ctx.rng() * DECOYS.length)];
   const clues = shuffle([...c.facts.map(f => ({ ...f, real: true })), { ...decoy, fact: '', real: false }], ctx.rng);
   s.session = {
-    playerId: p.id, clientId: c.id, referral, step: 'discover', asked: [], freeLeft: 1, talkLeft: 3, twist, freeHits: [], clues, observed: [], m,
+    playerId: p.id, clientId: c.id, referral, tileIndex: p.pos, step: 'discover', asked: [], freeLeft: 1, talkLeft: 3, twist, freeHits: [], clues, observed: [], m,
     objectionOrder: shuffle([0, 1, 2, 3], ctx.rng), predictions: {},
   };
   s.turnStage = 'session';
@@ -179,6 +180,35 @@ async function resolveTile(s: GameState, p: PlayerState, ctx: Ctx, passLines: Pe
   switch (tile.type) {
     case 'client': {
       if (passLines.length) log(s, `${p.name} 經過起點：${passLines.map(l => l.text).join('；')}`, 'info', ctx.now());
+      const owned = s.territory?.[p.pos];
+      if (owned && owned.playerId === p.id) {
+        const bookEntry = p.book.find(b => b.clientId === owned.clientId);
+        if (!bookEntry) {
+          delete s.territory[p.pos];
+          return startSession(s, p, drawClient(s, ctx), false, ctx);
+        }
+        p.reputation = clamp(p.reputation + 2);
+        bookEntry.satisfaction = clamp(bookEntry.satisfaction + 5);
+        const referral = bookEntry.satisfaction >= 75 && ctx.rng() < 0.4;
+        const lines: PendingEvent['lines'] = [
+          { text: `為 ${bookEntry.name} 完成保單健檢，滿意度 +5（目前 ${bookEntry.satisfaction}）`, tone: 'good' },
+          { text: '持續服務既有客戶，聲望 +2', tone: 'good' },
+        ];
+        if (referral) {
+          lines.push({ text: `${bookEntry.name} 很滿意你的服務，介紹了一位朋友`, tone: 'good' });
+          log(s, `${p.name} 為 ${bookEntry.name} 進行保單健檢（聲望 +2，滿意度 +5），獲得客戶轉介紹`, 'good', ctx.now());
+        } else {
+          log(s, `${p.name} 為 ${bookEntry.name} 進行保單健檢（聲望 +2，滿意度 +5）`, 'good', ctx.now());
+        }
+        return setEvent(s, {
+          kind: 'checkup',
+          playerId: p.id,
+          title: `保單健檢｜${bookEntry.name}`,
+          body: `定期檢視 ${bookEntry.name} 的保障狀況與生活變化，維持良好關係。`,
+          lines: [...passLines, ...lines],
+          checkup: { clientId: bookEntry.clientId, clientName: bookEntry.name, referral },
+        });
+      }
       return startSession(s, p, drawClient(s, ctx), false, ctx);
     }
     case 'referral': {
@@ -223,14 +253,46 @@ async function resolveTile(s: GameState, p: PlayerState, ctx: Ctx, passLines: Pe
       b.satisfaction = clamp(b.satisfaction + satDelta[r.result]);
       p.reputation = clamp(p.reputation + repDelta[r.result]);
       if (r.result === 'held') { p.commission += 4; if (p.stats) p.stats.heldEvents++; }
+      if (r.result === 'held') b.held = (b.held ?? 0) + 1;
+      else if (r.result === 'partial') b.partial = (b.partial ?? 0) + 1;
+      else if (r.result === 'broken') b.broken = (b.broken ?? 0) + 1;
+
+      const claimData = calculateClaim(c, b.alloc, b.cards, se);
+      const claim = {
+        clientId: c.id,
+        clientName: c.name,
+        event: se.title,
+        tag: se.tag,
+        result: r.result,
+        loss: claimData.loss,
+        covered: claimData.covered,
+        outOfPocket: claimData.outOfPocket,
+      };
+
       const tone = r.result === 'held' ? 'good' : r.result === 'partial' ? 'ok' : 'bad';
       const label = r.result === 'held' ? '承接' : r.result === 'partial' ? '部分承接' : '擊穿';
       log(s, `${c.name}：${se.title} → ${label}`, tone, ctx.now());
-      return ev('life', `${c.name}｜${se.title}`, se.body, [
-        { text: `防線承接力 ${r.defense} / 需求 ${se.need} → ${label}`, tone },
-        { text: r.result === 'broken' ? se.hit : se.held, tone },
-        { text: `客戶滿意度 ${satDelta[r.result] > 0 ? '+' : ''}${satDelta[r.result]}，聲望 ${repDelta[r.result] >= 0 ? '+' : ''}${repDelta[r.result]}${r.result === 'held' ? '，加保業績 +4' : ''}`, tone },
-      ]);
+
+      const claimLineText = r.result === 'held'
+        ? `理賠 ${formatWan(claimData.covered)} 萬已撥付，${c.name}：『還好當初有聽你的。』`
+        : r.result === 'partial'
+        ? `理賠 ${formatWan(claimData.covered)} 萬，仍需自付 ${formatWan(claimData.outOfPocket)} 萬`
+        : `保障缺口：${c.name} 自付 ${formatWan(claimData.outOfPocket)} 萬`;
+
+      return setEvent(s, {
+        kind: 'life',
+        playerId: p.id,
+        title: `理賠服務｜${c.name}`,
+        body: se.body,
+        lines: [
+          ...passLines,
+          { text: claimLineText, tone },
+          { text: `防線承接力 ${r.defense} / 需求 ${se.need} → ${label}`, tone },
+          { text: r.result === 'broken' ? se.hit : se.held, tone },
+          { text: `客戶滿意度 ${satDelta[r.result] > 0 ? '+' : ''}${satDelta[r.result]}，聲望 ${repDelta[r.result] >= 0 ? '+' : ''}${repDelta[r.result]}${r.result === 'held' ? '，加保業績 +4' : ''}`, tone },
+        ],
+        claim,
+      });
     }
     case 'market': {
       const me = draw(s.marketDeck, MARKET_EVENTS, ctx.rng);
@@ -317,6 +379,12 @@ function decide(p: PlayerState, s: GameState, clientName: string, stage: string,
   p.decisions.push(d);
 }
 
+/** Quote of a red-light phrase for the complaint letter: first clause, at most 24 characters */
+function quoteOf(text: string): string {
+  const clause = text.trim().split(/[，。！？,.!?；;]/)[0] || text.trim();
+  return clause.length > 24 ? clause.slice(0, 24) + '…' : clause;
+}
+
 function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ctx) {
   const c = s.clients[sess.clientId];
   const twistedClient = applyTwist(c, sess.twist);
@@ -333,14 +401,27 @@ function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ct
   const mis = pe.over.length > 0 || sess.m.compliance < 70 || pe.quality === 'bad' || violated;
   if (signed) {
     const baseSat = { S: 82, A: 72, B: 60, C: 45 }[fs.grade] ?? 50;
+    let held = 0, partial = 0, broken = 0;
+    for (const e of st.events) {
+      if (e.result === 'held') held++;
+      else if (e.result === 'partial') partial++;
+      else if (e.result === 'broken') broken++;
+    }
     const entry: BookEntry = {
       clientId: c.id, name: c.name, alloc: sess.plan!.alloc, cards: sess.plan!.cards,
       satisfaction: clamp(baseSat + (sess.referral ? 5 : 0)), planQuality: pe.quality,
       compliance: sess.m.compliance, stressUsed: 0, signedRound: s.round, mis,
       violation: violated,
+      held, partial, broken,
     };
     p.book.push(entry);
     p.commission += commission;
+
+    const tIndex = sess.tileIndex ?? p.pos;
+    if (BOARD[tIndex]?.type === 'client') {
+      if (!s.territory) s.territory = {};
+      s.territory[tIndex] = { playerId: p.id, clientId: c.id, clientName: c.name };
+    }
   }
   for (const k of METRICS) p.skillSum[k] += sess.m[k];
   p.sessions++;
@@ -364,7 +445,7 @@ function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ct
   let violationQuote = sess.violationQuote;
   if (!violationQuote) {
     const vAsk = sess.asked.find(a => a.compliance === 'violation');
-    if (vAsk) violationQuote = vAsk.question.slice(0, 15);
+    if (vAsk) violationQuote = quoteOf(vAsk.question);
   }
   const letterFacts = determineLetter(twistedClient, signed, st, {
     violated,
@@ -611,6 +692,11 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       if (ev.quiz && ev.quiz.picked === undefined) return '請先作答';
       if (ev.dilemma && !ev.dilemma.picked) return '請先做出選擇';
       if (ev.review && !ev.review.picked) return '請先決定如何回訪';
+      if (ev.kind === 'checkup' && ev.checkup?.referral) {
+        s.event = null;
+        startSession(s, p, drawClient(s, ctx), true, ctx);
+        return null;
+      }
       endTurn(s, ctx);
       return null;
     }
@@ -641,6 +727,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
     }
     case 'ask': {
       if (sess.step !== 'discover') return '訪談已結束';
+      if (sess.aiBusy) return '客戶正在回應中，請稍候';
       if (interviewReady(sess)) return `最多選 ${STANDARD_ASKS} 題，請進入方案配置`;
       const q = QUESTIONS.find(x => x.id === a.qid);
       if (!q) return '題目無效';
@@ -654,6 +741,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
     }
     case 'ask_free': {
       if (sess.step !== 'discover') return '訪談已結束';
+      if (sess.aiBusy) return '客戶正在回應中，請稍候';
       if (sess.freeLeft <= 0) return '自由提問次數已用完';
       const text = (a.text || '').trim().slice(0, 120);
       if (text.length < 2) return '請輸入問題';
@@ -668,6 +756,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
     }
     case 'talk': {
       if (sess.step !== 'discover') return '訪談已結束';
+      if (sess.aiBusy) return '客戶正在回應中，請稍候';
       const talkLeft = sess.talkLeft ?? 3;
       if (talkLeft <= 0) return '對話輪數已用完，請進入方案配置';
       const text = (a.text || '').trim().slice(0, 150);
@@ -678,8 +767,12 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
 
       // 2. Call AI or fall back to rule-based
       sess.aiBusy = true;
-      const dialogue = await ctx.ai.talk(c, sess.twist, sess.asked, text, a.suggested, ctx.onStream);
-      sess.aiBusy = false;
+      let dialogue;
+      try {
+        dialogue = await ctx.ai.talk(c, sess.twist, sess.asked, text, a.suggested, ctx.onStream);
+      } finally {
+        sess.aiBusy = false;
+      }
 
       // 3. Merge compliance results (taking more severe level and larger penalty)
       const mergedComp = mergeCompliance(ruleComp, dialogue.compliance);
@@ -737,6 +830,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
     }
     case 'to_plan': {
       if (sess.step !== 'discover') return '訪談已結束';
+      if (sess.aiBusy) return '客戶仍在回應中，請稍候';
       if (!interviewReady(sess)) return `請先完成 ${STANDARD_ASKS} 個訪談問題或 3 輪對話`;
       const askedKeys = new Set<string>([...sess.asked.map(x => x.qid), ...sess.freeHits]);
       const keyHit = c.keyQuestions.filter(k => askedKeys.has(k)).length;
@@ -772,7 +866,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       sess.objectionReply = { text: opt.text, title: opt.title, body: opt.body, quality: opt.quality };
       if (opt.changes.compliance !== undefined && opt.changes.compliance <= -15) {
         sess.objViolation = true;
-        sess.violationQuote = opt.text.slice(0, 15);
+        sess.violationQuote = quoteOf(opt.text);
       }
       decide(p, s, c.name, '異議處理', opt.quality, opt.title, opt.body);
       finishSession(s, p, sess, ctx);
@@ -790,7 +884,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       sess.objectionMode = 'free';
       if (g.compliance <= -15) {
         sess.objViolation = true;
-        sess.violationQuote = text.slice(0, 15);
+        sess.violationQuote = quoteOf(text);
       }
       decide(p, s, c.name, '異議處理', g.quality, g.title, g.body);
       finishSession(s, p, sess, ctx);
@@ -800,9 +894,8 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       if (sess.step === 'result') return '面談已結束';
       if (sess.hintUsed) return '這場面談已經用過教練提示';
       sess.hintUsed = true;
-      p.reputation = clamp(p.reputation - 2);
       sess.hint = await ctx.ai.hint(c, sess);
-      log(s, `${p.name} 向教練求助（聲望 -2）`, 'info', ctx.now());
+      log(s, `${p.name} 向教練求助`, 'info', ctx.now());
       return null;
     }
     case 'continue': {
@@ -819,7 +912,19 @@ export function scorePlayer(p: PlayerState): Omit<FinalRow, 'coach'> {
   if (p.sessions) for (const k of METRICS) skill[k] = Math.round(p.skillSum[k] / p.sessions);
   const skillScore = p.sessions ? finalScore(skill).score : 0;
   const service = p.book.length ? Math.round(p.book.reduce((t, b) => t + b.satisfaction, 0) / p.book.length) : 0;
-  const score = Math.round(0.5 * skillScore + 0.25 * service + 0.15 * p.reputation + 0.1 * Math.min(100, p.commission));
+  let protection = 0;
+  if (p.book.length) {
+    const totalProt = p.book.reduce((sum, b) => {
+      if (b.violation) return sum;
+      const h = b.held ?? 0;
+      const part = b.partial ?? 0;
+      const brk = b.broken ?? 0;
+      const total = Math.max(1, h + part + brk);
+      return sum + ((h + 0.5 * part) / total) * 100;
+    }, 0);
+    protection = Math.round(totalProt / p.book.length);
+  }
+  const score = Math.round(0.5 * skillScore + 0.15 * service + 0.10 * protection + 0.15 * p.reputation + 0.10 * Math.min(100, p.commission));
   let grade = score >= 85 ? 'S' : score >= 72 ? 'A' : score >= 60 ? 'B' : 'C';
   const caps: string[] = [];
   const order = ['C', 'B', 'A', 'S'];
@@ -829,7 +934,7 @@ export function scorePlayer(p: PlayerState): Omit<FinalRow, 'coach'> {
   if (p.book.some(b => b.mis)) cap('A', '客戶簿中有不適合的銷售');
   return {
     playerId: p.id, name: p.name, isBot: p.isBot, score, grade, caps, skill, service,
-    reputation: p.reputation, commission: p.commission, clients: p.book.length,
+    protection, reputation: p.reputation, commission: p.commission, clients: p.book.length,
   };
 }
 
@@ -890,10 +995,17 @@ export function publicView(s: GameState, viewerId: string | null = null) {
   const c = sess ? s.clients[sess.clientId] : null;
   return {
     code: s.code, phase: s.phase, hostId: s.hostId, settings: s.settings,
+    territory: s.territory ?? {},
+    // AI-generated clients share generic portraits: clientId -> portrait key (built-in clients use their own id)
+    portraits: Object.fromEntries(Object.values(s.clients).filter(c => c.generated && c.portrait).map(c => [c.id, c.portrait])),
     players: s.players.map(p => ({
       id: p.id, name: p.name, isBot: p.isBot, botLevel: p.botLevel, connected: p.connected, loggedIn: !!p.accountId, complianceStreak: p.complianceStreak ?? 0,
+      avatar: p.avatar ?? null,
       pos: p.pos, reputation: p.reputation, commission: p.commission, sessions: p.sessions,
-      book: p.book.map(b => ({ clientId: b.clientId, name: b.name, satisfaction: b.satisfaction, alloc: b.alloc, cards: b.cards, mis: b.mis })),
+      book: p.book.map(b => ({
+        clientId: b.clientId, name: b.name, satisfaction: b.satisfaction, alloc: b.alloc, cards: b.cards, mis: b.mis,
+        held: b.held ?? 0, partial: b.partial ?? 0, broken: b.broken ?? 0,
+      })),
       decisions: p.decisions.slice(-12),
       quizCorrect: p.quizCorrect, quizTotal: p.quizTotal,
     })),

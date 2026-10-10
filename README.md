@@ -14,7 +14,7 @@ Cloudflare Worker  insure-quest
    ├─ /api/rooms…        Room creation, WebSocket ──▶ Room Durable Object (one per room; server-authoritative game logic, bot advisor)
    ├─ /api/auth/*        Google Login (OAuth, HttpOnly Cookie) ─┐
    ├─ /api/me /api/records /api/profile /api/learners ─────────┴▶ Records Durable Object (dual-track sharding: personal DO shard 10 GB stores detailed decisions and AI quota; global DO stores accounts and statistical summaries)
-   └─ Workers AI (default, env.AI) / Claude (optional): AI clients, AI scoring, coach hints and feedback; 10 daily Workers AI requests per account (NVIDIA NIM is unlimited); fallback to rules-based engine when exceeded or for guests
+   └─ NVIDIA NIM (primary) / Workers AI (last fallback, env.AI): AI clients, AI scoring, coach hints and feedback; 10 daily Workers AI requests per account (NVIDIA NIM is unlimited); fallback to rules-based engine when exceeded or for guests
 ```
 
 - **Do not use Cloudflare Pages.** Pages cannot deploy Durable Objects. If Pages were used, an additional Worker would have to be deployed for DOs, resulting in two deployments and two domains (or service bindings). Workers Static Assets allows the web client and API / DO to be deployed together in a single Worker in one deployment, which is also Cloudflare's currently recommended approach for full-stack projects.
@@ -63,7 +63,6 @@ npx wrangler login                          # First time
 npx wrangler secret put GOOGLE_CLIENT_ID     # Google Login (optional; guest-only mode if unset)
 npx wrangler secret put GOOGLE_CLIENT_SECRET
 npx wrangler secret put NVIDIA_API_KEY        # Optional; prioritizes NVIDIA NIM (auto-fallback to Workers AI on failure/unconfigured)
-npx wrangler secret put ANTHROPIC_API_KEY     # Optional; needed only when AI_PROVIDER=claude
 npm run deploy                                # = build:web + wrangler deploy
 ```
 
@@ -83,8 +82,8 @@ When adding or renaming Durable Object classes, a new tag must be added in `migr
   - **Personal DO Shard (`idFromName('user:' + userId)`)**: Each logged-in learner has a dedicated 10 GB SQLite storage space, preserving complete interview decision histories, detailed per-turn trajectories, and daily AI quotas. Personal data is strictly isolated, capacity is guaranteed not to overflow, and idle shards automatically hibernate without incurring maintenance costs.
   - **Global DO Instance (`idFromName('global')`)**: Stores account identities, login sessions, and lightweight match summaries. When trainers query the learner roster (`/api/learners`) or aggregated records (`/api/records?scope=all`), the global instance aggregates them quickly via a single SQL query, avoiding cross-shard fan-out latency and extra request billing.
 - **Login**: Google OAuth authorization code flow is handled entirely within the Worker (`src/auth.ts`); sessions are stored in HttpOnly Cookies. Godot's HTTP and WebSocket automatically carry them over same-origin, keeping tokens hidden from the frontend. Cross-origin WebSockets do not inherit credentials.
-- **AI Quota**: Calling NVIDIA NIM **is completely exempt from AI quota usage (unlimited)**; switching or falling back to Workers AI / Claude deducts 1 usage per call (`AI_DAILY_LIMIT`, default 10, resets midnight Taipei time; refunded on model failure). Guests, bot advisors, and users who exhaust their quota fall back to the rules-based engine, allowing the game to proceed normally.
-- **AI Providers** (`AI_PROVIDER`): Prioritizes **NVIDIA NIM** (if `NVIDIA_API_KEY` is set; primary model `NVIDIA_MODEL`=nemotron-3-super; falls back on failure to NIM fallback model `NVIDIA_FALLBACK_MODEL`=deepseek-v4.1-flash [slower, 45s timeout; set `none` to disable]; on further failure falls back to **Workers AI**, model `WORKERS_AI_MODEL`=`@cf/qwen/qwen3.8-27b`) | `claude` (requires `ANTHROPIC_API_KEY`) | `mock` (local simulation) | `rules`.
+- **AI Quota**: Calling NVIDIA NIM **is completely exempt from AI quota usage (unlimited)**; switching or falling back to Workers AI deducts 1 usage per call (`AI_DAILY_LIMIT`, default 10, resets midnight Taipei time; refunded on model failure). Guests, bot advisors, and users who exhaust their quota fall back to the rules-based engine, allowing the game to proceed normally.
+- **AI Providers** (`AI_PROVIDER`): Prioritizes **NVIDIA NIM** (if `NVIDIA_API_KEY` is set; primary model `NVIDIA_MODEL`=nemotron-3-super; falls back on failure to NIM fallback models `NVIDIA_FALLBACK_MODEL`=deepseek-v4.1-flash [comma-separated list tried in order, slower 45s timeout; set `none` to disable]; only when every NIM model fails does it use **Workers AI**, model `WORKERS_AI_MODEL`=`@cf/qwen/qwen3.8-27b`, whose free allowance is small) | `nvidia-only` (NIM then rule engine, never Workers AI) | `workers-ai-only` | `mock` (local simulation) | `rules`. Claude is not supported (too costly for this project).
 - **Training records are saved only for logged-in users**, and users can only view their own; trainers in `TRAINER_EMAILS` (set via `wrangler secret put`) can view all learners (`/api/records?scope=all`, `/api/learners`, `/api/profile?user=`).
 - **What is saved**: In addition to scores, every interview stores a full decision trajectory (clues, questioning order, open-ended questions, configuration and review, objection responses, stress outcomes, whether hints were used) and tags weakness labels. The learning profile (`/api/profile`) aggregates these into: score and Five Powers trends, most frequent mistakes and improvement suggestions, client compendium (service count and best rating across 18 clients), and badges.
 
@@ -121,7 +120,7 @@ Material the proposal team can lift directly. Everything here is true of the cur
 - **AI client** (persona + hidden needs + dynamic life twist injected into the prompt), **compliance auditor** and **coach** in a single structured call per dialogue round (≤ 3 calls per interview), validated with zod; failures refund quota and fall back to rules.
 - AI objection grading, coach hints, settlement critique, AI-generated new clients, and AI-written letters from ten years later.
 - **Guardrails**: outcomes, scores, money amounts and letter outcomes are decided only by the deterministic rule engine; AI only writes text. Player text is wrapped as untrusted data (prompt-injection defense, also detected as a compliance issue). Letters are validated so a "thanks" letter cannot contain regret wording and vice versa.
-- Providers: NVIDIA NIM (primary) → Workers AI (fallback) → Claude (optional) → rule engine. Guests and bots never call AI.
+- Providers: NVIDIA NIM (primary) → NIM fallback models → Workers AI (last resort, small free allowance) → rule engine. Guests and bots never call AI.
 
 ### 10-year financial timeline model (*assumptions*)
 - Monthly surplus = income − expenses (per client, see `finance` in `server/src/game/data.ts` / `clients-extra.ts`).
@@ -141,11 +140,11 @@ The radar cites regulation **names** only (no article numbers, to avoid citing w
 
 ### Cost structure (facts from config, not estimates)
 - One Cloudflare Worker + 2 Durable Object classes + static assets; idle shards hibernate.
-- AI: NVIDIA NIM calls are unmetered in-game; Workers AI / Claude calls count against a per-account daily quota (`AI_DAILY_LIMIT`, default 10; judge demo accounts `DEMO_AI_LIMIT`, default 30).
+- AI: NVIDIA NIM calls are unmetered in-game; Workers AI calls count against a per-account daily quota (`AI_DAILY_LIMIT`, default 10; judge demo accounts `DEMO_AI_LIMIT`, default 30).
 - Guest solo play runs entirely in the browser (`web/local-room.js`), costing no server compute.
 
 ### Letting judges try the AI
-Set `npx wrangler secret put DEMO_CODES` (comma-separated, ≥ 8 chars each). Judges enter the code on the main menu (「評審體驗碼」) or open `https://<domain>/?code=<CODE>`; each code creates a temporary account (NVIDIA NIM calls are unlimited; only Workers AI / Claude fallback calls count against its 30/day quota) (cap `DEMO_MAX_ACCOUNTS`, default 300 per code; 10 failed attempts per IP per hour).
+Set `npx wrangler secret put DEMO_CODES` (comma-separated, ≥ 8 chars each). Judges enter the code on the main menu (「評審體驗碼」) or open `https://<domain>/?code=<CODE>`; each code creates a temporary account (NVIDIA NIM calls are unlimited; only Workers AI fallback calls count against its 30/day quota) (cap `DEMO_MAX_ACCOUNTS`, default 300 per code; 10 failed attempts per IP per hour).
 
 ### Demo video raw footage
 `tools/demo-recorder/` drives the web build with Playwright and records reproducible clips (see its README). `?automation=1&demo=1` makes the first interview deterministic (mortgage family client 劉家豪, fixed life twist, first dice lands on a client tile).
@@ -183,4 +182,5 @@ After deploying updates, installed users first load the cached previous version,
 ## Licensing and Assets
 
 - Font: Noto Sans TC (SIL Open Font License).
+- Illustrations (scenes, title, client portraits) are AI-generated with FLUX: `server/tools/generate-all-scenes.mjs` and `server/tools/generate-portraits.mjs` call the local-only `/api/dev/gen-img` (needs `DEV_LOGIN=1`), which uses NVIDIA NIM `flux.1-dev` first and Workers AI `flux-1-schnell` as fallback (NIM's content filter rejects some wordings such as numeric ages or certain clothing terms, so each portrait also has a short NIM-safe `nim` description that is retried on NIM before Workers AI is used).
 - Client scenarios and numerical values are for training simulation purposes only; coverage cards represent functional concepts, do not correspond to any real insurance products, and do not constitute insurance or investment advice.

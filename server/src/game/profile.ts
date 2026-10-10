@@ -7,7 +7,7 @@ import { TAG_INFO } from './game.ts';
 
 export interface RecordRow {
   ts: number; score: number; grade: string;
-  data: { skill?: Metrics; service?: number; sessions?: SessionLog[]; quizCorrect?: number; quizTotal?: number };
+  data: { skill?: Metrics; service?: number; protection?: number; sessions?: SessionLog[]; quizCorrect?: number; quizTotal?: number };
 }
 
 const GRADE_ORDER = ['C', 'B', 'A', 'S'];

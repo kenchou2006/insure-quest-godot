@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CLIENTS } from '../src/game/data.ts';
+import { BOARD, CLIENTS } from '../src/game/data.ts';
 import { evaluatePlan, runStress, TOTAL_COINS } from '../src/game/engine.ts';
 import { addPlayer, applyAction, createGame, publicView, scorePlayer, startGame, type Ctx } from '../src/game/game.ts';
 import { botAction } from '../src/game/bots.ts';
-import { RuleAI, ruleGrade, buildGeneratedClient, MeteredAI, MockAI, extractJson, FallbackRawAI, makeAI, detectProvider, type RawAI } from '../src/ai.ts';
+import { RuleAI, ruleGrade, buildGeneratedClient, MeteredAI, MockAI, extractJson, FallbackRawAI, makeAI, detectProvider, partialJsonStringDone, type RawAI } from '../src/ai.ts';
 import { buildProfile } from '../src/game/profile.ts';
 import { predict } from '../src/game/game.ts';
-import type { Alloc, CardId, GameState } from '../src/game/types.ts';
+import { calculateClaim, formatWan } from '../src/game/finance.ts';
+import type { Alloc, CardId, GameState, PlayerState } from '../src/game/types.ts';
 
 function seeded(seed: number) {
   let s = seed >>> 0;
@@ -193,7 +194,7 @@ test('合規測驗：選項會打亂，正確位置不固定，作答前不洩�
   assert.ok(positions.size >= 3, `answer positions ${[...positions]}`);
 });
 
-test('教練提示：每場面談限一次、扣聲望 2、結果階段不可用', async () => {
+test('教練提示：每場面談限一次、不扣聲望、結果階段不可用', async () => {
   const ctx = ctxFor(3);
   const g = createGame('H');
   addPlayer(g, { id: 'a', name: 'A' });
@@ -202,7 +203,7 @@ test('教練提示：每場面談限一次、扣聲望 2、結果階段不可用
   g.turnStage = 'session';
   const rep = g.players[0].reputation;
   assert.equal(await applyAction(g, 'a', { type: 'hint' }, ctx), null);
-  assert.equal(g.players[0].reputation, rep - 2);
+  assert.equal(g.players[0].reputation, rep);
   assert.ok((g.session!.hint ?? '').length > 5);
   assert.match((await applyAction(g, 'a', { type: 'hint' }, ctx))!, /用過/);
   const view = publicView(g) as { session: { hint: string; hintUsed: boolean } };
@@ -474,3 +475,257 @@ test('完整對局含新玩法：電腦顧問能跑完並產生榮譽榜', async
     assert.ok(Array.isArray(g.awards));
   }
 });
+
+test('客戶版圖：簽約佔領格子、再次停格觸發保單健檢與轉介、解約清空格子、公開狀態包含 territory', async () => {
+  const ctx = ctxFor(42);
+  const g = createGame('TERR');
+  addPlayer(g, { id: 'p1', name: '顧問A' });
+  addPlayer(g, { id: 'p2', name: '顧問B' });
+  startGame(g, ctx);
+
+  assert.deepEqual(g.territory, {});
+  const initialView = publicView(g) as { territory: Record<number, unknown> };
+  assert.deepEqual(initialView.territory, {});
+
+  // 1. p1 stands on tile 1 (client tile) and signs yuqing
+  g.players[0].pos = 1;
+  const yuqing = CLIENTS.find(c => c.id === 'yuqing')!;
+  g.session = {
+    playerId: 'p1', clientId: 'yuqing', referral: false, tileIndex: 1, step: 'plan',
+    asked: [], freeLeft: 0, freeHits: [], clues: [], observed: [],
+    m: { trust: 60, insight: 50, fit: 50, risk: 50, compliance: 100 },
+    objectionOrder: [0, 1, 2, 3], predictions: {},
+  };
+  g.turnStage = 'session';
+  await applyAction(g, 'p1', { type: 'plan', alloc: { cash: 4, protect: 4, growth: 2 }, cards: ['income', 'medical'] }, ctx);
+  const goodOpt = yuqing.objection.options.findIndex(o => o.quality === 'good');
+  const optIdx = g.session!.objectionOrder.indexOf(goodOpt);
+  await applyAction(g, 'p1', { type: 'objection', index: optIdx }, ctx);
+
+  assert.equal(g.session!.result!.signed, true);
+  // Tile 1 should now be recorded as territory
+  assert.deepEqual(g.territory[1], { playerId: 'p1', clientId: 'yuqing', clientName: '林雨晴' });
+  const view1 = publicView(g) as { territory: Record<number, unknown> };
+  assert.deepEqual(view1.territory[1], { playerId: 'p1', clientId: 'yuqing', clientName: '林雨晴' });
+
+  // Book entry tracks stress rehearsal results
+  const entry = g.players[0].book[0];
+  assert.equal(typeof entry.held, 'number');
+  assert.equal(typeof entry.partial, 'number');
+  assert.equal(typeof entry.broken, 'number');
+  assert.equal((entry.held ?? 0) + (entry.partial ?? 0) + (entry.broken ?? 0), 3);
+
+  await applyAction(g, 'p1', { type: 'continue' }, ctx);
+
+  // 2. p1 lands on own territory tile (tile 1) -> triggers checkup event
+  g.turn = 0;
+  g.turnStage = 'roll';
+  g.players[0].pos = 0; // rolling 1 lands on tile 1
+  g.players[0].reputation = 50;
+  entry.satisfaction = 70; // +5 will make it 75
+  const origRep = g.players[0].reputation;
+
+  // Mock rng so roll lands on 1, then checkup referral roll (rng >= 0.4 -> false)
+  const rngSeq = [0.01, 0.9];
+  const testCtx: Ctx = { ai: new RuleAI(), rng: () => rngSeq.shift() ?? 0.5, now: () => 0 };
+  await applyAction(g, 'p1', { type: 'roll' }, testCtx);
+
+  assert.equal(g.turnStage, 'event');
+  assert.equal(g.event?.kind, 'checkup');
+  assert.equal(g.event?.title, '保單健檢｜林雨晴');
+  assert.equal(g.players[0].reputation, origRep + 2);
+  assert.equal(entry.satisfaction, 75);
+  assert.equal(g.event?.checkup?.referral, false);
+
+  // Dismiss checkup event without referral
+  await applyAction(g, 'p1', { type: 'continue' }, testCtx);
+  assert.equal(g.turnStage, 'roll');
+
+  // 3. Landing on own territory with satisfaction >= 75 and referral rng < 0.4 -> triggers referral session on continue
+  g.turn = 0;
+  g.turnStage = 'roll';
+  g.players[0].pos = 0;
+  const rngSeq2 = [0.01, 0.2]; // roll 1, referral roll 0.2 < 0.4
+  const testCtx2: Ctx = { ai: new RuleAI(), rng: () => rngSeq2.shift() ?? 0.5, now: () => 0 };
+  await applyAction(g, 'p1', { type: 'roll' }, testCtx2);
+
+  assert.equal(g.event?.kind, 'checkup');
+  assert.equal(g.event?.checkup?.referral, true);
+  await applyAction(g, 'p1', { type: 'continue' }, testCtx2);
+  assert.equal(g.turnStage, 'session');
+  assert.equal(g.session?.referral, true);
+
+  // 4. Opponent p2 lands on p1's territory -> normal client interview, no penalty
+  g.session = null as GameState['session'];
+  g.turnStage = 'roll';
+  g.turn = 1;
+  g.players[1].pos = 0;
+  const p2Rep = g.players[1].reputation;
+  const rngSeq3 = [0.01];
+  const testCtx3: Ctx = { ai: new RuleAI(), rng: () => rngSeq3.shift() ?? 0.5, now: () => 0 };
+  await applyAction(g, 'p2', { type: 'roll' }, testCtx3);
+  assert.equal(g.turnStage, 'session');
+  assert.equal(g.session?.playerId, 'p2');
+  assert.equal(g.session?.referral, false);
+  assert.equal(g.players[1].reputation, p2Rep);
+
+  // 5. If client leaves book, clearing tile on land
+  g.players[0].book = [];
+  g.session = null as GameState['session'];
+  g.turnStage = 'roll';
+  g.turn = 0;
+  g.players[0].pos = 0;
+  const rngSeq4 = [0.01];
+  const testCtx4: Ctx = { ai: new RuleAI(), rng: () => rngSeq4.shift() ?? 0.5, now: () => 0 };
+  await applyAction(g, 'p1', { type: 'roll' }, testCtx4);
+  assert.equal(g.territory[1], undefined);
+  assert.equal(g.turnStage, 'session');
+  assert.equal(g.session?.referral, false);
+});
+
+test('理賠服務時刻：人生事件擊中已簽約客戶，產生理賠數據結構與萬單位格式化說明', async () => {
+  const ctx = ctxFor(55);
+  const g = createGame('CLAIM');
+  addPlayer(g, { id: 'p1', name: '顧問A' });
+  startGame(g, ctx);
+
+  const yuqing = CLIENTS.find(c => c.id === 'yuqing')!;
+  g.players[0].book.push({
+    clientId: 'yuqing', name: '林雨晴', alloc: { cash: 4, protect: 4, growth: 2 }, cards: ['income', 'medical'],
+    satisfaction: 70, planQuality: 'good', compliance: 100, stressUsed: 0, signedRound: 1, mis: false,
+    held: 2, partial: 1, broken: 0,
+  });
+
+  // Tile 4 rolling 1 lands on tile 5 (life event)
+  g.players[0].pos = 4;
+  g.turnStage = 'roll';
+  // Mock rng to roll 1, and ensure pickLifeChange does not trigger (rng >= 0.5)
+  const rngSeq = [0.01, 0.9, 0];
+  const testCtx: Ctx = { ai: new RuleAI(), rng: () => rngSeq.shift() ?? 0.5, now: () => 0 };
+  await applyAction(g, 'p1', { type: 'roll' }, testCtx);
+
+  assert.equal(g.turnStage, 'event');
+  assert.equal(g.event?.kind, 'life');
+  assert.equal(g.event?.title, '理賠服務｜林雨晴');
+  assert.ok(g.event?.claim, 'claim data exists');
+  const claim = g.event!.claim!;
+  assert.equal(claim.clientId, 'yuqing');
+  assert.equal(claim.clientName, '林雨晴');
+  assert.equal(claim.event, yuqing.stress[0].title);
+  assert.ok(['held', 'partial', 'broken'].includes(claim.result));
+  assert.ok(claim.loss > 0);
+  assert.equal(claim.loss, claim.covered + claim.outOfPocket);
+
+  // Check lines
+  const firstLine = g.event!.lines[0].text;
+  assert.ok(firstLine.includes('萬'), `line should mention 萬: ${firstLine}`);
+  if (claim.result === 'held') {
+    assert.ok(firstLine.startsWith('理賠') && firstLine.includes('已撥付') && firstLine.includes('還好當初有聽你的'));
+  } else if (claim.result === 'partial') {
+    assert.ok(firstLine.startsWith('理賠') && firstLine.includes('仍需自付'));
+  } else {
+    assert.ok(firstLine.startsWith('保障缺口：') && firstLine.includes('自付'));
+  }
+
+  // Check BookEntry stress counters incremented
+  const book = g.players[0].book[0];
+  const totalStress = (book.held ?? 0) + (book.partial ?? 0) + (book.broken ?? 0);
+  assert.equal(totalStress, 4); // was 3, +1 from life event hit
+
+  // Check publicView exposes claim
+  const view = publicView(g) as { event: { claim: Record<string, unknown> } };
+  assert.ok(view.event.claim);
+  assert.equal(view.event.claim.clientName, '林雨晴');
+});
+
+test('終局客戶守護分：計算公式、紅燈案件零分、加權調整與用心顧問評分優勢', () => {
+  // Test formatWan helper
+  assert.equal(formatWan(87500), '8.8');
+  assert.equal(formatWan(50000), '5.0');
+  assert.equal(formatWan(124000), '12');
+  assert.equal(formatWan(150000), '15');
+
+  // 1. Direct comparison: careful advisor (fewer clients, high protection) vs sloppy advisor (more clients, low protection, high commission)
+  const careful: PlayerState = {
+    id: 'c', name: '用心顧問', isBot: false, botLevel: null, connected: true, disconnectedAt: null,
+    pos: 0, reputation: 60, commission: 25, sessions: 1,
+    skillSum: { trust: 85, insight: 85, fit: 85, risk: 85, compliance: 85 },
+    book: [
+      { clientId: '1', name: '客戶1', alloc: { cash: 4, protect: 4, growth: 2 }, cards: ['income'], satisfaction: 85, planQuality: 'good', compliance: 90, stressUsed: 0, signedRound: 1, mis: false, violation: false, held: 3, partial: 0, broken: 0 },
+    ],
+    decisions: [], quizCorrect: 0, quizTotal: 0,
+  };
+
+  const sloppy: PlayerState = {
+    id: 's', name: '隨意銷售', isBot: false, botLevel: null, connected: true, disconnectedAt: null,
+    pos: 0, reputation: 50, commission: 80, sessions: 4,
+    skillSum: { trust: 240, insight: 240, fit: 240, risk: 240, compliance: 240 }, // 60 avg
+    book: [
+      { clientId: '1', name: '客戶1', alloc: { cash: 1, protect: 1, growth: 8 }, cards: [], satisfaction: 45, planQuality: 'bad', compliance: 60, stressUsed: 0, signedRound: 1, mis: true, violation: false, held: 0, partial: 1, broken: 2 },
+      { clientId: '2', name: '客戶2', alloc: { cash: 1, protect: 1, growth: 8 }, cards: [], satisfaction: 40, planQuality: 'bad', compliance: 60, stressUsed: 0, signedRound: 1, mis: true, violation: false, held: 0, partial: 0, broken: 3 },
+      { clientId: '3', name: '客戶3', alloc: { cash: 1, protect: 1, growth: 8 }, cards: [], satisfaction: 42, planQuality: 'bad', compliance: 60, stressUsed: 0, signedRound: 1, mis: true, violation: false, held: 0, partial: 1, broken: 2 },
+      { clientId: '4', name: '客戶4', alloc: { cash: 1, protect: 1, growth: 8 }, cards: [], satisfaction: 38, planQuality: 'bad', compliance: 60, stressUsed: 0, signedRound: 1, mis: true, violation: false, held: 0, partial: 0, broken: 3 },
+    ],
+    decisions: [], quizCorrect: 0, quizTotal: 0,
+  };
+
+  const scoredCareful = scorePlayer(careful);
+  const scoredSloppy = scorePlayer(sloppy);
+
+  assert.equal(scoredCareful.protection, 100);
+  assert.equal(scoredCareful.service, 85);
+  // careful score: 0.5*85 + 0.15*85 + 0.10*100 + 0.15*60 + 0.10*25 = 42.5 + 12.75 + 10 + 9 + 2.5 = 76.75 -> 77
+  assert.equal(scoredCareful.score, 77);
+
+  // sloppy protection: avg of (0.5/3*100, 0, 0.5/3*100, 0) = (16.67 + 0 + 16.67 + 0) / 4 = 8.33 -> 8
+  assert.equal(scoredSloppy.protection, 8);
+  assert.ok(scoredCareful.score > scoredSloppy.score + 20, `Careful (${scoredCareful.score}) should strongly outrank Sloppy (${scoredSloppy.score})`);
+
+  // 2. Violation cases count as 0 for protection
+  const violated: PlayerState = {
+    ...careful,
+    book: [
+      { clientId: '1', name: '客戶1', alloc: { cash: 4, protect: 4, growth: 2 }, cards: ['income'], satisfaction: 85, planQuality: 'good', compliance: 90, stressUsed: 0, signedRound: 1, mis: false, violation: true, held: 3, partial: 0, broken: 0 },
+    ],
+  };
+  assert.equal(scorePlayer(violated).protection, 0);
+});
+
+test('玩家頭像 URL 可透過 addPlayer 傳入並在 publicView 呈現', () => {
+  const g = createGame('AVATAR');
+  addPlayer(g, { id: 'u1', name: '真人', avatar: 'https://example.com/photo.jpg' });
+  addPlayer(g, { id: 'b1', name: '電腦', isBot: true, avatar: 'https://example.com/bot.jpg' });
+  const view = publicView(g);
+  assert.equal(view.players[0].avatar, 'https://example.com/photo.jpg');
+  assert.equal(view.players[1].avatar, null);
+});
+
+test('訪談對話中 aiBusy 為 true 時，talk 與 to_plan 及其他提問皆會被伺服器拒絕', async () => {
+  const ctx = ctxFor(10);
+  const g = createGame('BUSY');
+  addPlayer(g, { id: 'p1', name: '顧問' });
+  startGame(g, ctx);
+  g.session = { playerId: 'p1', clientId: CLIENTS[0].id, referral: false, step: 'discover', asked: [], freeLeft: 1, freeHits: [], clues: [], observed: [], m: { trust: 50, insight: 20, fit: 50, risk: 30, compliance: 100 }, objectionOrder: [0, 1, 2, 3], predictions: {}, aiBusy: true };
+  g.turnStage = 'session';
+
+  assert.match((await applyAction(g, 'p1', { type: 'talk', text: '請問平常有什麼保障？' }, ctx))!, /回應中/);
+  assert.match((await applyAction(g, 'p1', { type: 'to_plan' }, ctx))!, /回應中/);
+  assert.match((await applyAction(g, 'p1', { type: 'ask', qid: 'income' }, ctx))!, /回應中/);
+  assert.match((await applyAction(g, 'p1', { type: 'ask_free', text: '請問收入狀況？' }, ctx))!, /回應中/);
+
+  g.session.aiBusy = false;
+  assert.equal(await applyAction(g, 'p1', { type: 'ask', qid: 'income' }, ctx), null);
+});
+
+test('partialJsonStringDone：正確判斷客戶回答字串結束與跳脫字元', () => {
+  const incomplete = '{"answer": "你好，我想了解';
+  assert.deepEqual(partialJsonStringDone(incomplete, 'answer'), { text: '你好，我想了解', done: false });
+
+  const complete = '{"answer": "你好，我想了解", "coachTip": "切中要害"}';
+  assert.deepEqual(partialJsonStringDone(complete, 'answer'), { text: '你好，我想了解', done: true });
+
+  const withQuotes = '{"answer": "他說: \\"不用擔心\\" 就好了", "coachTip": "良好"}';
+  assert.deepEqual(partialJsonStringDone(withQuotes, 'answer'), { text: '他說: "不用擔心" 就好了', done: true });
+});
+
+

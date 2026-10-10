@@ -78,6 +78,10 @@ export interface BookEntry {
   reviewed?: boolean;
   /** Whether the interview involved a red-light violation */
   violation?: boolean;
+  /** Cumulative stress absorption results (interview rehearsal + life tiles) */
+  held?: number;
+  partial?: number;
+  broken?: number;
 }
 
 export interface Decision { round: number; clientName: string; stage: string; quality: Quality; title: string; body: string }
@@ -86,6 +90,8 @@ export interface PlayerState {
   id: string; name: string; isBot: boolean; botLevel: BotLevel | null;
   /** Login account (Google); null for guests and bot advisors */
   accountId?: string | null;
+  /** Google photo URL; null for guests and bots */
+  avatar?: string | null;
   connected: boolean; disconnectedAt: number | null;
   pos: number; reputation: number; commission: number;
   skillSum: Metrics; sessions: number;
@@ -102,6 +108,7 @@ export interface PlayerState {
 
 export interface SessionState {
   playerId: string; clientId: string; referral: boolean;
+  tileIndex?: number;
   step: 'discover' | 'plan' | 'objection' | 'result';
   asked: {
     qid: QuestionId | 'free';
@@ -146,7 +153,7 @@ export interface SessionState {
 }
 
 export interface PendingEvent {
-  kind: 'life' | 'market' | 'quiz' | 'audit' | 'settlement' | 'seminar' | 'info' | 'dilemma' | 'review';
+  kind: 'life' | 'market' | 'quiz' | 'audit' | 'settlement' | 'seminar' | 'info' | 'dilemma' | 'review' | 'checkup';
   playerId: string; title: string; body: string;
   lines: { text: string; tone: 'good' | 'ok' | 'bad' | 'info' }[];
   /** order[display position] = question bank original option index; server-only, not sent to client */
@@ -155,6 +162,19 @@ export interface PendingEvent {
   dilemma?: { id: string; title: string; prompt: string; choices: { id: string; text: string }[]; picked: string | null; outcome: { title: string; body: string; tone: 'good' | 'ok' | 'bad'; effects: string } | null };
   /** Client lifecycle review; needCard is server-only, removed before sending */
   review?: { clientId: string; clientName: string; change: { title: string; body: string }; current: { alloc: Alloc; cards: CardId[] }; needCard: CardId; picked: string | null; outcome: { title: string; body: string; tone: 'good' | 'ok' | 'bad' } | null };
+  /** Territory policy checkup */
+  checkup?: { clientId: string; clientName: string; referral?: boolean };
+  /** Claim service moment */
+  claim?: {
+    clientId: string;
+    clientName: string;
+    event: string;
+    tag: string;
+    result: 'held' | 'partial' | 'broken';
+    loss: number;
+    covered: number;
+    outOfPocket: number;
+  };
 }
 
 /** Reviewable record of an interview */
@@ -183,7 +203,7 @@ export interface LogLine { ts: number; text: string; tone?: 'good' | 'ok' | 'bad
 export interface FinalRow {
   playerId: string; name: string; isBot: boolean;
   score: number; grade: string; caps: string[];
-  skill: Metrics; service: number; reputation: number; commission: number; clients: number;
+  skill: Metrics; service: number; protection: number; reputation: number; commission: number; clients: number;
   coach: string;
   letters?: { clientName: string; outcome: 'thanks' | 'regret' | 'mixed' | 'complaint'; content: string }[];
   timeline?: TimelineResult;
@@ -209,6 +229,8 @@ export interface GameState {
   clients: Record<string, ClientProfile>;
   session: SessionState | null;
   event: PendingEvent | null;
+  /** Client territory on board: tile index -> owner */
+  territory: Record<number, { playerId: string; clientId: string; clientName: string }>;
   log: LogLine[];
   final: FinalRow[] | null;
   announcement?: Announcement | null;

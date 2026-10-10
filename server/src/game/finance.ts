@@ -51,6 +51,49 @@ export function financeFor(client: ClientProfile): ClientFinance {
 const CARD_BONUS = 2;
 
 /**
+ * Calculates claim loss, insurance covered amount, and out-of-pocket expenses in NT$.
+ * Formulas:
+ *   loss = need * 0.5 * monthly income
+ *   covered = insurance defense / need * loss (capped at loss)
+ */
+export function calculateClaim(
+  client: ClientProfile,
+  alloc: Alloc,
+  cards: CardId[],
+  ev: StressEvent,
+): { loss: number; covered: number; outOfPocket: number } {
+  const fin = financeFor(client);
+  const isMarket = ev.tag === '市場' || ev.tag === 'market' ||
+    (ev.absorb?.growth !== undefined && (!ev.absorb.protect || ev.absorb.protect === 0));
+
+  if (isMarket) {
+    return { loss: 0, covered: 0, outOfPocket: 0 };
+  }
+
+  // need is the event's severity; 0.5 month of income per point (need 12 ≈ half a year of income)
+  const loss = Math.round(ev.need * fin.income * 0.5);
+  const helped = ev.cards.filter(id => cards.includes(id));
+  const protectFactor = !ev.cards.length || helped.length ? 1 : 0.35;
+  const insuranceDefense = alloc.protect > 0
+    ? (alloc.protect * (ev.absorb?.protect || 0) * protectFactor + helped.length * CARD_BONUS)
+    : 0;
+  const ratioInsurance = ev.need > 0 ? Math.max(0, insuranceDefense / ev.need) : 0;
+  const covered = Math.min(loss, Math.round(loss * Math.min(1, ratioInsurance)));
+  const outOfPocket = loss - covered;
+
+  return { loss, covered, outOfPocket };
+}
+
+/** Formats NT$ amount in 萬 with one decimal when < 10 */
+export function formatWan(ntd: number): string {
+  const wan = ntd / 10000;
+  if (wan < 10) {
+    return (Math.round(wan * 10) / 10).toFixed(1);
+  }
+  return String(Math.round(wan));
+}
+
+/**
  * Simulates a 10-year financial trajectory (years 0..10).
  * With plan: surplus split by coins (cash 1%/yr, growth 5%/yr); each protect coin costs 1% of annual income as premium.
  * No plan: all surplus in bank deposit at 1%/yr with no insurance.
@@ -135,20 +178,12 @@ export function simulateTimeline(
         outOfPocket = 0;
         noPlanOutOfPocket = 0;
       } else {
-        // need is the event's severity; 0.5 month of income per point (need 12 ≈ half a year of income)
-        loss = Math.round(ev.need * fin.income * 0.5);
+        const claim = calculateClaim(client, alloc, cards, ev);
+        loss = claim.loss;
+        covered = claim.covered;
+        outOfPocket = claim.outOfPocket;
         noPlanOutOfPocket = loss;
         noPlanDep -= loss;
-
-        // With plan insurance defense: protect coins + card bonuses (only when protect > 0)
-        const helped = ev.cards.filter(id => cards.includes(id));
-        const protectFactor = !ev.cards.length || helped.length ? 1 : 0.35;
-        const insuranceDefense = alloc.protect > 0
-          ? (alloc.protect * (ev.absorb?.protect || 0) * protectFactor + helped.length * CARD_BONUS)
-          : 0;
-        const ratioInsurance = ev.need > 0 ? Math.max(0, insuranceDefense / ev.need) : 0;
-        covered = Math.min(loss, Math.round(loss * Math.min(1, ratioInsurance)));
-        outOfPocket = loss - covered;
 
         // Pay outOfPocket from cash first, then growth
         let remaining = outOfPocket;

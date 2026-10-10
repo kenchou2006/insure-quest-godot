@@ -296,3 +296,11 @@ test('講師洞察（Trainer Insights）：正確聚合 30 天數據、標籤排
   assert.equal(insights.matrix[0].sessions, 2);
   assert.equal(insights.matrix[0].tags.low_protect, 2);
 });
+
+test('AI 生成客戶依性別與年齡帶分配通用頭像', async () => {
+  const { poolPortraitFor } = await import('../src/ai.ts');
+  assert.equal(poolPortraitFor(25, '女性'), 'pool_f_20s');
+  assert.equal(poolPortraitFor(44, '男性'), 'pool_m_40s');
+  assert.equal(poolPortraitFor(72, '男性'), 'pool_m_60s');
+  assert.equal(poolPortraitFor(33, '非二元'), 'pool_x');
+});

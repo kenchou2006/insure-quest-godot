@@ -34,9 +34,9 @@ type ClientMsg =
   | { t: 'ping' };
 
 /** Identity bound to each connection: accountId resolved by Worker from login cookie, unforgeable by client */
-interface Attachment { playerId: string | null; accountId: string | null; accountName: string | null }
+interface Attachment { playerId: string | null; accountId: string | null; accountName: string | null; accountPicture: string | null }
 
-export interface AccountHeader { id: string; name: string }
+export interface AccountHeader { id: string; name: string; picture?: string }
 export const ACCOUNT_HEADER = 'X-IQ-Account';
 
 const BOT_NAMES = ['電腦顧問・安安', '電腦顧問・小賴', '電腦顧問・阿哲'];
@@ -44,7 +44,7 @@ const BOT_NAMES = ['電腦顧問・安安', '電腦顧問・小賴', '電腦顧�
 export class Room extends DurableObject<Env> {
   private game: GameState | null = null;
   private queue: Promise<unknown> = Promise.resolve();
-  /** AI provider (Workers AI / Claude / mock); null means rule-based only */
+  /** AI provider (NVIDIA NIM / Workers AI / mock); null means rule-based only */
   private raw: RawAI | null;
   private demoRng: (() => number) | null = null;
 
@@ -97,15 +97,42 @@ export class Room extends DurableObject<Env> {
     // Client response stream: throttled and broadcast to all room connections (server outbound WebSocket messages are free)
     let last = 0;
     let pending: string | null = null;
+    let pendingAnswerDone = false;
+    let answerDoneSent = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const flush = () => { timer = null; if (pending !== null) { last = Date.now(); this.broadcast({ t: 'stream', text: pending }); pending = null; } };
-    const onStream = (text: string) => {
+    const flush = () => {
+      timer = null;
+      if (pending !== null) {
+        last = Date.now();
+        const msg: { t: 'stream'; text: string; answerDone?: boolean } = { t: 'stream', text: pending };
+        if (pendingAnswerDone && !answerDoneSent) {
+          msg.answerDone = true;
+          answerDoneSent = true;
+          pendingAnswerDone = false;
+        }
+        this.broadcast(msg);
+        pending = null;
+      }
+    };
+    const onStream = (text: string, answerDone?: boolean) => {
       pending = text;
+      if (answerDone && !answerDoneSent) {
+        pendingAnswerDone = true;
+        if (timer) { clearTimeout(timer); timer = null; }
+        flush();
+        return;
+      }
       const wait = 120 - (Date.now() - last);
       if (wait <= 0) flush();
       else if (!timer) timer = setTimeout(flush, wait);
     };
-    const endStream = () => { if (timer) clearTimeout(timer); timer = null; pending = null; };
+    const endStream = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      pending = null;
+      pendingAnswerDone = false;
+      answerDoneSent = false;
+    };
     const rng = this.game?.demo && this.demoRng ? this.demoRng : Math.random;
     return { ai: this.aiFor(actor), rng, now: Date.now, onStream, endStream };
   }
@@ -178,7 +205,7 @@ export class Room extends DurableObject<Env> {
       try { account = JSON.parse(decodeURIComponent(req.headers.get(ACCOUNT_HEADER) || 'null')); } catch { account = null; }
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1]);
-      pair[1].serializeAttachment({ playerId: null, accountId: account?.id ?? null, accountName: account?.name ?? null } satisfies Attachment);
+      pair[1].serializeAttachment({ playerId: null, accountId: account?.id ?? null, accountName: account?.name ?? null, accountPicture: account?.picture ?? null } satisfies Attachment);
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
     if (url.pathname.endsWith('/info')) {
@@ -217,7 +244,7 @@ export class Room extends DurableObject<Env> {
           id = crypto.randomUUID();
           const typed = (msg.name || '').trim();
           const name = typed && typed !== '顧問' ? typed : (att.accountName || '顧問');
-          const e = addPlayer(g, { id, name, accountId: att.accountId });
+          const e = addPlayer(g, { id, name, accountId: att.accountId, avatar: att.accountPicture });
           if (e) { id = null; this.err(ws, e); }
           else log(g, `${g.players.at(-1)!.name} 加入了房間`);
         }
