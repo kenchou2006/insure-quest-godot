@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://vla2bxqlk7es"
-path="res://.godot/imported/wenjie.jpg-77d4478cfd5f44cba1eaaf9b38e9a7b4.ctex"
+uid="uid://bbgwxpxa4t6yp"
+path="res://.godot/imported/title.old.jpg-d1e13dcbe84d88eec59b7a2ad25f5fcf.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/clients/wenjie.jpg"
-dest_files=["res://.godot/imported/wenjie.jpg-77d4478cfd5f44cba1eaaf9b38e9a7b4.ctex"]
+source_file="res://assets/title.old.jpg"
+dest_files=["res://.godot/imported/title.old.jpg-d1e13dcbe84d88eec59b7a2ad25f5fcf.ctex"]
 
 [params]
 

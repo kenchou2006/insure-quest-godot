@@ -17,7 +17,7 @@ dest_files=["res://.godot/imported/shufen.jpg-db98e5ea98dcf82ba4aebab1dda389c1.c
 
 compress/mode=1
 compress/high_quality=false
-compress/lossy_quality=0.7
+compress/lossy_quality=0.8
 compress/uastc_level=0
 compress/rdo_quality_loss=0.0
 compress/hdr_compression=1

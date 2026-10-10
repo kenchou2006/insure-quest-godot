@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://vla2bxqlk7es"
-path="res://.godot/imported/wenjie.jpg-77d4478cfd5f44cba1eaaf9b38e9a7b4.ctex"
+uid="uid://brmxy88pq25wb"
+path="res://.godot/imported/ziyuan.jpg-d403148aa077bb97f6b2ed9e9f29dea3.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/clients/wenjie.jpg"
-dest_files=["res://.godot/imported/wenjie.jpg-77d4478cfd5f44cba1eaaf9b38e9a7b4.ctex"]
+source_file="res://assets/portraits/ziyuan.jpg"
+dest_files=["res://.godot/imported/ziyuan.jpg-d403148aa077bb97f6b2ed9e9f29dea3.ctex"]
 
 [params]
 
@@ -36,5 +36,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=512
 detect_3d/compress_to=1
