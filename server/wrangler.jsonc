@@ -8,7 +8,8 @@
   "assets": {
     "directory": "../web",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*"]
+    // true: Worker sees every request first so it can strip BASE_PATH before /api/* routing and asset lookup
+    "run_worker_first": true
   },
   "durable_objects": {
     "bindings": [
@@ -22,6 +23,9 @@
   // Workers AI (used when AI_PROVIDER=workers-ai); local wrangler dev calls remote, requires wrangler login
   "ai": { "binding": "AI" },
   "vars": {
+    // URL prefix when mounted on a Route (e.g. example.com/insure-quest*). "" = serve from root.
+    // The Route itself is managed in the Cloudflare dashboard (Domains & Routes) so no domain is hard-coded here.
+    "BASE_PATH": "/insure-quest",
     "AI_PROVIDER": "workers-ai",
     "WORKERS_AI_MODEL": "@cf/qwen/qwen3.8-27b",
     "NVIDIA_MODEL": "nvidia/nemotron-3-super-120b-a12b",
@@ -43,6 +47,7 @@
         ]
       },
       "vars": {
+        "BASE_PATH": "",
         "AI_PROVIDER": "workers-ai",
         "WORKERS_AI_MODEL": "@cf/qwen/qwen3.8-27b",
         "NVIDIA_MODEL": "nvidia/nemotron-3-super-120b-a12b",

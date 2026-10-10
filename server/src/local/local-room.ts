@@ -61,7 +61,8 @@ export class LocalRoom {
         pending = null;
       }
     };
-    const onStream = (text: string) => {
+    // Guests use the rule engine, so only the talk key can ever stream here
+    const onStream = (_key: string, text: string) => {
       pending = text;
       const wait = 120 - (Date.now() - last);
       if (wait <= 0) flush();
@@ -278,13 +279,8 @@ export class LocalRoom {
   private async finish(): Promise<void> {
     const g = this.game;
     if (!g) return;
-    g.aiPending = true;
-    this.pushState();
-    try {
-      await enrichCoach(g, () => new RuleAI());
-    } finally {
-      g.aiPending = false;
-    }
+    g.aiPending = false;
+    await enrichCoach(g, () => new RuleAI());
     this.pushState();
   }
 

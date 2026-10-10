@@ -1,13 +1,26 @@
 // Compress Godot web export .wasm / .pck into .gz, and inject decompression fetch shim into index.html.
 // Reason: Workers Static Assets has 25 MiB single-file limit, Godot wasm is ~38 MiB; compression also reduces download size.
 // Usage: node tools/pack-web.mjs ../web
-import { readFileSync, writeFileSync, unlinkSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, statSync, copyFileSync, mkdirSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { join } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const dir = process.argv[2] || '../web';
 const html = join(dir, 'index.html');
 if (!existsSync(html)) { console.error(`找不到 ${html}，請先匯出 Godot 網頁版`); process.exit(1); }
+
+let buildVer = process.env.IQ_BUILD;
+if (!buildVer) {
+  try {
+    buildVer = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+  } catch {
+    buildVer = Date.now().toString();
+  }
+}
+writeFileSync(join(dir, 'version.json'), JSON.stringify({ version: buildVer }) + '\n');
+console.log(`version.json：已產生（版本號 ${buildVer}）`);
 
 const LIMIT = 25 * 1024 * 1024;
 const packed = [];
@@ -207,12 +220,70 @@ if (existsSync(join(dir, 'local-room.js'))) {
   console.log('index.html: injected local-room.js');
 }
 
+// Inject IQ_BUILD build version into index.html
+page = readFileSync(html, 'utf8');
+if (!page.includes('iq-build-stamp')) {
+  const STAMP = `<script id="iq-build-stamp">window.IQ_BUILD = ${JSON.stringify(buildVer)};</script>`;
+  if (page.includes('<head>')) {
+    page = page.replace('<head>', `<head>\n\t\t${STAMP}`);
+  } else {
+    page = page.replace('<script src="index.js"></script>', `${STAMP}\n\t\t<script src="index.js"></script>`);
+  }
+  writeFileSync(html, page);
+}
+console.log(`index.html：已注入 IQ_BUILD 版本號（${buildVer}）`);
+
+// Icons: copy Android and PWA icon files into icons/
+const iconsDir = join(dir, 'icons');
+if (!existsSync(iconsDir)) mkdirSync(iconsDir, { recursive: true });
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const src192 = join(repoRoot, 'client/icons/android/icon-192.png');
+const src512 = join(repoRoot, 'client/icons/icon-512.png');
+const srcMaskable = join(repoRoot, 'client/icons/android/maskable-512.png');
+
+if (existsSync(src192)) copyFileSync(src192, join(iconsDir, 'icon-192.png'));
+if (existsSync(src512)) copyFileSync(src512, join(iconsDir, 'icon-512.png'));
+if (existsSync(srcMaskable)) {
+  copyFileSync(srcMaskable, join(iconsDir, 'maskable-512.png'));
+} else if (existsSync(src512)) {
+  copyFileSync(src512, join(iconsDir, 'maskable-512.png'));
+}
+console.log('icons/：圖示已複製至輸出目錄');
+
+// Manifest: set short name, colors, and icons list
+const manifestFile = join(dir, 'index.manifest.json');
+if (existsSync(manifestFile)) {
+  try {
+    const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'));
+    manifest.name = '人生顧問局';
+    manifest.short_name = '人生顧問局';
+    manifest.background_color = '#0d231e';
+    manifest.theme_color = '#0d231e';
+    manifest.icons = [
+      { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: 'icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+    ];
+    writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + '\n');
+    console.log('index.manifest.json：已更新名稱、主題色與圖示清單');
+  } catch (e) {
+    console.warn('更新 index.manifest.json 失敗:', e);
+  }
+}
+
 // PWA: Godot-generated service worker cache manifest lists index.wasm, but browser actually fetches index.wasm.gz
 const sw = join(dir, 'index.service.worker.js');
 if (existsSync(sw)) {
   let code = readFileSync(sw, 'utf8');
   for (const ext of packed) code = code.split(`"index.${ext}"`).join(`"index.${ext}.gz"`);
   code = code.replace(/const CACHE_VERSION = '[^']+';/, `const CACHE_VERSION = '${Date.now()}';`);
+  const newIcons = ['"icons/icon-192.png"', '"icons/icon-512.png"', '"icons/maskable-512.png"'];
+  for (const ic of newIcons) {
+    if (!code.includes(ic)) {
+      code = code.replace('const CACHED_FILES = [', `const CACHED_FILES = [${ic}, `);
+    }
+  }
   writeFileSync(sw, code);
   console.log(`service worker：快取清單更新，版本號重置為 ${Date.now()}`);
 }
@@ -227,6 +298,13 @@ writeFileSync(join(dir, '_headers'), `/*
 
 /index.html
   Cache-Control: no-cache
+
+/version.json
+  Content-Type: application/json
+  Cache-Control: no-cache
+
+/icons/*
+  Cache-Control: public, max-age=86400
 
 /local-room.js
   Cache-Control: no-cache

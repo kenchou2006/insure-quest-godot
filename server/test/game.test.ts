@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOARD, CLIENTS } from '../src/game/data.ts';
 import { evaluatePlan, runStress, TOTAL_COINS } from '../src/game/engine.ts';
-import { addPlayer, applyAction, createGame, publicView, scorePlayer, startGame, type Ctx } from '../src/game/game.ts';
+import { addPlayer, applyAction, createGame, endGame, enrichCoach, fallbackTip, publicView, scorePlayer, startGame, type Ctx } from '../src/game/game.ts';
 import { botAction } from '../src/game/bots.ts';
-import { RuleAI, ruleGrade, buildGeneratedClient, MeteredAI, MockAI, extractJson, FallbackRawAI, makeAI, detectProvider, partialJsonStringDone, type RawAI } from '../src/ai.ts';
+import { RuleAI, ruleGrade, buildGeneratedClient, MeteredAI, MockAI, extractJson, FallbackRawAI, makeAI, detectProvider, partialJsonStringDone, type AIService, type RawAI } from '../src/ai.ts';
 import { buildProfile } from '../src/game/profile.ts';
 import { predict } from '../src/game/game.ts';
 import { calculateClaim, formatWan } from '../src/game/finance.ts';
@@ -727,5 +727,192 @@ test('partialJsonStringDone：正確判斷客戶回答字串結束與跳脫字�
   const withQuotes = '{"answer": "他說: \\"不用擔心\\" 就好了", "coachTip": "良好"}';
   assert.deepEqual(partialJsonStringDone(withQuotes, 'answer'), { text: '他說: "不用擔心" 就好了', done: true });
 });
+
+test('FinalRow AI 等待狀態：AI 啟用時以 pending 起始並填入 AI 評語；AI 失敗時以 fallback 結束且不留 pending；訪客立即取得 fallback', async () => {
+  const g = createGame('WAIT');
+  addPlayer(g, { id: 'p_ai', name: 'AI 玩家', accountId: 'acc_1' });
+  addPlayer(g, { id: 'p_guest', name: '訪客玩家', accountId: null });
+  addPlayer(g, { id: 'p_bot', name: '電腦玩家', isBot: true });
+
+  const mockAiService: AIService = {
+    enabled: true,
+    freeQuestion: async () => ({ answer: '', matched: null, key: null, trust: 0, insight: 0, compliance: 0, note: '' }),
+    talk: async () => ({ answer: '', revealedFacts: [], trustDelta: 0, insightDelta: 0, emotion: 'neutral', compliance: { level: 'pass', penalty: 0, issues: [] }, coachTip: '' }),
+    letter: async () => '十年信',
+    gradeObjection: async () => ({ quality: 'good', trust: 0, fit: 0, risk: 0, compliance: 0, title: '', body: '' }),
+    marketNews: async () => '快訊',
+    coachTip: async () => '提示',
+    hint: async () => '提示',
+    debrief: async () => 'AI 教練專屬評語：表現卓越！',
+    generateClient: async () => null,
+  };
+
+  const failingAiService: AIService = {
+    ...mockAiService,
+    debrief: async () => null,
+  };
+
+  const ctxAi: Ctx = {
+    ai: mockAiService,
+    rng: seeded(1),
+    now: () => 0,
+    aiFor: (p) => (p.id === 'p_ai' && p.accountId ? mockAiService : new RuleAI()),
+  };
+
+  // 1. 遊戲結算 (endGame)：AI 啟用的登入玩家 coach 為空且 coachPending = true；訪客與電腦立即取得 fallback 且 coachPending = false
+  endGame(g, ctxAi);
+  assert.ok(g.final && g.final.length === 3);
+
+  const rowAi = g.final.find(r => r.playerId === 'p_ai')!;
+  const rowGuest = g.final.find(r => r.playerId === 'p_guest')!;
+  const rowBot = g.final.find(r => r.playerId === 'p_bot')!;
+
+  assert.equal(rowAi.coachPending, true);
+  assert.equal(rowAi.coach, '');
+
+  assert.equal(rowGuest.coachPending, false);
+  assert.ok(rowGuest.coach.length > 0);
+
+  assert.equal(rowBot.coachPending, false);
+  assert.ok(rowBot.coach.length > 0);
+
+  // 2. enrichCoach 成功：AI 評語抵達，coachPending 清除為 false，coach 替換為 AI 內容
+  await enrichCoach(g, (p) => (p.id === 'p_ai' ? mockAiService : new RuleAI()));
+  assert.equal(rowAi.coachPending, false);
+  assert.equal(rowAi.coach, 'AI 教練專屬評語：表現卓越！');
+
+  // 3. AI 呼叫失敗情境：重新 endGame，但 enrichCoach 使用 failingAiService
+  endGame(g, ctxAi);
+  const rowFail = g.final.find(r => r.playerId === 'p_ai')!;
+  assert.equal(rowFail.coachPending, true);
+  assert.equal(rowFail.coach, '');
+
+  await enrichCoach(g, (p) => (p.id === 'p_ai' ? failingAiService : new RuleAI()));
+  assert.equal(rowFail.coachPending, false);
+  const pAi = g.players.find(p => p.id === 'p_ai')!;
+  assert.equal(rowFail.coach, fallbackTip(pAi));
+});
+
+test('partialJsonStringDone 正確從未完整 JSON 擷取 body, content, text', () => {
+  const partialBody = '{"title": "test", "body": "這是一段漸進式內容';
+  assert.equal(partialJsonStringDone(partialBody, 'body').text, '這是一段漸進式內容');
+  assert.equal(partialJsonStringDone(partialBody, 'body').done, false);
+
+  const completedBody = '{"title": "test", "body": "這是一段完整內容"}';
+  assert.equal(partialJsonStringDone(completedBody, 'body').text, '這是一段完整內容');
+  assert.equal(partialJsonStringDone(completedBody, 'body').done, true);
+
+  const partialContent = '{"content": "親愛的顧問，這十年來';
+  assert.equal(partialJsonStringDone(partialContent, 'content').text, '親愛的顧問，這十年來');
+
+  const partialText = '{"text": "全球市場波動加劇';
+  assert.equal(partialJsonStringDone(partialText, 'text').text, '全球市場波動加劇');
+});
+
+test('非 talk AI 功能（hint / debrief / letter）串流測試：接收漸進式 chunks 且最終狀態儲存驗證後文本', async () => {
+  const streamedChunks: Array<{ key: string; text: string }> = [];
+
+  const streamingAiService: AIService = {
+    enabled: true,
+    freeQuestion: async () => ({ answer: '', matched: null, key: null, trust: 0, insight: 0, compliance: 0, note: '' }),
+    talk: async () => ({ answer: '', revealedFacts: [], trustDelta: 0, insightDelta: 0, emotion: 'neutral', compliance: { level: 'pass', penalty: 0, issues: [] }, coachTip: '' }),
+    letter: async (_c, _twist, _facts, onStream) => {
+      onStream?.('親愛的');
+      onStream?.('親愛的顧問，謝謝你');
+      return '親愛的顧問，謝謝你的規劃。';
+    },
+    gradeObjection: async () => ({ quality: 'good', trust: 0, fit: 0, risk: 0, compliance: 0, title: '', body: '' }),
+    marketNews: async () => '快訊',
+    coachTip: async () => '提示',
+    hint: async (_c, _sess, onStream) => {
+      onStream?.('建議先');
+      onStream?.('建議先釐清家庭');
+      return '建議先釐清家庭責任與預算。';
+    },
+    debrief: async (_p, _row, onStream) => {
+      onStream?.('整體表現');
+      onStream?.('整體表現穩健');
+      return '整體表現穩健，持續精進！';
+    },
+    generateClient: async () => null,
+  };
+
+  const g = createGame('STREAM_TEST');
+  addPlayer(g, { id: 'p_stream', name: '串流顧問', accountId: 'acc_stream' });
+  const client = CLIENTS[0];
+
+  const ctx: Ctx = {
+    ai: streamingAiService,
+    rng: seeded(1),
+    now: () => 0,
+    aiFor: () => streamingAiService,
+    onStream: (key, text) => {
+      streamedChunks.push({ key, text });
+    },
+  };
+
+  startGame(g, ctx);
+
+  // 1. 測試 hint 串流
+  g.session = {
+    playerId: 'p_stream',
+    clientId: client.id,
+    referral: false,
+    step: 'discover',
+    asked: [],
+    freeLeft: 0,
+    freeHits: [],
+    clues: [],
+    observed: [],
+    m: { trust: 50, insight: 50, fit: 50, risk: 50, compliance: 100 },
+    objectionOrder: [0, 1, 2, 3],
+    predictions: {},
+  };
+  g.turnStage = 'session';
+
+  const hintErr = await applyAction(g, 'p_stream', { type: 'hint' }, ctx);
+  assert.equal(hintErr, null);
+  assert.equal(g.session.hint, '建議先釐清家庭責任與預算。');
+  assert.equal(g.session.hintUsed, true);
+
+  const hintChunks = streamedChunks.filter(c => c.key === 'hint');
+  assert.equal(hintChunks.length, 2);
+  assert.equal(hintChunks[0].text, '建議先');
+  assert.equal(hintChunks[1].text, '建議先釐清家庭');
+
+  // 2. 測試 endGame + enrichCoach 串流 (coach & letter)
+  g.players[0].book.push({ clientId: client.id, name: client.name, alloc: { cash: 4, protect: 4, growth: 2 }, cards: ['income'], satisfaction: 70, planQuality: 'good', compliance: 100, stressUsed: 0, signedRound: 1, mis: false });
+  endGame(g, ctx);
+  assert.ok(g.final && g.final.length === 1);
+  assert.equal(g.final[0].coachPending, true);
+
+  // Attach one template letter after settlement (enrichCoach polishes letters from the interview logs)
+  g.clients[client.id] = client;
+  g.players[0].sessionLogs = [{ clientId: client.id, clientName: client.name, letter: { outcome: 'thanks', content: '模板信' } } as unknown as NonNullable<typeof g.players[0]['sessionLogs']>[number]];
+  g.final[0].letters = [{ clientId: client.id, clientName: client.name, outcome: 'thanks', content: '模板信' }];
+  g.final[0].lettersPending = true;
+
+  await enrichCoach(g, () => streamingAiService, (key, text) => {
+    streamedChunks.push({ key, text });
+  });
+
+  assert.equal(g.final[0].coachPending, false);
+  assert.equal(g.final[0].coach, '整體表現穩健，持續精進！');
+  assert.equal(g.final[0].lettersPending, false);
+  assert.ok(g.final[0].letters && g.final[0].letters.length === 1);
+  assert.equal(g.final[0].letters[0].content, '親愛的顧問，謝謝你的規劃。');
+  assert.equal(g.final[0].letters[0].clientId, client.id);
+
+  const coachChunks = streamedChunks.filter(c => c.key === 'coach:p_stream');
+  assert.equal(coachChunks.length, 2);
+  assert.equal(coachChunks[0].text, '整體表現');
+  assert.equal(coachChunks[1].text, '整體表現穩健');
+
+  const letterChunks = streamedChunks.filter(c => c.key === `letter:p_stream:${client.id}`);
+  assert.equal(letterChunks.length, 2);
+  assert.equal(letterChunks[0].text, '親愛的');
+  assert.equal(letterChunks[1].text, '親愛的顧問，謝謝你');
+});
+
 
 

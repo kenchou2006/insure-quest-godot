@@ -41,29 +41,29 @@ export interface CombinedDialogue {
 export interface RawAI {
   readonly provider: string;
   readonly unmetered?: boolean;
-  freeQuestion(c: ClientProfile, text: string, history: SessionState['asked']): Promise<FreeAnswer | null>;
+  freeQuestion(c: ClientProfile, text: string, history: SessionState['asked'], onStream?: (text: string, done?: boolean) => void): Promise<FreeAnswer | null>;
   /** onAnswer: providers supporting streaming report current text as client answers are generated incrementally (optional) */
   talk(c: ClientProfile, twist: LifeTwist | null | undefined, history: SessionState['asked'], text: string, onAnswer?: (partial: string, answerDone?: boolean) => void): Promise<CombinedDialogue | null>;
-  letter(c: ClientProfile, twist: LifeTwist | null | undefined, facts: LetterFacts): Promise<string | null>;
-  gradeObjection(c: ClientProfile, reply: string): Promise<Grade | null>;
-  marketNews(ev: MarketEvent): Promise<string | null>;
-  coachTip(p: PlayerState): Promise<string | null>;
-  hint(c: ClientProfile, sess: SessionState): Promise<string | null>;
-  debrief(p: PlayerState, row: Omit<FinalRow, 'coach'>): Promise<string | null>;
+  letter(c: ClientProfile, twist: LifeTwist | null | undefined, facts: LetterFacts, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
+  gradeObjection(c: ClientProfile, reply: string, onStream?: (text: string, done?: boolean) => void): Promise<Grade | null>;
+  marketNews(ev: MarketEvent, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
+  coachTip(p: PlayerState, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
+  hint(c: ClientProfile, sess: SessionState, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
+  debrief(p: PlayerState, row: Omit<FinalRow, 'coach'>, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
   generateClient(seed: number): Promise<ClientProfile | null>;
 }
 
 /** Interface used by game logic: guaranteed to produce results (rule-based when necessary) */
 export interface AIService {
   readonly enabled: boolean;
-  freeQuestion(c: ClientProfile, text: string, history: SessionState['asked']): Promise<FreeAnswer>;
+  freeQuestion(c: ClientProfile, text: string, history: SessionState['asked'], onStream?: (text: string, done?: boolean) => void): Promise<FreeAnswer>;
   talk(c: ClientProfile, twist: LifeTwist | null | undefined, history: SessionState['asked'], text: string, suggested?: QuestionId, onAnswer?: (partial: string, answerDone?: boolean) => void): Promise<CombinedDialogue>;
-  letter(c: ClientProfile, twist: LifeTwist | null | undefined, facts: LetterFacts): Promise<string>;
-  gradeObjection(c: ClientProfile, reply: string): Promise<Grade>;
-  marketNews(ev: MarketEvent): Promise<string | null>;
-  coachTip(p: PlayerState): Promise<string | null>;
-  hint(c: ClientProfile, sess: SessionState): Promise<string>;
-  debrief(p: PlayerState, row: Omit<FinalRow, 'coach'> & { coach?: string }): Promise<string | null>;
+  letter(c: ClientProfile, twist: LifeTwist | null | undefined, facts: LetterFacts, onStream?: (text: string, done?: boolean) => void): Promise<string>;
+  gradeObjection(c: ClientProfile, reply: string, onStream?: (text: string, done?: boolean) => void): Promise<Grade>;
+  marketNews(ev: MarketEvent, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
+  coachTip(p: PlayerState, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
+  hint(c: ClientProfile, sess: SessionState, onStream?: (text: string, done?: boolean) => void): Promise<string>;
+  debrief(p: PlayerState, row: Omit<FinalRow, 'coach'> & { coach?: string }, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
   generateClient(seed: number): Promise<ClientProfile | null>;
 }
 
@@ -162,17 +162,17 @@ export function ruleTalk(
 
 export class RuleAI implements AIService {
   readonly enabled: boolean = false;
-  async freeQuestion(c: ClientProfile, text: string, h: SessionState['asked']) { return ruleFreeQuestion(c, text, h); }
-  async talk(c: ClientProfile, twist: LifeTwist | null | undefined, history: SessionState['asked'], text: string, suggested?: QuestionId) {
+  async freeQuestion(c: ClientProfile, text: string, h: SessionState['asked'], _onStream?: (text: string, done?: boolean) => void) { return ruleFreeQuestion(c, text, h); }
+  async talk(c: ClientProfile, twist: LifeTwist | null | undefined, history: SessionState['asked'], text: string, suggested?: QuestionId, _onAnswer?: (partial: string, answerDone?: boolean) => void) {
     return ruleTalk(c, twist, history, text, suggested);
   }
-  async letter(c: ClientProfile, _twist: LifeTwist | null | undefined, facts: LetterFacts) {
+  async letter(c: ClientProfile, _twist: LifeTwist | null | undefined, facts: LetterFacts, _onStream?: (text: string, done?: boolean) => void) {
     return generateTemplateLetter(c, facts);
   }
-  async gradeObjection(c: ClientProfile, reply: string) { return ruleGrade(c, reply); }
-  async marketNews() { return null; }
-  async coachTip() { return null; }
-  async hint(c: ClientProfile, sess: SessionState) { return ruleHint(c, sess); }
-  async debrief() { return null; }
-  async generateClient() { return null; }
+  async gradeObjection(c: ClientProfile, reply: string, _onStream?: (text: string, done?: boolean) => void) { return ruleGrade(c, reply); }
+  async marketNews(_ev: MarketEvent, _onStream?: (text: string, done?: boolean) => void) { return null; }
+  async coachTip(_p: PlayerState, _onStream?: (text: string, done?: boolean) => void) { return null; }
+  async hint(c: ClientProfile, sess: SessionState, _onStream?: (text: string, done?: boolean) => void) { return ruleHint(c, sess); }
+  async debrief(_p: PlayerState, _row: Omit<FinalRow, 'coach'> & { coach?: string }, _onStream?: (text: string, done?: boolean) => void) { return null; }
+  async generateClient(_seed: number) { return null; }
 }

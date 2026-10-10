@@ -65,12 +65,12 @@ function timingSafeEqualStr(a: string, b: string): boolean {
   return diff === 0;
 }
 
-async function startSession(env: Env, url: URL, user: User, returnTo: string): Promise<Response> {
+async function startSession(env: Env, url: URL, user: User, returnTo: string, base: string): Promise<Response> {
   await records(env).upsertUser(user);
   const token = await records(env).createSession(user.id);
-  const headers = new Headers({ Location: returnTo });
-  headers.append('Set-Cookie', cookie(SESSION_COOKIE, token, url, 30 * 86400));
-  headers.append('Set-Cookie', cookie(STATE_COOKIE, '', url, 0, '/api/auth'));
+  const headers = new Headers({ Location: base + returnTo });
+  headers.append('Set-Cookie', cookie(SESSION_COOKIE, token, url, 30 * 86400, base || '/'));
+  headers.append('Set-Cookie', cookie(STATE_COOKIE, '', url, 0, `${base}/api/auth`));
   return new Response(null, { status: 302, headers });
 }
 
@@ -86,8 +86,8 @@ function sameOriginPost(req: Request, url: URL) {
 }
 
 /** Handle /api/auth/*; returns null if not an auth route */
-export async function handleAuth(req: Request, env: Env, url: URL): Promise<Response | null> {
-  const redirectUri = `${url.origin}/api/auth/google/callback`;
+export async function handleAuth(req: Request, env: Env, url: URL, base = ''): Promise<Response | null> {
+  const redirectUri = `${url.origin}${base}/api/auth/google/callback`;
 
   if (url.pathname === '/api/auth/config') {
     return Response.json({
@@ -102,7 +102,7 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
   if (url.pathname === '/api/auth/google/nonce') {
     if (!googleEnabled(env)) return new Response('Google 登入尚未設定', { status: 503 });
     const nonce = randomHex(16);
-    return new Response(JSON.stringify({ nonce }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Set-Cookie': cookie(NONCE_COOKIE, nonce, url, 600, '/api/auth') } });
+    return new Response(JSON.stringify({ nonce }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Set-Cookie': cookie(NONCE_COOKIE, nonce, url, 600, `${base}/api/auth`) } });
   }
 
   // ID Token returned by FedCM / One Tap: create session after verifying signature and nonce
@@ -130,8 +130,8 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
     await records(env).upsertUser(user);
     const token = await records(env).createSession(user.id);
     const headers = new Headers({ 'Content-Type': 'application/json' });
-    headers.append('Set-Cookie', cookie(SESSION_COOKIE, token, url, 30 * 86400));
-    headers.append('Set-Cookie', cookie(NONCE_COOKIE, '', url, 0, '/api/auth'));
+    headers.append('Set-Cookie', cookie(SESSION_COOKIE, token, url, 30 * 86400, base || '/'));
+    headers.append('Set-Cookie', cookie(NONCE_COOKIE, '', url, 0, `${base}/api/auth`));
     return new Response(JSON.stringify({ ok: true, name: user.name }), { headers });
   }
 
@@ -145,7 +145,7 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
       scope: 'openid email profile', state, prompt: 'select_account',
     }).toString();
     const headers = new Headers({ Location: target.toString() });
-    headers.append('Set-Cookie', cookie(STATE_COOKIE, `${state}|${returnTo}`, url, 600, '/api/auth'));
+    headers.append('Set-Cookie', cookie(STATE_COOKIE, `${state}|${returnTo}`, url, 600, `${base}/api/auth`));
     return new Response(null, { status: 302, headers });
   }
 
@@ -154,25 +154,25 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
     const [expected, returnTo] = (readCookie(req, STATE_COOKIE) || '').split('|');
     const state = url.searchParams.get('state');
     const code = url.searchParams.get('code');
-    if (!expected || !state || state !== expected || !code) return Response.redirect(`${url.origin}/?login=failed`, 302);
+    if (!expected || !state || state !== expected || !code) return Response.redirect(`${url.origin}${base}/?login=failed`, 302);
     const tokenRes = await fetch(GOOGLE_TOKEN, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ code, client_id: env.GOOGLE_CLIENT_ID!, client_secret: env.GOOGLE_CLIENT_SECRET!, redirect_uri: redirectUri, grant_type: 'authorization_code' }),
     });
-    if (!tokenRes.ok) { console.warn('Google token exchange failed', tokenRes.status); return Response.redirect(`${url.origin}/?login=failed`, 302); }
+    if (!tokenRes.ok) { console.warn('Google token exchange failed', tokenRes.status); return Response.redirect(`${url.origin}${base}/?login=failed`, 302); }
     const { id_token } = await tokenRes.json<{ id_token?: string }>();
     // Verify signature as well (defense-in-depth)
     const claims = id_token ? await verifyGoogleIdToken(id_token, env.GOOGLE_CLIENT_ID!) : null;
-    if (!claims) return Response.redirect(`${url.origin}/?login=failed`, 302);
-    return startSession(env, url, userFromClaims(claims), safeReturn(returnTo));
+    if (!claims) return Response.redirect(`${url.origin}${base}/?login=failed`, 302);
+    return startSession(env, url, userFromClaims(claims), safeReturn(returnTo), base);
   }
 
   if (url.pathname === '/api/auth/dev-login') {
     if (!devLoginEnabled(env, url)) return new Response('not found', { status: 404 });
     const name = (url.searchParams.get('name') || '測試顧問').slice(0, 20);
     const user: User = { id: `dev:${name}`, email: `${encodeURIComponent(name)}@dev.local`, name, picture: null };
-    return startSession(env, url, user, safeReturn(url.searchParams.get('return')));
+    return startSession(env, url, user, safeReturn(url.searchParams.get('return')), base);
   }
 
   if (url.pathname === '/api/auth/demo' && req.method === 'POST') {
@@ -207,7 +207,7 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
     await rec.upsertUser(user);
     const token = await rec.createSession(userId, 7);
     const headers = new Headers({ 'Content-Type': 'application/json' });
-    headers.append('Set-Cookie', cookie(SESSION_COOKIE, token, url, 7 * 86400));
+    headers.append('Set-Cookie', cookie(SESSION_COOKIE, token, url, 7 * 86400, base || '/'));
     return new Response(JSON.stringify({ ok: true, name }), { headers });
   }
 
@@ -215,7 +215,7 @@ export async function handleAuth(req: Request, env: Env, url: URL): Promise<Resp
     if (!sameOriginPost(req, url)) return Response.json({ error: 'forbidden' }, { status: 403 });
     const token = readCookie(req, SESSION_COOKIE);
     if (token) await records(env).deleteSession(token);
-    return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json', 'Set-Cookie': cookie(SESSION_COOKIE, '', url, 0) } });
+    return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json', 'Set-Cookie': cookie(SESSION_COOKIE, '', url, 0, base || '/') } });
   }
 
   return null;

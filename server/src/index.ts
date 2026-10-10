@@ -13,6 +13,8 @@ export interface Env {
   ROOM: DurableObjectNamespace<Room>;
   RECORDS: DurableObjectNamespace<Records>;
   ASSETS?: Fetcher;
+  /** URL prefix when mounted under a Route such as example.com/insure-quest* (empty = served from root). Stripped before routing. */
+  BASE_PATH?: string;
   /** Workers AI binding */
   AI?: Ai;
   /** default chain NVIDIA NIM -> Workers AI | nvidia-only | workers-ai-only | mock | rules */
@@ -59,9 +61,25 @@ function newCode() {
 }
 const validCode = (c: string) => /^[A-Z0-9]{5}$/.test(c);
 
+/** Normalised BASE_PATH: '' or '/prefix' (leading slash, no trailing slash) */
+function basePrefix(env: Env): string {
+  const p = (env.BASE_PATH || '').trim().replace(/\/+$/, '');
+  return p ? (p.startsWith('/') ? p : `/${p}`) : '';
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
+    // Mounted under a Route prefix: strip it so the rest of the routing (and static assets) see root-relative paths.
+    // Requests that do not carry the prefix (e.g. workers.dev) are served as-is with base ''.
+    const prefix = basePrefix(env);
+    let base = '';
+    if (prefix && url.pathname === prefix) { url.pathname = `${prefix}/`; return Response.redirect(url.toString(), 301); }
+    if (prefix && url.pathname.startsWith(`${prefix}/`)) {
+      base = prefix;
+      url.pathname = url.pathname.slice(prefix.length);
+      req = new Request(url, req);
+    }
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
     if (url.pathname === '/api/health') return json({ ok: true });
@@ -143,7 +161,7 @@ export default {
     }
 
     if (url.pathname.startsWith('/api/auth/')) {
-      const r = await handleAuth(req, env, url);
+      const r = await handleAuth(req, env, url, base);
       if (r) return r;
     }
 
@@ -201,7 +219,7 @@ export default {
       const code = m[1].toUpperCase();
       if (!validCode(code)) return json({ error: '房間代碼格式錯誤' }, 400);
       const stub = env.ROOM.get(env.ROOM.idFromName(code));
-      const fwd = new Request(`https://room/${m[2]}`, req);
+      const fwd = new Request(`https://room/${m[2]}${url.search}`, req);
       fwd.headers.delete(ACCOUNT_HEADER);
       if (m[2] === 'ws') {
         // Only same-origin WebSockets carry login identity (prevents cross-site WebSocket hijacking)
@@ -273,7 +291,17 @@ export default {
     }
 
     if (url.pathname.startsWith('/api/')) return json({ error: 'not found' }, 404);
-    if (env.ASSETS) return env.ASSETS.fetch(req);
+    if (env.ASSETS) {
+      const res = await env.ASSETS.fetch(req);
+      // Asset redirects (e.g. /index.html -> /) are root-relative to the stripped path: put the prefix back
+      const loc = res.headers.get('Location');
+      if (base && loc && loc.startsWith('/') && !loc.startsWith('//')) {
+        const out = new Response(res.body, res);
+        out.headers.set('Location', base + loc);
+        return out;
+      }
+      return res;
+    }
     return new Response('INSURE QUEST server', { status: 200 });
   },
 } satisfies ExportedHandler<Env>;

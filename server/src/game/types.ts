@@ -205,7 +205,9 @@ export interface FinalRow {
   score: number; grade: string; caps: string[];
   skill: Metrics; service: number; protection: number; reputation: number; commission: number; clients: number;
   coach: string;
-  letters?: { clientName: string; outcome: 'thanks' | 'regret' | 'mixed' | 'complaint'; content: string }[];
+  coachPending?: boolean;
+  lettersPending?: boolean;
+  letters?: { clientId?: string; clientName: string; outcome: 'thanks' | 'regret' | 'mixed' | 'complaint'; content: string }[];
   timeline?: TimelineResult;
   timelines?: ({ clientName: string } & TimelineResult)[];
 }

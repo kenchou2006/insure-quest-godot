@@ -14,6 +14,10 @@ fi
 STAGE=../.web-build
 rm -rf "$STAGE" && mkdir -p "$STAGE" ../web
 "$GODOT_BIN" --headless --path ../client --export-release "Web" "$STAGE/index.html"
+# Export build version so both Godot web export and pack-web share it
+export IQ_BUILD="${IQ_BUILD:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)-$(date +%s)}"
+# Try generating maskable icon if sharp is installed (safe to ignore failure)
+node tools/gen-maskable.mjs 2>/dev/null || true
 # Guest solo practice runs in the browser: bundle the game engine as a standalone script (see src/local/local-room.ts)
 npx esbuild src/local/local-room.ts --bundle --format=iife --platform=browser --target=es2022 --minify --outfile="$STAGE/local-room.js"
 node tools/pack-web.mjs "$STAGE"

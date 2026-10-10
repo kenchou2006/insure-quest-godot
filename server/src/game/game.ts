@@ -27,10 +27,11 @@ export function mulberry32(seed: number): () => number {
 
 export interface Ctx {
   ai: AIService; rng: () => number; now: () => number;
-  /** Current text streamed during interview dialogue for client answer (relayed by room to all connections) */
-  onStream?: (text: string, answerDone?: boolean) => void;
+  aiFor?: (p: PlayerState) => AIService;
+  /** Streamed partial AI text for a target key (talk, hint, objection, market, seminar:<id>, coach:<id>, letter:<id>:<client>), relayed to all connections */
+  onStream?: (key: string, text: string, done?: boolean) => void;
   /** Action processing finished: discard unsent stream chunks (prevents arriving after final state) */
-  endStream?: () => void;
+  endStream?: (key?: string) => void;
 }
 
 export const MAX_PLAYERS = 4;
@@ -296,7 +297,7 @@ async function resolveTile(s: GameState, p: PlayerState, ctx: Ctx, passLines: Pe
     }
     case 'market': {
       const me = draw(s.marketDeck, MARKET_EVENTS, ctx.rng);
-      const headline = await ctx.ai.marketNews(me).catch(() => null);
+      const headline = await ctx.ai.marketNews(me, (part, done) => ctx.onStream?.('market', part, done)).catch(() => null);
       const lines: PendingEvent['lines'] = [];
       for (const pl of s.players) {
         let held = 0, broken = 0;
@@ -347,7 +348,7 @@ async function resolveTile(s: GameState, p: PlayerState, ctx: Ctx, passLines: Pe
       return ev('audit', '合規稽核', '稽核人員抽查你的客戶紀錄：適合度、說明是否完整、是否有誇大或保證。', lines);
     }
     case 'seminar': {
-      const tip = await ctx.ai.coachTip(p).catch(() => null);
+      const tip = await ctx.ai.coachTip(p, (part, done) => ctx.onStream?.(`seminar:${p.id}`, part, done)).catch(() => null);
       p.reputation = clamp(p.reputation + 2);
       return ev('seminar', '顧問研討會', '資深顧問針對你目前的表現給予建議。', [{ text: tip || fallbackTip(p), tone: 'info' }, { text: '持續學習，聲望 +2', tone: 'good' }]);
     }
@@ -769,7 +770,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       sess.aiBusy = true;
       let dialogue;
       try {
-        dialogue = await ctx.ai.talk(c, sess.twist, sess.asked, text, a.suggested, ctx.onStream);
+        dialogue = await ctx.ai.talk(c, sess.twist, sess.asked, text, a.suggested, (part, done) => ctx.onStream?.('talk', part, done));
       } finally {
         sess.aiBusy = false;
       }
@@ -877,7 +878,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       const text = (a.text || '').trim().slice(0, 200);
       if (text.length < 4) return '請輸入你的回應';
       sess.aiBusy = true;
-      const g = await ctx.ai.gradeObjection(c, text);
+      const g = await ctx.ai.gradeObjection(c, text, (part, done) => ctx.onStream?.('objection', part, done));
       sess.aiBusy = false;
       apply(sess.m, { trust: g.trust, fit: g.fit, risk: g.risk, compliance: g.compliance });
       sess.objectionReply = { text, title: g.title, body: g.body, quality: g.quality };
@@ -894,7 +895,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       if (sess.step === 'result') return '面談已結束';
       if (sess.hintUsed) return '這場面談已經用過教練提示';
       sess.hintUsed = true;
-      sess.hint = await ctx.ai.hint(c, sess);
+      sess.hint = await ctx.ai.hint(c, sess, (part, done) => ctx.onStream?.('hint', part, done));
       log(s, `${p.name} 向教練求助`, 'info', ctx.now());
       return null;
     }
@@ -938,14 +939,23 @@ export function scorePlayer(p: PlayerState): Omit<FinalRow, 'coach'> {
   };
 }
 
-function endGame(s: GameState, ctx: Ctx) {
+export function endGame(s: GameState, ctx: Ctx) {
   s.phase = 'ended'; s.turnStage = 'done';
   s.final = s.players.map(p => {
-    const row = { ...scorePlayer(p), coach: fallbackTip(p) };
+    const ai = ctx.aiFor ? ctx.aiFor(p) : (!p.isBot && p.accountId ? ctx.ai : null);
+    const aiWillBeUsed = !!ai?.enabled && !p.isBot && !!p.accountId;
+    const hasLetters = (p.sessionLogs ?? []).some(l => l.letter);
+    const row: FinalRow = {
+      ...scorePlayer(p),
+      coach: aiWillBeUsed ? '' : fallbackTip(p),
+      coachPending: aiWillBeUsed,
+      lettersPending: aiWillBeUsed && hasLetters,
+    };
     const letters = (p.sessionLogs ?? [])
       .filter(l => l.letter)
       .slice(-3)
       .map(l => ({
+        clientId: l.clientId,
         clientName: l.clientName,
         outcome: l.letter!.outcome as 'thanks' | 'regret' | 'mixed' | 'complaint',
         content: l.letter!.content,
@@ -965,26 +975,69 @@ function endGame(s: GameState, ctx: Ctx) {
 }
 
 /** Generates personalized coach feedback via AI upon completion (retains rule-based on failure) */
-export async function enrichCoach(s: GameState, aiFor: (p: PlayerState) => AIService) {
+/** Resolves to null on rejection or after ms; clears its timer so nothing lingers once the AI answers */
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), ms); });
+  try {
+    return await Promise.race([p.catch(() => null), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function enrichCoach(s: GameState, aiFor: (p: PlayerState) => AIService, onStream?: (key: string, text: string, done?: boolean) => void) {
   if (!s.final) return;
   await Promise.all(s.final.map(async row => {
     const p = playerById(s, row.playerId);
-    if (!p || p.isBot) return;
+    if (!p || p.isBot) {
+      if (row.coachPending) {
+        row.coach = fallbackTip(p ?? { ...row, decisions: [], skillSum: zero(), pos: 0, connected: false, disconnectedAt: null, book: [], quizCorrect: 0, quizTotal: 0, commission: row.commission, reputation: row.reputation, sessions: row.clients } as any);
+        row.coachPending = false;
+      }
+      row.lettersPending = false;
+      return;
+    }
     const ai = aiFor(p);
-    const text = await ai.debrief(p, row).catch(() => null);
-    if (text) row.coach = text;
+    if (!ai.enabled) {
+      if (row.coachPending || !row.coach) {
+        row.coach = fallbackTip(p);
+        row.coachPending = false;
+      }
+      row.lettersPending = false;
+      return;
+    }
+    try {
+      const text = await withTimeout(ai.debrief(p, row, (part, done) => onStream?.(`coach:${row.playerId}`, part, done)), 30000);
+      if (text) {
+        row.coach = text;
+      } else {
+        row.coach = fallbackTip(p);
+      }
+    } catch {
+      row.coach = fallbackTip(p);
+    } finally {
+      row.coachPending = false;
+    }
     // Letter from ten years later: outcome and gap determined by rule engine, AI rewrites text (retains template letter on failure/guests)
-    if (!ai.enabled || !row.letters?.length) return;
-    const logs = (p.sessionLogs ?? []).filter(l => l.letter).slice(-3);
-    await Promise.all(logs.map(async (l, i) => {
-      const c = s.clients[l.clientId];
-      const row_letter = row.letters?.[i];
-      if (!c || !l.letter || !row_letter) return;
-      const twist = LIFE_TWISTS.find(t => t.id === l.twist?.id) ?? null;
-      const { content: _, ...facts } = l.letter;
-      const content = await ai.letter(applyTwist(c, twist), twist, facts).catch(() => null);
-      if (content) { row_letter.content = content; l.letter.content = content; }
-    }));
+    if (!ai.enabled || !row.letters?.length) {
+      row.lettersPending = false;
+      return;
+    }
+    try {
+      const logs = (p.sessionLogs ?? []).filter(l => l.letter).slice(-3);
+      await Promise.all(logs.map(async (l, i) => {
+        const c = s.clients[l.clientId];
+        const row_letter = row.letters?.[i];
+        if (!c || !l.letter || !row_letter) return;
+        const twist = LIFE_TWISTS.find(t => t.id === l.twist?.id) ?? null;
+        const { content: _, ...facts } = l.letter;
+        const content = await withTimeout(ai.letter(applyTwist(c, twist), twist, facts, (part, done) => onStream?.(`letter:${row.playerId}:${c.id}`, part, done)), 25000);
+        if (content) { row_letter.content = content; l.letter.content = content; }
+      }));
+    } finally {
+      row.lettersPending = false;
+    }
   }));
 }
 

@@ -8,7 +8,7 @@ import type { Action, BotLevel, GameState, PlayerState } from './game/types.ts';
 import { addPlayer, applyAction, createGame, enrichCoach, injectClient, log, mulberry32, predict, publicView, removePlayer, startGame, type Ctx } from './game/game.ts';
 import { botAction } from './game/bots.ts';
 import { BOARD, CARDS, QUESTIONS } from './game/data.ts';
-import { makeAI, MeteredAI, type AIService, type Meter, type RawAI } from './ai.ts';
+import { makeAI, MeteredAI, s2t, type AIService, type Meter, type RawAI } from './ai.ts';
 import { globalRecords, userRecords, type RecordInput, type RecordSummary } from './records.ts';
 import type { Env } from './index.ts';
 
@@ -94,47 +94,95 @@ export class Room extends DurableObject<Env> {
   }
 
   private makeCtx(actor?: PlayerState | null): Ctx {
-    // Client response stream: throttled and broadcast to all room connections (server outbound WebSocket messages are free)
-    let last = 0;
-    let pending: string | null = null;
-    let pendingAnswerDone = false;
-    let answerDoneSent = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const flush = () => {
-      timer = null;
-      if (pending !== null) {
-        last = Date.now();
-        const msg: { t: 'stream'; text: string; answerDone?: boolean } = { t: 'stream', text: pending };
-        if (pendingAnswerDone && !answerDoneSent) {
-          msg.answerDone = true;
-          answerDoneSent = true;
-          pendingAnswerDone = false;
+    // Generic keyed stream channel: throttled per key (~100 ms) and broadcast to all room connections
+    interface StreamSlot {
+      last: number;
+      pending: string | null;
+      pendingDone: boolean;
+      doneSent: boolean;
+      timer: ReturnType<typeof setTimeout> | null;
+    }
+    const slots = new Map<string, StreamSlot>();
+
+    const flushSlot = (key: string, slot: StreamSlot) => {
+      if (slot.timer) {
+        clearTimeout(slot.timer);
+        slot.timer = null;
+      }
+      if (slot.pending !== null) {
+        slot.last = Date.now();
+        const isTalk = key === 'talk';
+        const isDone = slot.pendingDone;
+        const msg: { t: 'stream'; key: string; text: string; done?: boolean; answerDone?: boolean } = {
+          t: 'stream',
+          key,
+          text: slot.pending,
+        };
+        if (isDone) {
+          msg.done = true;
+          if (isTalk) msg.answerDone = true;
+          slot.doneSent = true;
+          slot.pendingDone = false;
         }
         this.broadcast(msg);
-        pending = null;
+        slot.pending = null;
       }
     };
-    const onStream = (text: string, answerDone?: boolean) => {
-      pending = text;
-      if (answerDone && !answerDoneSent) {
-        pendingAnswerDone = true;
-        if (timer) { clearTimeout(timer); timer = null; }
-        flush();
+
+    const onStream = (keyOrText: string, textOrDone?: string | boolean, maybeDone?: boolean) => {
+      let key: string;
+      let text: string;
+      let done: boolean;
+      if (typeof textOrDone === 'string') {
+        key = keyOrText;
+        text = textOrDone;
+        done = !!maybeDone;
+      } else {
+        key = 'talk';
+        text = keyOrText;
+        done = !!textOrDone;
+      }
+
+      let slot = slots.get(key);
+      if (!slot) {
+        slot = { last: 0, pending: null, pendingDone: false, doneSent: false, timer: null };
+        slots.set(key, slot);
+      }
+
+      slot.pending = s2t(text);
+      if (done && !slot.doneSent) {
+        slot.pendingDone = true;
+        flushSlot(key, slot);
         return;
       }
-      const wait = 120 - (Date.now() - last);
-      if (wait <= 0) flush();
-      else if (!timer) timer = setTimeout(flush, wait);
+
+      const wait = 100 - (Date.now() - slot.last);
+      if (wait <= 0) {
+        flushSlot(key, slot);
+      } else if (!slot.timer) {
+        slot.timer = setTimeout(() => flushSlot(key, slot), wait);
+      }
     };
-    const endStream = () => {
-      if (timer) clearTimeout(timer);
-      timer = null;
-      pending = null;
-      pendingAnswerDone = false;
-      answerDoneSent = false;
+
+    const endStream = (targetKey?: string) => {
+      if (targetKey) {
+        const slot = slots.get(targetKey);
+        if (slot) {
+          if (slot.pending !== null) flushSlot(targetKey, slot);
+          if (slot.timer) clearTimeout(slot.timer);
+          slots.delete(targetKey);
+        }
+      } else {
+        for (const [k, slot] of slots.entries()) {
+          if (slot.pending !== null) flushSlot(k, slot);
+          if (slot.timer) clearTimeout(slot.timer);
+        }
+        slots.clear();
+      }
     };
+
     const rng = this.game?.demo && this.demoRng ? this.demoRng : Math.random;
-    return { ai: this.aiFor(actor), rng, now: Date.now, onStream, endStream };
+    return { ai: this.aiFor(actor), rng, now: Date.now, onStream, endStream, aiFor: (p: PlayerState) => this.aiFor(p) };
   }
 
   private sendToAccount(accountId: string, msg: unknown) {
@@ -209,8 +257,14 @@ export class Room extends DurableObject<Env> {
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
     if (url.pathname.endsWith('/info')) {
-      if (!this.game) return new Response('room not found', { status: 404 });
-      return Response.json({ code: this.game.code, phase: this.game.phase, players: this.game.players.length });
+      if (!this.game) return Response.json({ exists: false }, { status: 404 });
+      const playerId = url.searchParams.get('playerId');
+      const hasPlayer = playerId ? this.game.players.some(p => p.id === playerId) : false;
+      return Response.json({
+        exists: true,
+        phase: this.game.phase,
+        hasPlayer,
+      });
     }
     return new Response('not found', { status: 404 });
   }
@@ -437,10 +491,15 @@ export class Room extends DurableObject<Env> {
   private async finish() {
     const g = this.game!;
     // Report pushed first with rule-based content marked AI pending with UI hints; pushed again when AI finishes
-    g.aiPending = true;
-    this.pushState();
+    const anyAi = g.players.some(p => !p.isBot && p.accountId && this.aiFor(p).enabled);
+    if (anyAi) {
+      g.aiPending = true;
+      this.pushState();
+    }
+    const ctx = this.makeCtx(null);
     try {
-      await enrichCoach(g, p => this.aiFor(p));
+      await enrichCoach(g, p => this.aiFor(p), (key, text, done) => ctx.onStream?.(key, text, done));
+      ctx.endStream?.();
     } finally {
       g.aiPending = false;
     }
