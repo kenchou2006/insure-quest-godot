@@ -4,12 +4,15 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
-  // Export Godot web build to ../web; /api/* handled by Worker first, remainder are static assets
+  // Godot web build is exported to ../web/insure-quest (mirrors BASE_PATH, see tools/build-web.sh) so static files
+  // are matched and served by Workers Static Assets without invoking the Worker (asset requests are free; Worker runs are billed).
   "assets": {
     "directory": "../web",
     "binding": "ASSETS",
-    // true: Worker sees every request first so it can strip BASE_PATH before /api/* routing and asset lookup
-    "run_worker_first": true
+    // Only the API runs the Worker first (OAuth start/callback are browser navigations and must not get the 404 page)
+    "run_worker_first": ["/insure-quest/api/*"],
+    // Unknown paths get a bare 404 from the asset router; browser navigations to them never invoke the Worker
+    "not_found_handling": "404-page"
   },
   "durable_objects": {
     "bindings": [
@@ -20,6 +23,10 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Room", "Records"] }
   ],
+  // UTC. Daily 03:00: purge demo accounts older than 7 days. 1st of month 04:00: purge never-played accounts idle 90 days.
+  "triggers": {
+    "crons": ["0 3 * * *", "0 4 1 * *"]
+  },
   // Workers AI (used when AI_PROVIDER=workers-ai); local wrangler dev calls remote, requires wrangler login
   "ai": { "binding": "AI" },
   "vars": {
@@ -43,6 +50,12 @@
   // Bindings and vars are not inherited by environments, so re-list Durable Objects and variables here.
   "env": {
     "local": {
+      // Local dev serves the build from the root (BASE_PATH ""), so point straight at the prefixed folder
+      "assets": {
+        "directory": "../web/insure-quest",
+        "binding": "ASSETS",
+        "run_worker_first": true
+      },
       "ai": { "binding": "AI" },
       "durable_objects": {
         "bindings": [

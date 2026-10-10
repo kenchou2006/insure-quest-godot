@@ -51,6 +51,10 @@ export class Room extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.raw = makeAI(env);
+    // Heartbeat answered by the runtime without waking the hibernated object (no billed duration / wake-up)
+    if (typeof WebSocketRequestResponsePair !== 'undefined') {
+      ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"t":"ping"}', '{"t":"pong"}'));
+    }
     ctx.blockConcurrencyWhile(async () => {
       this.game = (await ctx.storage.get<GameState>('game')) ?? null;
       if (this.game?.demo) {
@@ -85,6 +89,7 @@ export class Room extends DurableObject<Env> {
         this.sendToAccount(accountId, { t: 'quota', used, limit, exhausted: false });
       },
       record: async (provider: string) => { await userStub.recordAiCall(accountId, provider); },
+      reserveUnmetered: async (provider: string) => await userStub.reserveUnmetered(provider),
     };
   }
 
@@ -272,6 +277,7 @@ export class Room extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer) {
     let msg: ClientMsg;
     try { msg = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw)); } catch { return; }
+    if (!msg || typeof msg !== 'object' || typeof msg.t !== 'string') return;
     if (msg.t === 'ping') { ws.send(JSON.stringify({ t: 'pong' })); return; }
     await this.run(() => this.handle(ws, msg));
   }
@@ -333,7 +339,7 @@ export class Room extends DurableObject<Env> {
         }
         if (g.solo && typeof msg.demo === 'string') {
           const target = msg.demo === '1' ? 'jiahao' : msg.demo;
-          if (g.clients[target]) {
+          if (Object.hasOwn(g.clients, target)) {
             g.demo = target;
             g.demoFirstRoll = true;
             g.demoFirstSession = true;

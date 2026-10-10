@@ -2,7 +2,7 @@
 import { Buffer } from 'node:buffer';
 import { Room, ACCOUNT_HEADER, type AccountHeader } from './room.ts';
 import { Records, globalRecords, userRecords } from './records.ts';
-import { currentUser, handleAuth, isTrainer } from './auth.ts';
+import { currentUser, handleAuth, isTrainer, cookie, SESSION_COOKIE, sameOriginPost } from './auth.ts';
 import { TAG_INFO } from './game/game.ts';
 import { detectProvider, nimEnabled } from './ai.ts';
 import { levelFor } from './game/level.ts';
@@ -57,6 +57,9 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: CORS });
+
+/** Must match the monthly entry in wrangler.jsonc triggers.crons */
+const MONTHLY_CRON = '0 4 1 * *';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function newCode() {
@@ -222,6 +225,9 @@ export default {
     if (m) {
       const code = m[1].toUpperCase();
       if (!validCode(code)) return json({ error: '房間代碼格式錯誤' }, 400);
+      // Reject non-upgrade requests before they reach (and bill) the room Durable Object
+      if (m[2] === 'ws' && req.headers.get('Upgrade') !== 'websocket') return new Response('expected websocket', { status: 426 });
+      if (m[2] === 'info' && req.method !== 'GET') return json({ error: 'not found' }, 404);
       const stub = env.ROOM.get(env.ROOM.idFromName(code));
       const fwd = new Request(`https://room/${m[2]}${url.search}`, req);
       fwd.headers.delete(ACCOUNT_HEADER);
@@ -294,6 +300,19 @@ export default {
       return Response.json(await globalRecords(env).insights());
     }
 
+    if (url.pathname === '/api/account/delete' && req.method === 'POST') {
+      if (!sameOriginPost(req, url)) return Response.json({ error: 'forbidden' }, { status: 403 });
+      const user = await currentUser(req, env);
+      if (!user) return Response.json({ error: 'unauthorized' }, { status: 401 });
+      await globalRecords(env).deleteUserData(user.id);
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Set-Cookie': cookie(SESSION_COOKIE, '', url, 0, base || '/'),
+        },
+      });
+    }
+
     if (url.pathname.startsWith('/api/')) return json({ error: 'not found' }, 404);
     if (env.ASSETS) {
       const res = await env.ASSETS.fetch(req);
@@ -307,5 +326,10 @@ export default {
       return res;
     }
     return new Response('INSURE QUEST server', { status: 200 });
+  },
+  // Cron triggers (wrangler.jsonc): daily demo-account purge; monthly purge of accounts that never played
+  async scheduled(event: ScheduledController, env: Env): Promise<void> {
+    if (event.cron === MONTHLY_CRON) await globalRecords(env).purgeInactiveNeverPlayed();
+    else await globalRecords(env).purgeStaleDemoUsers();
   },
 } satisfies ExportedHandler<Env>;

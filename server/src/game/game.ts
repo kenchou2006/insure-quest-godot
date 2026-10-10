@@ -7,7 +7,7 @@ import type {
 } from './types.ts';
 import { apply, clamp, commissionFor, evaluatePlan, finalScore, marketOne, METRICS, runStress, START, STEP, stressOne, validPlan } from './engine.ts';
 import { BOARD, CLIENTS, DECOYS, MARKET_EVENTS, QUESTIONS, QUIZ } from './data.ts';
-import type { AIService } from '../ai.ts';
+import { sanitizePlayerInput, type AIService } from '../ai.ts';
 import { computeAwards, DILEMMAS, DILEMMA_EFFECT, emptyStats, pickLifeChange, reviewOutcome, rollQuests, updateQuests, type ReviewPick } from './extras.ts';
 import { LIFE_TWISTS, applyTwist, type LifeTwist } from './twists.ts';
 import { ruleCompliance, mergeCompliance } from './compliance.ts';
@@ -60,7 +60,7 @@ export function addPlayer(s: GameState, p: { id: string; name: string; isBot?: b
   if (s.phase !== 'lobby') return '遊戲已開始';
   if (s.players.length >= MAX_PLAYERS) return `房間已滿（最多 ${MAX_PLAYERS} 人）`;
   if (s.players.some(x => x.id === p.id)) return null;
-  const name = (p.name || '顧問').trim().slice(0, 12) || '顧問';
+  const name = sanitizePlayerInput(p.name || '顧問', 12) || '顧問';
   s.players.push({
     id: p.id, name, isBot: !!p.isBot, botLevel: p.isBot ? (p.botLevel || 'pro') : null, accountId: p.isBot ? null : (p.accountId ?? null),
     avatar: p.isBot ? null : (p.avatar ?? null),
@@ -614,6 +614,7 @@ export async function applyAction(s: GameState, playerId: string, a: Action, ctx
 }
 
 async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: Ctx): Promise<string | null> {
+  if (!a || typeof a !== 'object' || typeof a.type !== 'string') return '無效的操作';
   if (s.phase !== 'playing') return '遊戲尚未進行中';
   const p = current(s);
   if (!p || p.id !== playerId) return '還沒輪到你';
@@ -744,7 +745,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       if (sess.step !== 'discover') return '訪談已結束';
       if (sess.aiBusy) return '客戶正在回應中，請稍候';
       if (sess.freeLeft <= 0) return '自由提問次數已用完';
-      const text = (a.text || '').trim().slice(0, 120);
+      const text = String(a.text ?? '').trim().slice(0, 120);
       if (text.length < 2) return '請輸入問題';
       sess.freeLeft--;
       const r = await ctx.ai.freeQuestion(c, text, sess.asked);
@@ -760,7 +761,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       if (sess.aiBusy) return '客戶正在回應中，請稍候';
       const talkLeft = sess.talkLeft ?? 3;
       if (talkLeft <= 0) return '對話輪數已用完，請進入方案配置';
-      const text = (a.text || '').trim().slice(0, 150);
+      const text = String(a.text ?? '').trim().slice(0, 150);
       if (text.length < 2) return '請輸入話語';
 
       // 1. Run rule-based compliance radar first
@@ -875,7 +876,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
     }
     case 'objection_free': {
       if (sess.step !== 'objection') return '現在不是異議處理階段';
-      const text = (a.text || '').trim().slice(0, 200);
+      const text = String(a.text ?? '').trim().slice(0, 200);
       if (text.length < 4) return '請輸入你的回應';
       sess.aiBusy = true;
       const g = await ctx.ai.gradeObjection(c, text, (part, done) => ctx.onStream?.('objection', part, done));

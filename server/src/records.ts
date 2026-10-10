@@ -55,6 +55,12 @@ const SESSION_DAYS = 30;
 /** AI usage rows (quota and per-provider calls) are only shown for the last 7 days, so older rows are deleted. */
 export const AI_HISTORY_DAYS = 7;
 
+/** Non-demo accounts that never finished a game are deleted by the monthly cleanup after this many days without login */
+export const INACTIVE_NEVER_PLAYED_DAYS = 90;
+
+/** NVIDIA NIM is outside the daily quota; each account may start at most one NIM call per second (extra calls queue) */
+export const NIM_MIN_INTERVAL_MS = 1000;
+
 /** Calculate "today" in Taipei time, quota resets at Taiwan midnight */
 export function taipeiDay(now = Date.now()): string {
   return new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
@@ -71,6 +77,8 @@ export function globalRecords(env: Env) {
 }
 
 export class Records extends DurableObject<Env> {
+  /** Earliest time this account's next NIM call may start (in memory; the personal shard is single-threaded) */
+  private nimNextSlot = 0;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const sql = ctx.storage.sql;
@@ -159,6 +167,88 @@ export class Records extends DurableObject<Env> {
     this.ctx.storage.sql.exec('DELETE FROM sessions WHERE token = ?', token);
   }
 
+  /** Personal shard DO wipe: clears all stored data */
+  async wipe(): Promise<void> {
+    await this.ctx.storage.deleteAll();
+  }
+
+  /** Completely deletes all data belonging to a single user in both global DO and their personal shard */
+  async deleteUserData(userId: string): Promise<void> {
+    this.ctx.storage.sql.exec('DELETE FROM users WHERE id = ?', userId);
+    this.ctx.storage.sql.exec('DELETE FROM sessions WHERE user_id = ?', userId);
+    this.ctx.storage.sql.exec('DELETE FROM demo_accounts WHERE user_id = ?', userId);
+    this.ctx.storage.sql.exec('DELETE FROM records WHERE user_id = ?', userId);
+    this.ctx.storage.sql.exec('DELETE FROM ai_usage WHERE user_id = ?', userId);
+    this.ctx.storage.sql.exec('DELETE FROM ai_calls WHERE user_id = ?', userId);
+    if (this.env?.RECORDS) {
+      await userRecords(this.env, userId).wipe().catch(() => {});
+    }
+  }
+
+  /**
+   * Daily purge for demo users older than 7 days.
+   * Cleans global records, sessions, demo_accounts, ai_usage, ai_calls, and wipes each personal shard.
+   * Also prunes demo_attempts older than 1 hour.
+   */
+  async purgeStaleDemoUsers(limit = 200, now = Date.now()): Promise<string[]> {
+    const cutoff = now - 7 * 86_400_000;
+    const hourAgo = now - 3600_000;
+    this.ctx.storage.sql.exec('DELETE FROM demo_attempts WHERE ts < ?', hourAgo);
+
+    const rows = this.ctx.storage.sql.exec(
+      "SELECT id FROM users WHERE id LIKE 'demo:%' AND created_at < ? ORDER BY created_at ASC LIMIT ?",
+      cutoff, limit
+    ).toArray();
+    const purged: string[] = [];
+    for (const r of rows) {
+      const uid = String(r.id);
+      await this.deleteUserData(uid);
+      purged.push(uid);
+    }
+
+    if (purged.length < limit) {
+      const remainingLimit = limit - purged.length;
+      const demoAccRows = this.ctx.storage.sql.exec(
+        "SELECT DISTINCT user_id FROM demo_accounts WHERE ts < ? AND user_id LIKE 'demo:%' LIMIT ?",
+        cutoff, remainingLimit
+      ).toArray();
+      for (const r of demoAccRows) {
+        const uid = String(r.user_id);
+        if (!purged.includes(uid)) {
+          await this.deleteUserData(uid);
+          purged.push(uid);
+        }
+      }
+    }
+    return purged;
+  }
+
+  /**
+   * Monthly cleanup: deletes non-demo accounts that never finished a game, have no valid session and have not logged in
+   * for INACTIVE_NEVER_PLAYED_DAYS. Logging in with Google again simply recreates the account.
+   * The personal shard is checked too, so an account whose global summary write failed is never mistaken for "never played".
+   */
+  async purgeInactiveNeverPlayed(limit = 200, now = Date.now()): Promise<string[]> {
+    const cutoff = now - INACTIVE_NEVER_PLAYED_DAYS * 86_400_000;
+    const rows = this.ctx.storage.sql.exec(
+      `SELECT u.id FROM users u
+       WHERE u.id NOT LIKE 'demo:%' AND COALESCE(u.last_login, u.created_at, 0) < ?
+         AND NOT EXISTS (SELECT 1 FROM records r WHERE r.user_id = u.id)
+         AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.expires_at > ?)
+       ORDER BY u.last_login ASC LIMIT ?`,
+      cutoff, now, limit,
+    ).toArray();
+    const purged: string[] = [];
+    for (const r of rows) {
+      const uid = String(r.id);
+      const played = await userRecords(this.env, uid).xpSummary(uid).then(x => x.games > 0).catch(() => true);
+      if (played) continue;
+      await this.deleteUserData(uid);
+      purged.push(uid);
+    }
+    return purged;
+  }
+
   /* ───────── Daily AI Quota ───────── */
 
   aiUsage(userId: string): number {
@@ -187,6 +277,13 @@ export class Records extends DurableObject<Env> {
     this.ctx.storage.sql.exec(
       `INSERT INTO ai_calls (user_id, day, provider, count) VALUES (?, ?, ?, 1) ON CONFLICT(user_id, day, provider) DO UPDATE SET count = count + 1`,
       userId, taipeiDay(), provider.slice(0, 32));
+  }
+
+  /** Reserves this account's next NIM slot (one per second) and returns how many ms the caller must wait first */
+  reserveUnmetered(_provider = 'nvidia-nim', now = Date.now()): number {
+    const start = Math.max(now, this.nimNextSlot);
+    this.nimNextSlot = start + NIM_MIN_INTERVAL_MS;
+    return start - now;
   }
 
   /** Last N days (Taipei dates): quota calls and actual calls per provider each day */

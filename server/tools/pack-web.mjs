@@ -288,41 +288,43 @@ if (existsSync(sw)) {
   console.log(`service worker：快取清單更新，版本號重置為 ${Date.now()}`);
 }
 
-// Workers Static Assets custom headers (applies only to static files, /api/* handled by Worker)
-writeFileSync(join(dir, '_headers'), `/*
+// Workers Static Assets custom headers (applies only to static files, /api/* handled by Worker).
+// Paths carry IQ_BASE_PATH because build-web.sh serves the build from that subfolder of the assets root.
+const hp = (process.env.IQ_BASE_PATH || '').replace(/\/+$/, '');
+writeFileSync(join(dir, '_headers'), `${hp}/*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
 
-/
+${hp}/
   Cache-Control: no-cache
 
-/index.html
+${hp}/index.html
   Cache-Control: no-cache
 
-/version.json
+${hp}/version.json
   Content-Type: application/json
   Cache-Control: no-cache
 
-/icons/*
+${hp}/icons/*
   Cache-Control: public, max-age=86400
 
-/local-room.js
+${hp}/local-room.js
   Cache-Control: no-cache
 
-/index.service.worker.js
+${hp}/index.service.worker.js
   Cache-Control: no-cache
 
-/index.manifest.json
+${hp}/index.manifest.json
   Content-Type: application/manifest+json
   Cache-Control: no-cache
 
-/index.pck
+${hp}/index.pck
   Cache-Control: no-cache, must-revalidate
 
-/index.wasm.gz
+${hp}/index.wasm.gz
   Cache-Control: no-cache, must-revalidate
 
-/index.js
+${hp}/index.js
   Cache-Control: no-cache, must-revalidate
 `);
 console.log('_headers：已產生');

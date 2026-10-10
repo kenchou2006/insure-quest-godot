@@ -10,11 +10,13 @@ Browser (Godot Web / PWA)
    │  Same domain
    ▼
 Cloudflare Worker  insure-quest
-   ├─ Static assets (Workers Static Assets): Godot export files in ../web
+   ├─ Static assets (Workers Static Assets): Godot export files in ../web/insure-quest (served without invoking the Worker; only /insure-quest/api/* runs the Worker)
    ├─ /api/rooms…        Room creation, WebSocket ──▶ Room Durable Object (one per room; server-authoritative game logic, bot advisor)
-   ├─ /api/auth/*        Google Login (OAuth, HttpOnly Cookie) ─┐
-   ├─ /api/me /api/records /api/profile /api/learners ─────────┴▶ Records Durable Object (dual-track sharding: personal DO shard 10 GB stores detailed decisions and AI quota; global DO stores accounts and statistical summaries)
-   └─ NVIDIA NIM (primary) / Workers AI (last fallback, env.AI): AI clients, AI scoring, coach hints and feedback; 10 daily Workers AI requests per account (NVIDIA NIM is unlimited); fallback to rules-based engine when exceeded or for guests
+   ├─ /api/auth/*        Google Login (FedCM with nonce & OAuth), Demo Login, Logout ─┐
+   ├─ /api/account/delete Account deletion (wipes global rows + personal shard) ──────┤
+   ├─ /api/me /api/records /api/profile /api/learners /api/insights ──────────────────┴▶ Records Durable Object (dual-track sharding: personal DO shard 10 GB stores decisions, AI quota & NIM rate limit; global DO stores accounts and summaries)
+   ├─ Scheduled Cron     Daily purge of >7d demo users & stale demo attempts ─────────▶ Records Durable Object (global + personal wipe)
+   └─ NVIDIA NIM (primary; 1 call/s per account) / Workers AI (last fallback; 10/day quota): AI clients, scoring, hints; fallback to rules-based engine
 ```
 
 - **Do not use Cloudflare Pages.** Pages cannot deploy Durable Objects. If Pages were used, an additional Worker would have to be deployed for DOs, resulting in two deployments and two domains (or service bindings). Workers Static Assets allows the web client and API / DO to be deployed together in a single Worker in one deployment, which is also Cloudflare's currently recommended approach for full-stack projects.
@@ -45,7 +47,7 @@ web/           Godot web export output (build artifact, not tracked in version c
 ```bash
 cd server
 npm install
-npm run build:web     # Export Godot web build to ../web (compress wasm, fix PWA cache manifest, generate _headers)
+npm run build:web     # Export Godot web build to ../web/insure-quest (compress wasm, fix PWA cache manifest, generate _headers at ../web)
 npm run dev           # http://127.0.0.1:8787 (--env local: Workers AI requires prior npx wrangler login; set AI_PROVIDER=mock in .dev.vars for offline use)
 npm run dev:remote-ai # Requires prior npx wrangler login; connects to real Workers AI
 ```
@@ -79,13 +81,46 @@ When adding or renaming Durable Object classes, a new tag must be added in `migr
 ## Accounts, AI Quota, and Training Records
 
 - **Dual-Track DO Sharding**:
-  - **Personal DO Shard (`idFromName('user:' + userId)`)**: Each logged-in learner has a dedicated 10 GB SQLite storage space, preserving complete interview decision histories, detailed per-turn trajectories, and daily AI quotas. Personal data is strictly isolated, capacity is guaranteed not to overflow, and idle shards automatically hibernate without incurring maintenance costs.
+  - **Personal DO Shard (`idFromName('user:' + userId)`)**: Each logged-in learner has a dedicated 10 GB SQLite storage space, preserving complete interview decision histories, detailed per-turn trajectories, in-memory NIM rate limit slot, and daily AI quotas. Personal data is strictly isolated, capacity is guaranteed not to overflow, and idle shards automatically hibernate without incurring maintenance costs.
   - **Global DO Instance (`idFromName('global')`)**: Stores account identities, login sessions, and lightweight match summaries. When trainers query the learner roster (`/api/learners`) or aggregated records (`/api/records?scope=all`), the global instance aggregates them quickly via a single SQL query, avoiding cross-shard fan-out latency and extra request billing.
-- **Login**: Google OAuth authorization code flow is handled entirely within the Worker (`src/auth.ts`); sessions are stored in HttpOnly Cookies. Godot's HTTP and WebSocket automatically carry them over same-origin, keeping tokens hidden from the frontend. Cross-origin WebSockets do not inherit credentials.
-- **AI Quota**: Calling NVIDIA NIM **is completely exempt from AI quota usage (unlimited)**; switching or falling back to Workers AI deducts 1 usage per call (`AI_DAILY_LIMIT`, default 10, resets midnight Taipei time; refunded on model failure). Guests, bot advisors, and users who exhaust their quota fall back to the rules-based engine, allowing the game to proceed normally.
-- **AI Providers** (`AI_PROVIDER`): Prioritizes **NVIDIA NIM** (if `NVIDIA_API_KEY` is set; primary model `NVIDIA_MODEL`=nemotron-3-super; falls back on failure to NIM fallback models `NVIDIA_FALLBACK_MODEL`=deepseek-v4.1-flash [comma-separated list tried in order, slower 45s timeout; set `none` to disable]; only when every NIM model fails does it use **Workers AI**, model `WORKERS_AI_MODEL`=`@cf/qwen/qwen3.8-27b`, whose free allowance is small) | `nvidia-only` (NIM then rule engine, never Workers AI) | `workers-ai-only` | `mock` (local simulation) | `rules`. NIM chat goes through Cloudflare AI Gateway via the AI binding when `CF_AIG_GATEWAY_ID` is set (default `nvidia-nim` in `wrangler.jsonc`): dynamic route `CF_AIG_ROUTE`=`nim` whose model node uses `metadata.model`, custom provider `CF_AIG_PROVIDER`=`nvidia-nim` (base_url `https://integrate.api.nvidia.com`, NIM key stored in the gateway's Provider Keys); set `CF_AIG_GATEWAY_ID` to empty to call NIM directly. Claude is not supported (too costly for this project).
+- **Login & Authentication**:
+  - **FedCM / One-Tap (`POST /api/auth/google/credential`)**: Fast login without redirects. Requires a cryptographic nonce previously fetched from `GET /api/auth/google/nonce` stored in the `iq_gnonce` cookie. The ID token must contain an equal nonce claim (missing or mismatched nonces are rejected to prevent replay attacks).
+  - **Authorization Code Flow (`GET /api/auth/google/callback`)**: Standard OAuth fallback flow without nonce.
+  - **Demo Login (`POST /api/auth/demo`)**: Temporary accounts for evaluation (created with judge demo codes), granted 7-day validity and 30 Workers AI daily quota.
+  - **Session Management**: Sessions are stored as HttpOnly, SameSite=Lax cookies (`iq_session`). Godot's HTTP and WebSocket automatically carry them over same-origin. Cross-origin WebSockets do not inherit credentials.
+  - **Logout (`POST /api/auth/logout`)**: Clears session cookies; requires same-origin verification.
+- **Data Retention & Account Deletion**:
+  - **Account Deletion (`POST /api/account/delete`)**: Logged-in learners can delete their account at any time (accessible via the "刪除帳號" button in client settings). Protected by same-origin verification. Deletes all user rows from global storage (`users`, `sessions`, `records`, `ai_usage`, `ai_calls`, `demo_accounts`) and completely wipes the user's personal DO shard (`ctx.storage.deleteAll()`), followed by clearing session cookies.
+  - **Demo Account Cleanup (Daily Cron Trigger)**: Cloudflare Cron Trigger (`0 3 * * *`, 03:00 UTC) triggers the Worker's `scheduled` handler to purge demo accounts created more than 7 days ago. Purges all global records, wipes their personal DO shards (batched up to 200 users per run), and prunes demo login failure attempts older than 1 hour. Non-demo (Google) user accounts are never automatically deleted.
+- **AI Quota & Anti-Abuse Rate Limiting**:
+  - **NVIDIA NIM Rate Limiting**: Calling NVIDIA NIM is exempt from the daily AI quota; each account may start at most one NIM call per second (`NIM_MIN_INTERVAL_MS`, tracked in memory in the user's personal Records DO shard). Over-rate calls are not redirected: they wait for the next free second and still use NIM. Fallback order is unchanged: NVIDIA NIM → Workers AI (only when NIM fails) → rules-based engine.
+  - **Workers AI Daily Quota**: Calls count against a per-account daily limit (`AI_DAILY_LIMIT`, default 10; demo accounts `DEMO_AI_LIMIT`, default 30; resets midnight Taipei time). Quota is refunded if the AI model fails.
+  - **Fallback Chain**: NVIDIA NIM (primary, token-bucket limited) → NIM fallback models → Workers AI (daily quota metered) → Deterministic rule-based engine. Guests, bot advisors, or users who exhaust their quota fall back seamlessly to the rule engine.
+- **Prompt Injection & AI Guardrails**:
+  - Every player-typed input (current response, dialogue history, quoted facts, and player names) is sanitized before reaching the model: angle brackets (`<`, `>`), code fences, special token markers (`<|...|>`), and role mimicry prefixes (`system:`, `assistant:`, etc.) are stripped, and whitespace collapsed.
+  - Player text is wrapped in `<trainee_input>` and passed strictly in the user message, marked with `${UNTRUSTED}` instructions in system prompts. Models are instructed not to reveal undiscovered client facts.
+  - AI grading numeric scores are clamped via Zod schemas and constrained within a bounded margin of rule-based scores (e.g. non-compliant or bad responses cannot be elevated by jailbreaks).
 - **Training records are saved only for logged-in users**, and users can only view their own; trainers in `TRAINER_EMAILS` (set via `wrangler secret put`) can view all learners (`/api/records?scope=all`, `/api/learners`, `/api/profile?user=`).
 - **What is saved**: In addition to scores, every interview stores a full decision trajectory (clues, questioning order, open-ended questions, configuration and review, objection responses, stress outcomes, whether hints were used) and tags weakness labels. The learning profile (`/api/profile`) aggregates these into: score and Five Powers trends, most frequent mistakes and improvement suggestions, client compendium (service count and best rating across 18 clients), and badges.
+
+### API Endpoints
+
+| Method | Path | Description | Auth / Security |
+|---|---|---|---|
+| `POST` | `/api/rooms` | Create a multiplayer game room | Public / Optional login |
+| `GET` | `/api/rooms/:id/ws` | WebSocket connection for real-time game state | Cookie or anonymous ticket |
+| `GET` | `/api/auth/google/nonce` | Generate cryptographic nonce for FedCM | Public (sets `iq_gnonce` cookie) |
+| `POST` | `/api/auth/google/credential` | Google FedCM / One-Tap login | Same-origin, nonce required |
+| `GET` | `/api/auth/google/callback` | Google OAuth code flow callback | OAuth code exchange |
+| `POST` | `/api/auth/demo` | Demo access code login | Rate limited (10 fails/IP/hr) |
+| `POST` | `/api/auth/logout` | Log out and invalidate session cookie | Same-origin |
+| `POST` | `/api/account/delete` | Delete account and wipe all personal DO data | Logged-in, same-origin |
+| `GET` | `/api/me` | Current user info, role, and AI quota status | Logged-in |
+| `GET` | `/api/records` | Query interview records (`scope=all` for trainers) | Logged-in (trainer for all) |
+| `POST` | `/api/records` | Save solo practice interview result | Logged-in |
+| `GET` | `/api/profile` | Learning profile, Five Powers, radar & compendium | Logged-in |
+| `GET` | `/api/learners` | Trainer view: learner roster | Trainer only |
+| `GET` | `/api/insights` | Trainer view: class-wide weakness heatmap | Trainer only |
 
 ### Setting Up Google Login
 1. Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID (Web application).
@@ -134,17 +169,23 @@ The radar cites regulation **names** only (no article numbers, to avoid citing w
 
 ### Privacy and security design
 - Google OAuth handled in the Worker; session in an HttpOnly cookie; tokens never reach the client.
+- FedCM nonce verification prevents token replay attacks; OAuth code exchange handles standard fallback.
+- User-directed account deletion (`POST /api/account/delete` with confirmation in client UI) purges all user data across global storage and wipes the personal DO shard.
+- 7-day retention cleanup for demo accounts via daily Cloudflare Cron Trigger; non-demo learner accounts are retained until deleted by the user.
+- Comprehensive prompt-injection defense: player text, conversation history, quotes, and names are sanitized (strip `<>`, fences, markers, role tokens), wrapped in `<trainee_input>` in user messages, and marked untrusted.
+- AI grading scores are bounded against deterministic rule-based baselines to prevent jailbreaks from manipulating evaluation outcomes.
 - Per-learner Durable Object shard (isolated SQLite); trainers are an allow-list secret (`TRAINER_EMAILS`); judge demo accounts can never be trainers.
 - AI prompts contain the fictional client and the learner's utterance only — no learner name, email or ID.
 - All clients are fictional; coverage cards are functional concepts, not real products.
 
 ### Cost structure (facts from config, not estimates)
 - One Cloudflare Worker + 2 Durable Object classes + static assets; idle shards hibernate.
-- AI: NVIDIA NIM calls are unmetered in-game; Workers AI calls count against a per-account daily quota (`AI_DAILY_LIMIT`, default 10; judge demo accounts `DEMO_AI_LIMIT`, default 30).
-- Guest solo play runs entirely in the browser (`web/local-room.js`), costing no server compute.
+- AI: NVIDIA NIM calls are unmetered in quota but rate-limited (1 call/s per account); Workers AI calls count against a per-account daily quota (`AI_DAILY_LIMIT`, default 10; judge demo accounts `DEMO_AI_LIMIT`, default 30).
+- Scheduled cron triggers run daily demo cleanup, keeping global and DO storage lean.
+- Guest solo play runs entirely in the browser (`web/insure-quest/local-room.js`), costing no server compute.
 
 ### Letting judges try the AI
-Set `npx wrangler secret put DEMO_CODES` (comma-separated, ≥ 8 chars each). Judges enter the code on the main menu (「評審體驗碼」) or open `https://<domain>/?code=<CODE>`; each code creates a temporary account (NVIDIA NIM calls are unlimited; only Workers AI fallback calls count against its 30/day quota) (cap `DEMO_MAX_ACCOUNTS`, default 300 per code; 10 failed attempts per IP per hour).
+Set `npx wrangler secret put DEMO_CODES` (comma-separated, ≥ 8 chars each). Judges enter the code on the main menu (「評審體驗碼」) or open `https://<domain>/?code=<CODE>`; each code creates a temporary account (NVIDIA NIM calls are unlimited subject to the 1 call/s per-account limit; only Workers AI fallback calls count against its 30/day quota) (cap `DEMO_MAX_ACCOUNTS`, default 300 per code; 10 failed attempts per IP per hour). Demo accounts and associated shard records are automatically purged after 7 days by the daily Cron Trigger. Non-demo accounts that never finished a game, have no valid session and have not logged in for 90 days (`INACTIVE_NEVER_PLAYED_DAYS`) are deleted by a monthly Cron Trigger (1st of each month, 04:00 UTC); signing in with Google again recreates the account.
 
 ### Demo video raw footage
 `tools/demo-recorder/` drives the web build with Playwright and records reproducible clips (see its README). `?automation=1&demo=1` makes the first interview deterministic (mortgage family client 劉家豪, fixed life twist, first dice lands on a client tile).

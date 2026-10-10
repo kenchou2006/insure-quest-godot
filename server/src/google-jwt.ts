@@ -53,8 +53,13 @@ export async function verifyGoogleIdToken(token: string, clientId: string, expec
     if (c.aud !== clientId) return null;
     if (!c.exp || c.exp * 1000 < now) return null;
     if (c.email_verified !== true || !c.sub) return null;
-    if (c.nonce) {
-      if (!expectedNonce || c.nonce !== expectedNonce) return null;
+    if (expectedNonce !== undefined) {
+      if (!expectedNonce || !c.nonce || c.nonce !== expectedNonce) {
+        if (!c.nonce) console.warn('Google ID token lacked nonce when nonce was expected');
+        return null;
+      }
+    } else if (c.nonce) {
+      return null;
     }
     return c;
   } catch {

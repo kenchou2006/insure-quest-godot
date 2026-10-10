@@ -29,7 +29,7 @@ export function readCookie(req: Request, name: string): string | null {
   return null;
 }
 
-function cookie(name: string, value: string, url: URL, maxAge: number, path = '/') {
+export function cookie(name: string, value: string, url: URL, maxAge: number, path = '/') {
   const secure = url.protocol === 'https:' ? '; Secure' : '';
   return `${name}=${encodeURIComponent(value)}; Path=${path}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
@@ -47,7 +47,8 @@ function records(env: Env) { return globalRecords(env); }
 
 export async function currentUser(req: Request, env: Env): Promise<User | null> {
   const token = readCookie(req, SESSION_COOKIE);
-  return token ? records(env).getSessionUser(token) : null;
+  // Reject malformed tokens here so they never cost a Durable Object request
+  return token && /^[0-9a-f]{64}$/.test(token) ? records(env).getSessionUser(token) : null;
 }
 
 export function isTrainer(env: Env, user: User | null) {
@@ -79,7 +80,7 @@ function userFromClaims(c: GoogleClaims): User {
 }
 
 /** POST requests must be same-origin (combined with SameSite=Lax cookie to prevent CSRF) */
-function sameOriginPost(req: Request, url: URL) {
+export function sameOriginPost(req: Request, url: URL) {
   const origin = req.headers.get('Origin');
   if (!origin) return false;
   try { return new URL(origin).host === url.host; } catch { return false; }
@@ -120,10 +121,14 @@ export async function handleAuth(req: Request, env: Env, url: URL, base = ''): P
         }
       } catch {}
     }
-    const nonce = readCookie(req, NONCE_COOKIE) || '';
+    const nonce = readCookie(req, NONCE_COOKIE);
+    if (!nonce) {
+      console.warn('Google credential verification failed:', { hasCred: !!credential, noncePresent: false });
+      return Response.json({ error: '登入驗證失敗' }, { status: 401 });
+    }
     const claims = credential ? await verifyGoogleIdToken(credential, env.GOOGLE_CLIENT_ID!, nonce) : null;
     if (!claims) {
-      console.warn('Google credential verification failed:', { hasCred: !!credential, noncePresent: !!nonce });
+      console.warn('Google credential verification failed:', { hasCred: !!credential, noncePresent: true });
       return Response.json({ error: '登入驗證失敗' }, { status: 401 });
     }
     const user = userFromClaims(claims);
@@ -183,7 +188,7 @@ export async function handleAuth(req: Request, env: Env, url: URL, base = ''): P
     if (!allowed) return Response.json({ error: '嘗試次數過多，請稍後再試' }, { status: 429 });
 
     const body = await req.json<{ code?: string }>().catch(() => ({ code: '' }));
-    const inputCode = (body.code || '').trim();
+    const inputCode = String(body.code ?? '').trim();
     const validCodes = (env.DEMO_CODES || '').split(',').map(s => s.trim()).filter(s => s.length >= 8);
     const matchedCode = validCodes.find(c => timingSafeEqualStr(c, inputCode));
     if (!matchedCode) {

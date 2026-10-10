@@ -421,6 +421,8 @@ test('Google ID Token 驗證：簽章、aud、exp、nonce、email_verified', asy
   assert.equal(await verifyGoogleIdToken(await sign({ ...base, email_verified: false }), 'cid', 'n1', keys, now), null);
   assert.equal(await verifyGoogleIdToken(await sign(base, 'unknown'), 'cid', 'n1', keys, now), null);
   assert.equal((await verifyGoogleIdToken(await sign({ ...base, nonce: undefined }), 'cid', undefined, keys, now))?.sub, '123');
+  assert.equal(await verifyGoogleIdToken(await sign({ ...base, nonce: undefined }), 'cid', 'n1', keys, now), null);
+  assert.equal(await verifyGoogleIdToken(await sign(base), 'cid', undefined, keys, now), null);
 });
 
 test('情境抉擇、保單健檢、季度任務、終局榮譽榜', async () => {

@@ -20,7 +20,14 @@ export IQ_BUILD="${IQ_BUILD:-$(git rev-parse --short HEAD 2>/dev/null || echo de
 node tools/gen-maskable.mjs 2>/dev/null || true
 # Guest solo practice runs in the browser: bundle the game engine as a standalone script (see src/local/local-room.ts)
 npx esbuild src/local/local-room.ts --bundle --format=iife --platform=browser --target=es2022 --minify --outfile="$STAGE/local-room.js"
+# Must match BASE_PATH in wrangler.jsonc (production)
+export IQ_BASE_PATH="${IQ_BASE_PATH:-/insure-quest}"
+ASSET_DIR="${IQ_BASE_PATH#/}"
 node tools/pack-web.mjs "$STAGE"
+# Assets live under the BASE_PATH folder so the asset router matches /insure-quest/* without running the Worker.
+# _headers must sit at the assets root, so move it there (pack-web already prefixed its paths).
 find ../web -mindepth 1 -delete
-cp -R "$STAGE"/. ../web/
+mkdir -p "../web/$ASSET_DIR"
+mv "$STAGE/_headers" ../web/_headers
+cp -R "$STAGE"/. "../web/$ASSET_DIR/"
 rm -rf "$STAGE"
