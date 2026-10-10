@@ -30,7 +30,11 @@
     "WORKERS_AI_MODEL": "@cf/qwen/qwen3.8-27b",
     "NVIDIA_MODEL": "nvidia/nemotron-3-super-120b-a12b",
     "NVIDIA_FALLBACK_MODEL": "deepseek-ai/deepseek-v4.1-flash",
-    "AI_DAILY_LIMIT": "10"
+    "AI_DAILY_LIMIT": "10",
+    // NIM chat goes through AI Gateway `nvidia-nim` via the AI binding: dynamic route `nim` (model node = metadata.model)
+    // -> custom provider `nvidia-nim` (base_url https://integrate.api.nvidia.com, NIM key stored on the gateway). "" = call NIM directly
+    "CF_AIG_GATEWAY_ID": "nvidia-nim",
+    "CF_AIG_ROUTE": "nim"
   },
   // Set secrets via wrangler secret put: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, (optional) NVIDIA_API_KEY, TRAINER_EMAILS (comma-separated trainer emails allowed to view all learner records)
   "observability": { "enabled": true },
@@ -52,7 +56,9 @@
         "WORKERS_AI_MODEL": "@cf/qwen/qwen3.8-27b",
         "NVIDIA_MODEL": "nvidia/nemotron-3-super-120b-a12b",
         "NVIDIA_FALLBACK_MODEL": "deepseek-ai/deepseek-v4.1-flash",
-        "AI_DAILY_LIMIT": "10"
+        "AI_DAILY_LIMIT": "10",
+        "CF_AIG_GATEWAY_ID": "nvidia-nim",
+        "CF_AIG_ROUTE": "nim"
       }
     }
   }

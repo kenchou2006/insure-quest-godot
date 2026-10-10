@@ -18,3 +18,6 @@ AI_PROVIDER=mock
 DEMO_CODES=CARDIF-DEMO-2026
 DEMO_AI_LIMIT=30
 DEMO_MAX_ACCOUNTS=300
+# Cloudflare AI Gateway：wrangler.jsonc 預設 CF_AIG_GATEWAY_ID=nvidia-nim、CF_AIG_ROUTE=nim，NIM 對話經 AI binding 走 gateway 的 dynamic route
+# （route 的 Model 節點用 metadata.model；custom provider nvidia-nim 的 base_url=https://integrate.api.nvidia.com，NIM key 存在 gateway 的 Provider Keys）
+# 想改回直連 NIM：CF_AIG_GATEWAY_ID=

@@ -4,7 +4,7 @@ import { Room, ACCOUNT_HEADER, type AccountHeader } from './room.ts';
 import { Records, globalRecords, userRecords } from './records.ts';
 import { currentUser, handleAuth, isTrainer } from './auth.ts';
 import { TAG_INFO } from './game/game.ts';
-import { detectProvider } from './ai.ts';
+import { detectProvider, nimEnabled } from './ai.ts';
 import { levelFor } from './game/level.ts';
 
 export { Room, Records };
@@ -27,6 +27,10 @@ export interface Env {
   NVIDIA_MODEL?: string;
   NVIDIA_FALLBACK_MODEL?: string;
   NVIDIA_BASE_URL?: string;
+  /** Cloudflare AI Gateway for NIM chat via the env.AI binding (see AIEnv in ai.ts) */
+  CF_AIG_GATEWAY_ID?: string;
+  CF_AIG_ROUTE?: string;
+  CF_AIG_PROVIDER?: string;
   /** NIM image model for the local-only /api/dev/gen-img (default black-forest-labs/flux.1-dev) */
   NVIDIA_IMAGE_MODEL?: string;
   GOOGLE_CLIENT_ID?: string;
@@ -196,7 +200,7 @@ export default {
       const resetAt = Math.floor((now + 8 * 3600_000) / 86_400_000 + 1) * 86_400_000 - 8 * 3600_000;
       return Response.json({
         provider: detectProvider(env), limit, used, remaining: Math.max(0, limit - used), resetAt, now,
-        nimUnmetered: !!env.NVIDIA_API_KEY, history: await stub.aiHistory(user.id, 7),
+        nimUnmetered: nimEnabled(env), history: await stub.aiHistory(user.id, 7),
       });
     }
 

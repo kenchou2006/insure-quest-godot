@@ -540,6 +540,19 @@ export interface NimOptions {
   /** Standard call timeout; long outputs (AI generated clients) use longTimeoutMs */
   timeoutMs?: number;
   longTimeoutMs?: number;
+  /** Send through a Cloudflare AI Gateway dynamic route via the env.AI binding (see nimGateway) */
+  gateway?: NimGateway;
+}
+
+/** AI Gateway dynamic route whose model node reads metadata.model; the binding authenticates itself and uses the gateway's stored (BYOK) NIM key */
+export interface NimGateway {
+  ai: Ai;
+  /** Gateway ID */
+  id: string;
+  /** Dynamic route name (called as dynamic/{route}) */
+  route: string;
+  /** Custom provider slug without the custom- prefix */
+  provider: string;
 }
 
 export class NvidiaNimAI extends LLMAI {
@@ -550,6 +563,7 @@ export class NvidiaNimAI extends LLMAI {
   private baseUrl: string;
   private timeoutMs: number;
   private longTimeoutMs: number;
+  private gateway?: NimGateway;
 
   constructor(apiKey: string, model = 'nvidia/nemotron-3-super-120b-a12b', baseUrl = 'https://integrate.api.nvidia.com/v1', opts: NimOptions = {}) {
     super();
@@ -559,12 +573,33 @@ export class NvidiaNimAI extends LLMAI {
     this.provider = opts.provider ?? 'nvidia-nim';
     this.timeoutMs = opts.timeoutMs ?? 12_000;
     this.longTimeoutMs = opts.longTimeoutMs ?? 60_000;
+    this.gateway = opts.gateway;
+  }
+
+  /** POST a chat/completions body: through the AI Gateway dynamic route when configured, else directly to NIM */
+  private post(body: object, signal: AbortSignal): Promise<Response> {
+    const gw = this.gateway;
+    if (gw) {
+      // Custom providers are only reachable from the binding via a dynamic route; the route picks the model from metadata.model.
+      // returnRawResponse: without it the binding fails to parse the OpenAI-shaped reply (7003)
+      const run = gw.ai.run as unknown as (model: string, inputs: object, options: AiOptions) => Promise<Response>;
+      return run.call(gw.ai, `dynamic/${gw.route}`, body, {
+        gateway: { id: gw.id, metadata: { model: `custom-${gw.provider}/${this.model}` } },
+        returnRawResponse: true,
+        signal,
+      });
+    }
+    return fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
+      body: JSON.stringify(body),
+      signal,
+    });
   }
 
   protected async ask<T extends z.ZodType>(schema: T, system: string, user: string, maxTokens = 600, onText?: (raw: string) => void): Promise<z.infer<T> | null> {
     try {
       const jsonSchema = z.toJSONSchema(schema);
-      const url = `${this.baseUrl}/chat/completions`;
       // Streaming: with guided_json enabled, NIM buffers the entire response before sending (effectively no streaming);
       // hence omit structured constraints when streaming and rely on prompt for JSON; validate with zod afterward, falling back to structured non-streaming on failure
       if (onText) {
@@ -591,16 +626,8 @@ export class NvidiaNimAI extends LLMAI {
       // In testing, free endpoints occasionally return content=null (finish=stop, no error): retry once on empty content
       let raw: unknown = null;
       for (let attempt = 0; attempt < 2 && !raw; attempt++) {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`,
-          },
-          body: JSON.stringify(body),
-          // Short timeout for standard calls to fail fast; relaxed for long outputs (AI generated clients in background)
-          signal: AbortSignal.timeout(maxTokens >= 1500 ? this.longTimeoutMs : this.timeoutMs),
-        });
+        // Short timeout for standard calls to fail fast; relaxed for long outputs (AI generated clients in background)
+        const res = await this.post(body, AbortSignal.timeout(maxTokens >= 1500 ? this.longTimeoutMs : this.timeoutMs));
 
         if (!res.ok) {
           const errText = await res.text().catch(() => '');
@@ -628,19 +655,14 @@ export class NvidiaNimAI extends LLMAI {
       // Without guided_json, model doesn't know allowed field values: insert concise JSON Schema in prompt (avoids hallucinated enum values)
       const js = z.toJSONSchema(schema) as { properties?: Record<string, unknown> };
       const fields = Object.keys(js.properties ?? {});
-      const res = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.apiKey}` },
-        body: JSON.stringify({
+      const res = await this.post({
           model: this.model, stream: true, max_tokens: Math.max(maxTokens, 900), temperature: 0.6,
           chat_template_kwargs: { enable_thinking: false },
           messages: [
             { role: 'system', content: `${system}\n\n以合法的純 JSON 物件回覆，欄位依序為：${fields.join('、')}；必須符合這個 JSON Schema（enum 只能用列出的值、數字在範圍內）：${JSON.stringify(js)}\n字串內的雙引號要跳脫，不要包含任何 markdown 標記或額外文字。` },
             { role: 'user', content: user },
           ],
-        }),
-        signal: AbortSignal.timeout(this.timeoutMs),
-      });
+        }, AbortSignal.timeout(this.timeoutMs));
       if (!res.ok || !res.body) {
         console.warn(`[NVIDIA NIM] 串流 HTTP ${res.status}`);
         return null;
@@ -786,6 +808,23 @@ export interface AIEnv {
   /** NIM fallback model; set to none to disable */
   NVIDIA_FALLBACK_MODEL?: string;
   NVIDIA_BASE_URL?: string;
+  /** Cloudflare AI Gateway ID; when set (and env.AI exists), NIM chat goes through the gateway via the binding */
+  CF_AIG_GATEWAY_ID?: string;
+  /** Dynamic route name (default nim); its model node must use metadata.model */
+  CF_AIG_ROUTE?: string;
+  /** Custom provider slug, without the custom- prefix (default nvidia-nim); base_url https://integrate.api.nvidia.com, key stored on the gateway */
+  CF_AIG_PROVIDER?: string;
+}
+
+/** AI Gateway route for NIM chat, or undefined to call NIM directly */
+export function nimGateway(env: AIEnv): NimGateway | undefined {
+  if (!env.AI || !env.CF_AIG_GATEWAY_ID) return undefined;
+  return { ai: env.AI, id: env.CF_AIG_GATEWAY_ID, route: env.CF_AIG_ROUTE || 'nim', provider: env.CF_AIG_PROVIDER || 'nvidia-nim' };
+}
+
+/** NIM is usable with a direct API key or through the gateway (which holds the key itself) */
+export function nimEnabled(env: AIEnv): boolean {
+  return !!(env.NVIDIA_API_KEY || nimGateway(env));
 }
 
 /** Selects AI provider based on environment config (supports NVIDIA NIM -> Workers AI automatic downgrade and fallback) */
@@ -794,15 +833,17 @@ export function makeAI(env: AIEnv): RawAI | null {
   if (provider === 'mock') return new MockAI();
   if (provider === 'rules') return null;
 
-  // Instantiate NVIDIA NIM (if API key configured)
-  const nvidia = env.NVIDIA_API_KEY
-    ? new NvidiaNimAI(env.NVIDIA_API_KEY, env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b', env.NVIDIA_BASE_URL)
+  // Instantiate NVIDIA NIM (API key, or AI Gateway route holding the key)
+  const gateway = nimGateway(env);
+  const nimKey = env.NVIDIA_API_KEY ?? '';
+  const nvidia = nimEnabled(env)
+    ? new NvidiaNimAI(nimKey, env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b', env.NVIDIA_BASE_URL, { gateway })
     : null;
   // NIM fallback model (same key, unmetered): deepseek-v4.1-flash format is stable but slower (dialogue 22-37s), relaxed timeout
   // Comma-separated list, tried in order before Workers AI; 'none' disables
   const backupModels = (env.NVIDIA_FALLBACK_MODEL ?? 'deepseek-ai/deepseek-v4.1-flash').split(',').map(m => m.trim()).filter(m => m && m !== 'none');
-  const nvidiaBackups = env.NVIDIA_API_KEY
-    ? backupModels.map((m, i) => new NvidiaNimAI(env.NVIDIA_API_KEY!, m, env.NVIDIA_BASE_URL, { provider: i === 0 ? 'nvidia-nim-backup' : `nvidia-nim-backup-${i + 1}`, timeoutMs: 45_000, longTimeoutMs: 90_000 }))
+  const nvidiaBackups = nimEnabled(env)
+    ? backupModels.map((m, i) => new NvidiaNimAI(nimKey, m, env.NVIDIA_BASE_URL, { gateway, provider: i === 0 ? 'nvidia-nim-backup' : `nvidia-nim-backup-${i + 1}`, timeoutMs: 45_000, longTimeoutMs: 90_000 }))
     : [];
 
   // Instantiate Workers AI (if env.AI binding exists)
@@ -831,9 +872,9 @@ export function detectProvider(env: AIEnv): string {
   if (p === 'mock') return 'mock';
   if (p === 'rules') return 'rules';
   if (p === 'workers-ai-only' && env.AI) return 'workers-ai';
-  if (p === 'nvidia-only' && env.NVIDIA_API_KEY) return 'nvidia-nim';
-  if (env.NVIDIA_API_KEY && env.AI) return (env.NVIDIA_FALLBACK_MODEL ?? '').trim() === 'none' ? 'nvidia-nim (fallback: workers-ai)' : 'nvidia-nim (fallback: nvidia-nim-backup -> workers-ai)';
-  if (env.NVIDIA_API_KEY) return 'nvidia-nim';
+  if (p === 'nvidia-only' && nimEnabled(env)) return 'nvidia-nim';
+  if (nimEnabled(env) && env.AI) return (env.NVIDIA_FALLBACK_MODEL ?? '').trim() === 'none' ? 'nvidia-nim (fallback: workers-ai)' : 'nvidia-nim (fallback: nvidia-nim-backup -> workers-ai)';
+  if (nimEnabled(env)) return 'nvidia-nim';
   if (env.AI) return 'workers-ai';
   return 'rules';
 }
