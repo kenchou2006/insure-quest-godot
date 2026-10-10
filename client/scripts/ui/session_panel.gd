@@ -219,9 +219,12 @@ func _on_stream_answer_done() -> void:
 
 func _on_stream_chunk(key: String, text: String, _done: bool) -> void:
 	if key == "hint":
+		if text == "":
+			return
+		var first: bool = not _hint_streamed or _streamed_hint_text == ""
 		_hint_streamed = true
 		_streamed_hint_text = text
-		if _hint_label != null and is_instance_valid(_hint_label):
+		if not first and _hint_label != null and is_instance_valid(_hint_label):
 			_hint_label.text = text
 			_hint_label.visible_ratio = 1.0
 			_hint_label.add_theme_color_override("font_color", UI.TEXT)
@@ -249,6 +252,7 @@ func _on_server_error(_msg: String) -> void:
 	_waiting_ai = false
 	_waiting_hint = false
 	_streamed_hint_text = ""
+	_hint_streamed = false
 	_streamed_obj_text = ""
 	_pending_talk = {}
 	_queued_talk = {}
@@ -892,6 +896,7 @@ func _render_coach_hint() -> void:
 		if hint_str != "":
 			if not _hint_streamed:
 				UI.typewriter(_hint_label, hint_str, false)
+				_hint_streamed = true
 			else:
 				_hint_label.text = hint_str
 		hv.add_child(_hint_label)
