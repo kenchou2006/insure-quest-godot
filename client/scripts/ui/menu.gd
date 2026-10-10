@@ -1,6 +1,6 @@
 @tool
 extends Control
-## Main menu: name, member login (Google avatar and advisor level), solo practice, create/join multiplayer room, training records, illustrated game guide. Supports landscape/portrait adaptation, PWA update check, and sound toggle.
+## Main menu: name, member login (Google avatar and advisor level), solo practice, create/join multiplayer room, training records, illustrated game guide, settings (sound toggle, account deletion). Supports landscape/portrait adaptation and PWA update check.
 
 const AutomationBridge := preload("res://scripts/automation.gd")
 
@@ -240,12 +240,7 @@ func _build_ui() -> void:
 	var row := UI.hbox(8)
 	row.add_child(UI.button("遊戲說明", func(): _open_howto(), 15, UI.PANEL_2))
 	row.add_child(UI.button("培訓紀錄", func(): _save(); main.show_records(), 15, UI.PANEL_2))
-	var sound_btn: Button = UI.button("音效：關" if Sound.is_muted() else "音效：開", Callable(), 15, UI.PANEL_2)
-	sound_btn.pressed.connect(func():
-		var m: bool = Sound.toggle_mute()
-		sound_btn.text = "音效：關" if m else "音效：開"
-	)
-	row.add_child(sound_btn)
+	row.add_child(UI.button("設定", func(): _open_settings(), 15, UI.PANEL_2))
 	v.add_child(row)
 
 	if not Net.is_web():
@@ -359,6 +354,96 @@ func _logout() -> void:
 	_update_auth_card()
 
 
+## Centered modal (dimmed backdrop, title row with ✕). Returns [backdrop, content vbox]; null if one with this name is open.
+func _open_modal(node_name: String, title: String, title_color: Color) -> Array:
+	for c in get_children():
+		if c.name == node_name:
+			return []
+	var dim := ColorRect.new()
+	dim.name = node_name
+	dim.color = Color(0, 0, 0, 0.75)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dim.add_child(center)
+
+	var p := UI.panel(UI.PANEL, 14, 18)
+	p.custom_minimum_size = Vector2(340.0 if UI.is_phone_portrait() else 420.0, 0)
+	var v := UI.vbox(12)
+	p.add_child(v)
+
+	var head := UI.hbox(8)
+	head.add_child(UI.label(title, 18, title_color))
+	head.add_child(UI.spacer())
+	var close_btn := UI.button("×", func(): dim.queue_free(), 16, UI.PANEL_2)
+	close_btn.custom_minimum_size = Vector2(36, 36)
+	head.add_child(close_btn)
+	v.add_child(head)
+
+	center.add_child(p)
+	add_child(dim)
+	return [dim, v]
+
+
+## Settings: sound, and (when logged in) account deletion
+func _open_settings() -> void:
+	var m := _open_modal("SettingsDialog", "設定", UI.ACCENT_2)
+	if m.is_empty():
+		return
+	var dim: Control = m[0]
+	var v: VBoxContainer = m[1]
+
+	v.add_child(UI.label("音效", 14, UI.MUTED))
+	var sound_btn: Button = UI.button("音效：關" if Sound.is_muted() else "音效：開", Callable(), 15, UI.PANEL_2)
+	sound_btn.pressed.connect(func():
+		var muted: bool = Sound.toggle_mute()
+		sound_btn.text = "音效：關" if muted else "音效：開"
+	)
+	v.add_child(sound_btn)
+
+	if Net.is_logged_in():
+		v.add_child(HSeparator.new())
+		v.add_child(UI.label("帳號", 14, UI.MUTED))
+		v.add_child(UI.label("刪除帳號會永久刪除你的培訓紀錄、學習檔案與 AI 使用紀錄，無法復原。", 12, UI.MUTED, true))
+		v.add_child(UI.button("刪除帳號", func():
+			dim.queue_free()
+			_confirm_delete_account()
+		, 14, UI.BAD.darkened(0.4)))
+
+
+func _confirm_delete_account() -> void:
+	var m := _open_modal("DeleteAccountDialog", "刪除帳號確認", UI.BAD)
+	if m.is_empty():
+		return
+	var dim: Control = m[0]
+	var v: VBoxContainer = m[1]
+
+	v.add_child(UI.label("確定要刪除帳號嗎？此動作將永久刪除您的個人紀錄、學習檔案與 AI 配額資料，且無法復原。", 13, UI.MUTED, true))
+
+	var btns := UI.hbox(8)
+	btns.add_child(UI.spacer())
+	btns.add_child(UI.button("取消", func(): dim.queue_free(), 13, UI.PANEL_2))
+	btns.add_child(UI.button("確定刪除", func():
+		dim.queue_free()
+		await _delete_account()
+	, 13, UI.BAD))
+	v.add_child(btns)
+
+
+func _delete_account() -> void:
+	var res: Array = await Net.delete_account()
+	if bool(res[0]):
+		if main:
+			main.toast("帳號及資料已成功刪除", UI.GOOD)
+	else:
+		if main:
+			main.toast("刪除帳號失敗：" + str(res[1]), UI.BAD)
+	_update_auth_card()
+
+
 func _check_url_demo_code() -> void:
 	if Net.is_logged_in():
 		return
@@ -397,7 +482,7 @@ func _open_demo_dialog() -> void:
 	var head := UI.hbox(8)
 	head.add_child(UI.label("輸入評審體驗碼", 18, UI.ACCENT_2))
 	head.add_child(UI.spacer())
-	var close_btn := UI.button("✕", func(): dim.queue_free(), 14, UI.PANEL_2)
+	var close_btn := UI.button("×", func(): dim.queue_free(), 16, UI.PANEL_2)
 	close_btn.custom_minimum_size = Vector2(36, 36)
 	head.add_child(close_btn)
 	v.add_child(head)

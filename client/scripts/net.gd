@@ -335,6 +335,17 @@ func logout() -> Array:
 	return r
 
 
+func delete_account() -> Array:
+	var r: Array = await http_json(HTTPClient.METHOD_POST, "/api/account/delete", {})
+	ai_quota = {"used": 0, "limit": 0}
+	ai_enabled = false
+	avatar_tex = null
+	_avatar_url = ""
+	_avatar_tried = false
+	await fetch_me()
+	return r
+
+
 ## Google sign-in: FedCM / One Tap priority, automatically falls back to redirect on failure (implemented in GoogleAuth autoload)
 func google_sign_in() -> void:
 	GoogleAuth.sign_in()
