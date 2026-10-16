@@ -104,6 +104,22 @@ export interface PlayerState {
   stats?: QuestStats;
   complianceStreak?: number;
   finalTurn?: boolean;
+  /** Primary client case chosen at game start; client tiles advance it one interview stage at a time */
+  mainCase?: MainCase | null;
+  /** Advisor briefcase: tools packed before the first meeting (each changes how the case plays) */
+  briefcase?: ToolId[];
+  /** Contacts met through referral / networking events before the primary case is finished */
+  contacts?: string[];
+}
+
+export type ToolId = 'needs_form' | 'cashflow' | 'family_map' | 'gap_sheet' | 'risk_survey' | 'compliance_check';
+export interface MainCase {
+  clientId: string;
+  /** Meetings held so far (1 = needs interview, 2 = plan, 3 = objection + result) */
+  visits: number;
+  done: boolean;
+  /** Interview paused between meetings; resumed on the next client-tile visit */
+  saved?: SessionState | null;
 }
 
 export interface SessionState {
@@ -150,6 +166,10 @@ export interface SessionState {
     timeline?: TimelineResult | null;
   };
   aiBusy?: boolean;
+  /** Primary-case interview: pauses after each stage instead of running to the result in one visit */
+  staged?: boolean;
+  /** Briefcase hints shown during plan design */
+  toolHints?: { coreCards?: CardId[]; ideal?: Record<ResKey, [number, number]> };
 }
 
 export interface PendingEvent {
@@ -260,4 +280,5 @@ export type Action =
   | { type: 'hint' }
   | { type: 'choose_dilemma'; choice: string }
   | { type: 'review'; card: string }
-  | { type: 'continue' };
+  | { type: 'continue' }
+  | { type: 'setup'; clientId: string; tools: ToolId[] };

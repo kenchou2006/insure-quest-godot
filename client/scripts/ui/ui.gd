@@ -359,7 +359,7 @@ static func is_animation_disabled() -> bool:
 static func _button_glint(button_node: Button, active: bool) -> void:
 	if is_animation_disabled() or button_node.disabled:
 		return
-	var previous: Variant = button_node.get_meta("glint_tween", null)
+	var previous: Variant = button_node.get_meta("glint_tween") if button_node.has_meta("glint_tween") else null
 	if previous is Tween and previous.is_valid(): previous.kill()
 	var tween := button_node.create_tween()
 	button_node.set_meta("glint_tween", tween)
@@ -376,7 +376,7 @@ static func card_reveal(node: Control) -> void:
 
 static func coin_change(node: Control) -> void:
 	if is_animation_disabled(): return
-	var old: Variant = node.get_meta("coin_tween", null)
+	var old: Variant = node.get_meta("coin_tween") if node.has_meta("coin_tween") else null
 	if old is Tween and old.is_valid(): old.kill()
 	node.pivot_offset = node.size * 0.5
 	node.scale = Vector2(1.12, 1.12)

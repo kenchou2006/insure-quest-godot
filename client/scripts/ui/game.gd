@@ -32,6 +32,7 @@ const TILE_HINTS := {
 }
 const SessionPanel := preload("res://scripts/ui/session_panel.gd")
 const EventPanel := preload("res://scripts/ui/event_panel.gd")
+const CaseSetup := preload("res://scripts/ui/case_setup.gd")
 
 var main: Node
 var _board: Control
@@ -102,6 +103,8 @@ var _hud_rep: Label
 var _task_title: Label
 var _task_body: Label
 var _task_quest: Label
+var _task_case: Label
+var _case_setup: Control
 var _client_box: VBoxContainer
 var _record_box: VBoxContainer
 var _hud_action: HBoxContainer
@@ -179,6 +182,7 @@ func on_layout_changed(_is_portrait: bool) -> void:
 
 func _build_ui() -> void:
 	UI.clear(self)
+	_case_setup = null
 	_tab_buttons.clear()
 	var portrait: bool = UI.is_portrait()
 
@@ -397,6 +401,8 @@ func _build_ui() -> void:
 	task_v.add_child(_task_title)
 	_task_body = UI.label("", 15, C_MUTED, true)
 	task_v.add_child(_task_body)
+	_task_case = UI.label("", 13, C_GREEN, true)
+	task_v.add_child(_task_case)
 	_task_quest = UI.label("", 13, C_GOLD, true)
 	task_v.add_child(_task_quest)
 	sv.add_child(_card(task_v))
@@ -675,6 +681,8 @@ func _refresh_hud(s: Dictionary, mine: bool, cur_name: String, stage: String, ro
 			_hud_hint.text = "按「前往下一站」擲骰前進"
 		elif owner is Dictionary:
 			_hud_hint.text = "%s 的生活圈" % str(owner.get("clientName", "客戶"))
+		elif str(tile.get("type", "")) == "client" and Net.current_player().get("mainCase") is Dictionary and not bool(Net.current_player().get("mainCase").get("done", false)):
+			_hud_hint.text = "與主要客戶 %s 會談" % str(Net.current_player().get("mainCase").get("clientName", ""))
 		else:
 			_hud_hint.text = str(TILE_HINTS.get(str(tile.get("type", "")), ""))
 	if _hud_rounds != null:
@@ -708,8 +716,31 @@ func _refresh_task(s: Dictionary, mine: bool, cur_name: String, stage: String, d
 	else:
 		_task_title.text = "等待 %s 行動" % cur_name
 		_task_body.text = "其他顧問的回合。展開下方抽屜可以查看完整動態。"
+	var mc = Net.me().get("mainCase")
+	if mc is Dictionary:
+		if bool(mc.get("done", false)):
+			_task_case.text = "主要客戶・%s｜案件完成，新的客戶案件已解鎖" % str(mc.get("clientName", ""))
+		else:
+			var stage_name: String = {"plan": "方案設計", "objection": "異議處理與結果", "result": "面談結果"}.get(str(mc.get("step", "")), "需求訪談")
+			_task_case.text = "主要客戶・%s｜第 %d / %d 次會談%s：%s" % [str(mc.get("clientName", "")), int(mc.get("visits", 0)), int(mc.get("meetings", 3)), "進行中" if bool(mc.get("inMeeting", false)) else "已完成，下一次", stage_name]
+			if int(mc.get("visits", 0)) == 0:
+				_task_case.text = "主要客戶・%s｜尚未會談，抵達客戶節點開始需求訪談" % str(mc.get("clientName", ""))
+	_task_case.visible = mc is Dictionary
 	_task_quest.text = "本季任務已完成 %d / %d" % [done, total] if total > 0 else ""
 	_task_quest.visible = total > 0
+
+
+## Shows the primary-client + briefcase picker until the server records this player's case
+func _sync_case_setup(s: Dictionary) -> void:
+	var me_p: Dictionary = Net.me()
+	var need := str(s.get("phase", "")) == "playing" and not Net.spectator and not me_p.is_empty() and me_p.get("mainCase") == null
+	if need and (_case_setup == null or not is_instance_valid(_case_setup)):
+		_case_setup = CaseSetup.new()
+		_case_setup.z_index = 110
+		add_child(_case_setup)
+	elif not need and _case_setup != null and is_instance_valid(_case_setup):
+		_case_setup.queue_free()
+		_case_setup = null
 
 
 func _status_row(caption: String, value: float) -> HBoxContainer:
@@ -759,6 +790,22 @@ func _refresh_client(s: Dictionary) -> void:
 			_client_box.add_child(bh)
 		var comp := float(m.get("compliance", 100))
 		_client_box.add_child(_risk_row(0 if comp >= 70 else (1 if comp >= 45 else 2)))
+		return
+	# Primary case between meetings: keep showing the client being served
+	var mc = Net.me().get("mainCase")
+	if mc is Dictionary and not bool(mc.get("done", false)):
+		_client_box.add_child(UI.label("主要客戶｜%s・%s" % [str(mc.get("clientName", "")), str(mc.get("job", ""))], 16, C_TEXT, true))
+		var cm = mc.get("metrics")
+		if cm is Dictionary:
+			_client_box.add_child(_status_row("信任", float(cm.get("trust", 0))))
+			_client_box.add_child(_status_row("需求掌握", float(cm.get("insight", 0))))
+		if str(mc.get("amount", "")) != "":
+			_client_box.add_child(UI.label("預算　" + str(mc.get("amount", "")), 14, C_TEXT, true))
+		if cm is Dictionary:
+			var cc := float(cm.get("compliance", 100))
+			_client_box.add_child(_risk_row(0 if cc >= 70 else (1 if cc >= 45 else 2)))
+		else:
+			_client_box.add_child(UI.label("還沒見過面。抵達客戶節點即可開始需求訪談。", 14, C_MUTED, true))
 		return
 	var book: Array = Net.me().get("book", [])
 	if book.is_empty():
@@ -1095,6 +1142,7 @@ func refresh(s: Dictionary) -> void:
 	_quests_title_lbl.text = "本季任務 %d/%d" % [done_count, quests.size()]
 
 	_refresh_hud(s, mine, cur_name, stage, round_num)
+	_sync_case_setup(s)
 	_refresh_task(s, mine, cur_name, stage, done_count, quests.size())
 	_refresh_client(s)
 	_refresh_record(s)

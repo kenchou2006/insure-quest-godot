@@ -1566,6 +1566,9 @@ func _build_plan() -> void:
 		_alloc = {"cash": 4, "protect": 3, "growth": 3}
 		_cards = []
 	_plan_ui = {"rows": {}, "cards": {}}
+	var tool_hints = _sess.get("toolHints")
+	if _actor and tool_hints is Dictionary:
+		_build_briefcase_hints(tool_hints)
 	var av := _section("")
 	_plan_alloc_section = av.get_parent() as Control
 	_plan_ui["alloc_title"] = av.get_child(0)
@@ -1857,6 +1860,23 @@ func _build_objection() -> void:
 			, 200))
 	else:
 		fv.add_child(UI.label("（等待顧問回應……）", 14, UI.MUTED))
+
+
+## Advisor briefcase tools that inform plan design (gap sheet, risk survey)
+func _build_briefcase_hints(hints: Dictionary) -> void:
+	var v := _section("顧問公事包")
+	var core = hints.get("coreCards")
+	if core is Array and not core.is_empty():
+		v.add_child(UI.label("保障缺口分析表：優先考慮「%s」" % _card_names(core), 14, UI.TEXT, true))
+	var ideal = hints.get("ideal")
+	if ideal is Dictionary:
+		var parts: Array = []
+		for r: String in ["cash", "protect", "growth"]:
+			var rng = ideal.get(r)
+			if rng is Array and rng.size() == 2:
+				parts.append("%s %d–%d" % [{"cash": "預備", "protect": "保障", "growth": "成長"}[r], int(rng[0]), int(rng[1])])
+		if not parts.is_empty():
+			v.add_child(UI.label("風險承受度問卷：合理配置 " + "、".join(parts) + " 枚", 14, UI.TEXT, true))
 
 
 func _card_names(ids: Array) -> String:
