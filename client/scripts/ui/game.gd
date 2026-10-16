@@ -3,8 +3,9 @@ extends Control
 ## Main game screen: left board (interviews/events shown in overlay panels), right player status, client book, activity log, and emoji reactions.
 ## Supports phone portrait 3-tab switching, dynamic dice roll cutscenes, clear personal/spectator turn transitions, and status ribbons.
 
-## Taipei 101 Advisor HQ map (the 3D city board in board.gd stays available to the preview studio)
-const Board := preload("res://scripts/ui/board_hq.gd")
+## Taipei 101 Advisor HQ, 3D isometric board (board_hq.gd is the earlier painted-map version;
+## the 3D city board in board.gd stays available to the preview studio)
+const Board := preload("res://scripts/ui/board_hq3d.gd")
 
 # HQ interface palette
 const C_BG := Color("#062F2A")
@@ -716,16 +717,23 @@ func _refresh_task(s: Dictionary, mine: bool, cur_name: String, stage: String, d
 	else:
 		_task_title.text = "等待 %s 行動" % cur_name
 		_task_body.text = "其他顧問的回合。展開下方抽屜可以查看完整動態。"
+	# Itinerary position (node names live here; the map shows icons only) and primary-case progress
+	var lines: Array = []
+	var board: Array = Net.static_data.get("board", [])
+	if not board.is_empty():
+		var idx := int(Net.current_player().get("pos", 0)) % board.size()
+		lines.append(Board.tile_label(idx, str((board[idx] as Dictionary).get("name", ""))))
 	var mc = Net.me().get("mainCase")
 	if mc is Dictionary:
 		if bool(mc.get("done", false)):
-			_task_case.text = "主要客戶・%s｜案件完成，新的客戶案件已解鎖" % str(mc.get("clientName", ""))
+			lines.append("主要客戶・%s｜案件完成，新的客戶案件已解鎖" % str(mc.get("clientName", "")))
+		elif int(mc.get("visits", 0)) == 0:
+			lines.append("主要客戶・%s｜尚未會談，抵達客戶節點開始需求訪談" % str(mc.get("clientName", "")))
 		else:
 			var stage_name: String = {"plan": "方案設計", "objection": "異議處理與結果", "result": "面談結果"}.get(str(mc.get("step", "")), "需求訪談")
-			_task_case.text = "主要客戶・%s｜第 %d / %d 次會談%s：%s" % [str(mc.get("clientName", "")), int(mc.get("visits", 0)), int(mc.get("meetings", 3)), "進行中" if bool(mc.get("inMeeting", false)) else "已完成，下一次", stage_name]
-			if int(mc.get("visits", 0)) == 0:
-				_task_case.text = "主要客戶・%s｜尚未會談，抵達客戶節點開始需求訪談" % str(mc.get("clientName", ""))
-	_task_case.visible = mc is Dictionary
+			lines.append("主要客戶・%s｜第 %d / %d 次會談%s：%s" % [str(mc.get("clientName", "")), int(mc.get("visits", 0)), int(mc.get("meetings", 3)), "進行中" if bool(mc.get("inMeeting", false)) else "已完成，下一次", stage_name])
+	_task_case.text = "\n".join(lines)
+	_task_case.visible = not lines.is_empty()
 	_task_quest.text = "本季任務已完成 %d / %d" % [done, total] if total > 0 else ""
 	_task_quest.visible = total > 0
 
