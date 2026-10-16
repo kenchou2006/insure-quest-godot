@@ -238,7 +238,7 @@ func _build_ui() -> void:
 
 	v.add_child(HSeparator.new())
 	var row := UI.hbox(8)
-	row.add_child(UI.button("遊戲說明", func(): _open_howto(), 15, UI.PANEL_2))
+	row.add_child(UI.button("遊戲說明", func(): _open_brief(), 15, UI.PANEL_2))
 	row.add_child(UI.button("培訓紀錄", func(): _save(); main.show_records(), 15, UI.PANEL_2))
 	row.add_child(UI.button("設定", func(): _open_settings(), 15, UI.PANEL_2))
 	v.add_child(row)
@@ -571,6 +571,18 @@ func _join() -> void:
 		main.toast("多人連線需先登入", UI.BAD)
 		return
 	main.join_room(c)
+
+
+## Game instructions: one-screen mission brief (logo, four steps); detailed rules one click away
+func _open_brief() -> void:
+	var brief: Control = preload("res://scripts/ui/mission_brief.gd").new()
+	brief.z_index = 90
+	brief.closed.connect(func(): brief.queue_free())
+	brief.details_requested.connect(func():
+		brief.queue_free()
+		_open_howto()
+	)
+	add_child(brief)
 
 
 func _open_howto() -> void:

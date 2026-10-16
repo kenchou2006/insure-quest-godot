@@ -7,7 +7,6 @@ signal selected(enabled: bool, role: String)
 const FEMALE := preload("res://assets/startup/advisor_f.png")
 const MALE := preload("res://assets/startup/advisor_m.png")
 const BACKGROUND := preload("res://assets/startup/loading.png")
-const TITLE := preload("res://assets/startup/title.png")
 const CURSOR_LIGHT := preload("res://assets/startup/cursor_light.gdshader")
 const SecretaryVoice := preload("res://scripts/secretary_voice.gd")
 
@@ -41,7 +40,6 @@ var _bar_left: Label
 var _bar_sep: ColorRect
 var _bar_right: Label
 var _bar_hover := false
-var _title: TextureRect
 var _heading: Label
 var _sub: Label
 var _rule_l: ColorRect
@@ -154,13 +152,6 @@ func _ready() -> void:
 	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(shade)
-
-	_title = TextureRect.new()
-	_title.texture = TITLE
-	_title.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_title.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
-	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_title)
 
 	_heading = _text("選擇培訓秘書", 40, C_TEXT)
 	_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -398,16 +389,10 @@ func _layout() -> void:
 	var compact := size.x < 760.0 or size.y < 520.0
 	var portrait_screen := size.y > size.x
 	var pad := 16.0 if compact else 40.0
-	# Logo: the cover's transparent title layer
-	var tw := clampf(size.x * 0.17, 140.0, 260.0)
-	_title.size = Vector2(tw, tw * TITLE.get_height() / TITLE.get_width())
-	_title.position = Vector2(pad, pad * 0.6)
 	var hs := 26 if portrait_screen else (32 if compact else 44)
 	_heading.add_theme_font_size_override("font_size", hs)
 	_heading.reset_size()
-	var top := _title.position.y + _title.size.y * (0.15 if not portrait_screen else 1.0) + 6.0
-	if not portrait_screen:
-		top = maxf(pad * 0.6, 22.0)
+	var top := maxf(pad * 0.6, 22.0)
 	_heading.position = Vector2((size.x - _heading.size.x) * 0.5, top)
 	_sub.reset_size()
 	_sub.position = Vector2((size.x - _sub.size.x) * 0.5, _heading.position.y + _heading.size.y + 2)
