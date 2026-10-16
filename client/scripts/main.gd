@@ -326,15 +326,15 @@ func _on_state(state: Dictionary) -> void:
 func get_screen_kind() -> String:
 	return _screen_kind
 
+## Cover button always leads to the secretary choice (screen 2); the last choice is preselected
 func _enter_training() -> void:
-	if not _guide.configured:
-		open_secretary_settings()
-	else:
-		_guide.unlock_speech()
-		show_menu()
+	_guide.unlock_speech()
+	open_secretary_settings()
 
 func open_secretary_settings() -> void:
 	var setup := SecretarySetup.new()
+	if _guide.configured:
+		setup.initial_key = _guide.role if _guide.enabled else "solo"
 	setup.selected.connect(func(use_guide: bool, role: String):
 		_guide.choose(use_guide, role)
 		show_menu()

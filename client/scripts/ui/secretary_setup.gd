@@ -26,6 +26,8 @@ const CHOICES := [
 	{"key": "solo", "name": "自行挑戰", "enabled": false, "sample": ""},
 ]
 
+## Card to preselect ("female", "male" or "solo"), e.g. the player's previous choice
+var initial_key := ""
 var _cards: Array = []
 var _selected := -1
 var _confirm: Button
@@ -212,6 +214,10 @@ func _ready() -> void:
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	resized.connect(_layout)
 	_layout()
+	for i in range(_cards.size()):
+		if str((_cards[i] as Card).info.key) == initial_key:
+			_selected = i
+			_set_selected(_cards[i], true)
 	_refresh_confirm()
 
 
