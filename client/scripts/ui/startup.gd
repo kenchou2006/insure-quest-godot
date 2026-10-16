@@ -1,5 +1,7 @@
 extends Control
 ## Layered Life Advisor Bureau cover, shown after loading finishes.
+## The background always fills the screen; advisors slide in from the sides, the title drops in,
+## then the entry button appears. Clicking or pressing a key during the intro skips to the end.
 
 signal entered
 
@@ -8,29 +10,45 @@ const TITLE := preload("res://assets/startup/title.png")
 const FEMALE := preload("res://assets/startup/advisor_f.png")
 const MALE := preload("res://assets/startup/advisor_m.png")
 
+## Horizontal span (in cover-image units) that must stay on screen: title and button.
+const SAFE_SPAN := 0.48
+
+var _backdrop: TextureRect
 var _stage: Control
+var _female: TextureRect
+var _male: TextureRect
+var _title: TextureRect
 var _enter: Button
 var _button_material: ShaderMaterial
+var _intro: Tween
 
 func _ready() -> void:
-	var background := ColorRect.new()
-	background.color = Color("0d231e")
-	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(background)
+	var base := ColorRect.new()
+	base.color = Color("0d231e")
+	base.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	base.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(base)
+	# Full-bleed background: covers the whole screen at any aspect ratio (no side bars).
+	_backdrop = TextureRect.new()
+	_backdrop.texture = BACKGROUND
+	_backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_backdrop)
+	clip_contents = true
 	_stage = Control.new()
-	_stage.clip_contents = true
+	_stage.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_stage)
-	_add_art(BACKGROUND, Vector2.ZERO, Vector2.ONE)
-	_add_art(FEMALE, Vector2(-0.035, 0.055), Vector2(0.36, 0.97))
-	_add_art(MALE, Vector2(0.675, 0.055), Vector2(0.36, 0.97))
-	_add_art(TITLE, Vector2(0.275, 0.30), Vector2(0.45, 0.30))
+	_female = _add_art(FEMALE, Vector2(-0.035, 0.055), Vector2(0.36, 0.97))
+	_male = _add_art(MALE, Vector2(0.675, 0.055), Vector2(0.36, 0.97))
+	_title = _add_art(TITLE, Vector2(0.275, 0.30), Vector2(0.45, 0.30))
 	_enter = Button.new()
 	_enter.text = "進 入 顧 問 培 訓"
 	_enter.pressed.connect(_on_entered)
-	for state: String in ["normal", "hover", "pressed", "disabled"]:
+	for state: String in ["normal", "hover", "pressed", "disabled", "focus"]:
 		_enter.add_theme_stylebox_override(state, StyleBoxEmpty.new())
-	for state: String in ["font_color", "font_hover_color", "font_pressed_color"]:
+	for state: String in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_disabled_color"]:
 		_enter.add_theme_color_override(state, Color("fffbea"))
 	_enter.add_theme_color_override("font_shadow_color", Color("003c30"))
 	_enter.add_theme_constant_override("shadow_offset_y", 2)
@@ -52,9 +70,9 @@ func _ready() -> void:
 	_stage.add_child(_enter)
 	resized.connect(_layout_cover)
 	_layout_cover()
-	_enter.grab_focus()
+	_play_intro.call_deferred()
 
-func _add_art(texture: Texture2D, origin: Vector2, extent: Vector2) -> void:
+func _add_art(texture: Texture2D, origin: Vector2, extent: Vector2) -> TextureRect:
 	var art := TextureRect.new()
 	art.texture = texture
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -65,17 +83,73 @@ func _add_art(texture: Texture2D, origin: Vector2, extent: Vector2) -> void:
 	art.anchor_bottom = origin.y + extent.y
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_stage.add_child(art)
+	return art
 
 func _layout_cover() -> void:
 	var image_size := BACKGROUND.get_size()
-	var scale_factor := minf(size.x / image_size.x, size.y / image_size.y)
+	# Cover the screen like the backdrop, but on narrow (portrait) screens shrink just enough
+	# that the title and button stay fully visible; the advisors may then be cropped at the edges.
+	var cover := maxf(size.x / image_size.x, size.y / image_size.y)
+	var keep_center := size.x / (image_size.x * SAFE_SPAN)
+	var scale_factor := minf(cover, keep_center)
 	_stage.size = image_size * scale_factor
 	_stage.position = (size - _stage.size) * 0.5
 	_enter.custom_minimum_size = Vector2.ZERO
 	_enter.add_theme_font_size_override("font_size", maxi(14, int(_stage.size.y * 0.04)))
 	_enter.position = _stage.size * Vector2(0.35, 0.65)
 	_enter.size = Vector2(_stage.size.x * 0.30, maxf(44.0, _stage.size.y * 0.11))
+	_enter.pivot_offset = _enter.size * 0.5
 	_button_material.set_shader_parameter("button_size", _enter.size)
+
+func _play_intro() -> void:
+	_set_button_ready(false)
+	if UI.is_animation_disabled():
+		_set_button_ready(true)
+		return
+	var w := maxf(size.x, _stage.size.x)
+	_female.offset_left = -w * 0.6
+	_female.offset_right = -w * 0.6
+	_male.offset_left = w * 0.6
+	_male.offset_right = w * 0.6
+	_female.modulate.a = 0.0
+	_male.modulate.a = 0.0
+	var drop := _stage.size.y * 0.6
+	_title.offset_top = -drop
+	_title.offset_bottom = -drop
+	_title.modulate.a = 0.0
+	_enter.modulate.a = 0.0
+	_enter.scale = Vector2(0.85, 0.85)
+
+	_intro = create_tween().set_parallel(true)
+	# 1. Advisors enter from left and right
+	for art: TextureRect in [_female, _male]:
+		_intro.tween_property(art, "offset_left", 0.0, 0.9).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		_intro.tween_property(art, "offset_right", 0.0, 0.9).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		_intro.tween_property(art, "modulate:a", 1.0, 0.6)
+	# 2. Title slides down from the top
+	_intro.tween_property(_title, "offset_top", 0.0, 0.8).set_delay(0.55).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_intro.tween_property(_title, "offset_bottom", 0.0, 0.8).set_delay(0.55).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_intro.tween_property(_title, "modulate:a", 1.0, 0.5).set_delay(0.55)
+	# 3. Entry button appears last
+	_intro.tween_property(_enter, "modulate:a", 1.0, 0.4).set_delay(1.35)
+	_intro.tween_property(_enter, "scale", Vector2.ONE, 0.45).set_delay(1.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_intro.chain().tween_callback(_set_button_ready.bind(true))
+
+func _set_button_ready(is_ready: bool) -> void:
+	_enter.disabled = not is_ready
+	_enter.mouse_filter = Control.MOUSE_FILTER_STOP if is_ready else Control.MOUSE_FILTER_IGNORE
+	if is_ready:
+		_enter.grab_focus()
+
+## Click or key press during the intro jumps straight to the finished cover.
+func _input(event: InputEvent) -> void:
+	if _intro == null or not _intro.is_running():
+		return
+	var skip: bool = (event is InputEventMouseButton and event.pressed) or (event is InputEventScreenTouch and event.pressed) \
+		or (event is InputEventKey and event.pressed and not event.echo)
+	if skip:
+		get_viewport().set_input_as_handled()
+		_intro.custom_step(10.0)
 
 func _on_entered() -> void:
 	_enter.disabled = true
