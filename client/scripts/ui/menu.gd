@@ -1,8 +1,21 @@
 @tool
 extends Control
-## Main menu: name, member login (Google avatar and advisor level), solo practice, create/join multiplayer room, training records, illustrated game guide, settings (sound toggle, account deletion). Supports landscape/portrait adaptation and PWA update check.
+## Training hall (新人顧問培訓大廳), shown after the secretary choice: pick 單人實戰 or 多人演練.
+## Keeps every menu function: advisor name, guest / demo code / test / Google login, solo vs. AI
+## advisors (level and count), create / join multiplayer rooms, resume seat, records, guide, settings
+## (volumes, secretary, account deletion). Supports landscape/portrait adaptation and PWA update check.
 
 const AutomationBridge := preload("res://scripts/automation.gd")
+const ModeCard := preload("res://scripts/ui/mode_card.gd")
+const HallSecretary := preload("res://scripts/ui/hall_secretary.gd")
+const LineIcon := preload("res://scripts/ui/line_icon.gd")
+const HALL_BG := preload("res://assets/startup/loading.png")
+const HALL_SHADER := preload("res://assets/startup/hall_backdrop.gdshader")
+const BOLD := preload("res://assets/fonts/bold.tres")
+const NOTO := preload("res://assets/fonts/NotoSansTC.ttf")
+
+## The secretary greets once per app session; later visits start with the round portrait
+static var _hall_guided := false
 
 var main: Node
 var _name: LineEdit
@@ -10,14 +23,42 @@ var _code: LineEdit
 var _server: LineEdit
 var _opponents := 2
 var _level := "pro"
-var _opp_label: Label
 var _howto: Control
 var _pwa_btn: Button
 var _resume_container: VBoxContainer
 var _pwa_cb: JavaScriptObject = null
 var _target_version: String = ""
 var _seat_check_gen: int = 0
-var _root: BoxContainer
+var _portrait_mode := false
+var _phone := false
+var _selected_mode := ""
+var _top: Panel
+var _brand: Label
+var _brand_rule: ColorRect
+var _id_pill: Button
+var _id_icon: Control
+var _id_label: Label
+var _id_chev: Control
+var _howto_btn: Button
+var _howto_icon: Control
+var _howto_label: Label
+var _title_row: HBoxContainer
+var _title_a: Label
+var _title_b: Label
+var _ornament: Control
+var _subtitle: Label
+var _solo_card: ModeCard
+var _multi_card: ModeCard
+var _solo_opts: PanelContainer
+var _level_opt: OptionButton
+var _count_opt: OptionButton
+var _footer: Label
+var _secretary: HallSecretary
+var _id_catcher: Control
+var _id_pop: PanelContainer
+var _scroll: ScrollContainer
+var _stack: VBoxContainer
+var _stack_spacer: Control
 var _auth_card_container: VBoxContainer
 var _last_account_id: String = ""
 var _avatar_loading: bool = false
@@ -53,6 +94,7 @@ func _on_auth_changed() -> void:
 				_save()
 	if _auth_card_container and is_instance_valid(_auth_card_container):
 		_update_auth_card()
+		_refresh_auth_ui()
 	else:
 		_build_ui()
 
@@ -65,123 +107,273 @@ func on_layout_changed(_is_portrait: bool) -> void:
 	if _code and cur_code != "": _code.text = cur_code
 
 
+## Training hall (新人顧問培訓大廳): pick 單人實戰 or 多人演練. Identity / login live in the
+## 「訪客｜顧問」 dropdown; solo options appear only after the 單人實戰 card is picked.
 func _build_ui() -> void:
 	UI.clear(self)
-	var portrait: bool = UI.is_portrait()
-	_root = UI.vbox(0) if portrait else UI.hbox(0)
-	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_root)
+	_portrait_mode = UI.is_portrait()
+	_phone = UI.is_phone()
+	_selected_mode = ""
 
-	# Key visual area
-	var art := Control.new()
-	if portrait:
-		art.custom_minimum_size = Vector2(0, 175 if UI.is_phone_portrait() else 240)
+	# Backdrop: rainy Taipei office with 101, dimmed and slightly blurred
+	var bg := TextureRect.new()
+	bg.texture = HALL_BG
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg_mat := ShaderMaterial.new()
+	bg_mat.shader = HALL_SHADER
+	bg.material = bg_mat
+	add_child(bg)
+
+	_build_topbar()
+
+	_title_row = HBoxContainer.new()
+	_title_row.add_theme_constant_override("separation", 0)
+	_title_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_a = _hall_label("選擇你的", 44, UI.TEXT)
+	_title_b = _hall_label("培訓方式", 44, UI.GOLD)
+	for t: Label in [_title_a, _title_b]:
+		t.add_theme_font_override("font", BOLD)
+		t.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
+		t.add_theme_constant_override("shadow_offset_y", 2)
+		_title_row.add_child(t)
+	_ornament = Ornament.new()
+	_subtitle = _hall_label("完成一場 8–12 分鐘的客戶會談，取得個人化顧問報告", 18, Color(UI.TEXT, 0.88))
+	_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+	_solo_card = ModeCard.new()
+	_solo_card.title = "單人實戰"
+	_solo_card.tag = "初次建議"
+	_solo_card.tag_primary = true
+	_solo_card.icon = "chat_user"
+	_solo_card.rows = [["user", "1 位情境客戶"], ["robot", "AI 顧問陪練"], ["doc", "個人化培訓報告"]]
+	_solo_card.button_text = "進入單人實戰"
+	_solo_card.primary = true
+	_solo_card.picked.connect(func(): _pick_mode("solo"))
+	_solo_card.activated.connect(_start_solo)
+
+	_multi_card = ModeCard.new()
+	_multi_card.title = "多人演練"
+	_multi_card.tag = "登入後開放"
+	_multi_card.icon = "users"
+	_multi_card.rows = [["users", "2–4 位顧問"], ["chart", "比較不同應對方法"], ["doc", "團隊演練紀錄"]]
+	_multi_card.button_text = "建立多人房間"
+	_multi_card.link_text = "房間代碼加入 ›"
+	_multi_card.picked.connect(func(): _pick_mode("multi"))
+	_multi_card.activated.connect(_on_multi_pressed)
+	_multi_card.link_pressed.connect(_open_join)
+
+	_build_solo_options()
+
+	_footer = _hall_label("情境與數值僅供教育訓練模擬；保障卡為功能概念，不對應任何實際保險商品，亦不構成保險或投資建議。", 11, Color(UI.MUTED, 0.75))
+	_footer.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+
+	if _portrait_mode:
+		# Phone / tablet portrait: everything stacks in a scroll area under the top bar
+		_scroll = ScrollContainer.new()
+		_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		add_child(_scroll)
+		_stack = UI.vbox(16)
+		_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_scroll.add_child(_stack)
+		var title_wrap := UI.vbox(6)
+		var top_gap := Control.new()
+		top_gap.custom_minimum_size = Vector2(0, 10)
+		title_wrap.add_child(top_gap)
+		title_wrap.add_child(_title_row)
+		title_wrap.add_child(_ornament)
+		title_wrap.add_child(_subtitle)
+		_subtitle.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+		_stack.add_child(title_wrap)
+		for n: Control in [_solo_card, _solo_opts, _multi_card, _footer]:
+			_stack.add_child(n)
+		_stack_spacer = Control.new()
+		_stack.add_child(_stack_spacer)
 	else:
-		art.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		art.size_flags_stretch_ratio = 1.25
-	art.clip_contents = true
-	var img := TextureRect.new()
-	img.texture = load("res://assets/unified/background.webp")
-	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	img.set_anchors_preset(Control.PRESET_FULL_RECT)
-	art.add_child(img)
+		for n: Control in [_title_row, _ornament, _subtitle, _solo_card, _multi_card, _solo_opts, _footer]:
+			add_child(n)
+	_solo_opts.visible = false
 
-	# Left/bottom gradient overlay to ensure text readability while letting morning light shine
-	var grad_rect := TextureRect.new()
-	grad_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
-	grad_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var grad := Gradient.new()
-	var grad_tex := GradientTexture2D.new()
-	if portrait:
-		grad.set_color(0, Color(0.05, 0.14, 0.12, 0.82))
-		grad.set_color(1, Color(0.05, 0.14, 0.12, 0.35))
-		grad_tex.fill_from = Vector2(0.5, 1.0)
-		grad_tex.fill_to = Vector2(0.5, 0.0)
-	else:
-		# Title text sits bottom-left: darken only the lower part so the morning light stays bright
-		grad.set_color(0, Color(0.05, 0.14, 0.12, 0.85))
-		grad.set_color(1, Color(0.05, 0.14, 0.12, 0.0))
-		grad_tex.fill_from = Vector2(0.5, 1.0)
-		grad_tex.fill_to = Vector2(0.5, 0.45)
-	grad_tex.gradient = grad
-	grad_tex.fill = GradientTexture2D.FILL_LINEAR
-	grad_rect.texture = grad_tex
-	grad_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	art.add_child(grad_rect)
+	_secretary = HallSecretary.new()
+	add_child(_secretary)
+	var sel := "none"
+	if main and main.has_method("secretary_guide"):
+		var guide: Control = main.secretary_guide()
+		if guide != null:
+			sel = str(guide.selected_secretary())
+	# First visit this session opens the dialog (with voice); later visits start as the round portrait
+	_secretary.setup(sel, not _hall_guided and not _phone)
+	_hall_guided = true
 
-	var title_box := UI.vbox(3 if UI.is_phone_portrait() else (4 if portrait else 6))
-	if portrait:
-		title_box.set_anchors_preset(Control.PRESET_FULL_RECT)
-		title_box.alignment = BoxContainer.ALIGNMENT_CENTER
-		var margin := MarginContainer.new()
-		margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-		for s: String in ["left", "right", "top", "bottom"]:
-			margin.add_theme_constant_override("margin_" + s, 12 if UI.is_phone_portrait() else 16)
-		margin.add_child(title_box)
-		art.add_child(margin)
-		title_box.add_child(UI.label("INSURE QUEST", 30 if UI.is_phone_portrait() else 36, UI.GOLD))
-		title_box.add_child(UI.label("人生顧問局", 22 if UI.is_phone_portrait() else 26, UI.TEXT))
-		title_box.add_child(UI.label("擲骰走過客戶的人生，練習用需求而不是商品說服人。", 13 if UI.is_phone_portrait() else 14, UI.MUTED, true))
-	else:
-		var is_phone_land: bool = UI.is_phone_landscape()
-		var margin := MarginContainer.new()
-		margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-		var pad_l: int = 24 if is_phone_land else 48
-		var pad_r: int = 16 if is_phone_land else 32
-		var pad_b: int = 20 if is_phone_land else 36
-		margin.add_theme_constant_override("margin_left", pad_l)
-		margin.add_theme_constant_override("margin_right", pad_r)
-		margin.add_theme_constant_override("margin_bottom", pad_b)
-		margin.add_theme_constant_override("margin_top", 16)
-		art.add_child(margin)
+	_build_identity_popup()
+	_refresh_auth_ui()
 
-		title_box.alignment = BoxContainer.ALIGNMENT_END
-		title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		title_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		margin.add_child(title_box)
+	_howto = _build_howto()
+	add_child(_howto)
 
-		var title_fs: int = 32 if is_phone_land else 54
-		var sub_fs: int = 22 if is_phone_land else 40
-		var desc1_fs: int = 13 if is_phone_land else 18
-		var desc2_fs: int = 11 if is_phone_land else 14
+	if not resized.is_connected(_layout):
+		resized.connect(_layout)
+	_layout()
+	_intro()
 
-		title_box.add_child(UI.label("INSURE QUEST", title_fs, UI.GOLD))
-		title_box.add_child(UI.label("人生顧問局", sub_fs, UI.TEXT))
-		title_box.add_child(UI.label("擲骰走過客戶的人生，練習用需求而不是商品說服人。", desc1_fs, UI.MUTED, true))
-		title_box.add_child(UI.label("法國巴黎人壽 Cardif InsurHack｜1-1 保險大富翁・銷售與通路賦能", desc2_fs, UI.MUTED, true))
-	_root.add_child(art)
 
-	# Actions area
-	var side := UI.panel(UI.PANEL, 0, 14 if UI.is_phone_portrait() else (20 if portrait else 32))
-	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var v := UI.vbox(10 if UI.is_phone_portrait() else (12 if portrait else 14))
-	side.add_child(UI.scroll(v))
-	_root.add_child(side)
+func _hall_label(t: String, fs: int, col: Color) -> Label:
+	var l := Label.new()
+	l.text = t
+	l.add_theme_font_size_override("font_size", fs)
+	l.add_theme_color_override("font_color", col)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
 
-	# PWA update button
-	_pwa_btn = UI.button("★ 有新版本，點此更新", _on_pwa_btn_pressed, 16, UI.GOLD)
-	_pwa_btn.visible = false
-	v.add_child(_pwa_btn)
-	if OS.has_feature("web") and not AutomationBridge.is_active() and not Engine.is_editor_hint():
-		_check_pwa_update()
-		if not JavaScriptBridge.pwa_update_available.is_connected(_on_pwa_update_avail):
-			JavaScriptBridge.pwa_update_available.connect(_on_pwa_update_avail)
 
-	# Account / login status card
-	for c in v.get_children():
-		if c.name == "AuthCardPanel":
-			v.remove_child(c)
-			c.queue_free()
-	var auth_card := UI.panel(UI.PANEL_2, 12, 10 if UI.is_phone_portrait() else 12)
-	auth_card.name = "AuthCardPanel"
-	_auth_card_container = UI.vbox(6)
-	auth_card.add_child(_auth_card_container)
-	v.add_child(auth_card)
-	_update_auth_card()
+func _build_topbar() -> void:
+	_top = Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(UI.BG, 0.88)
+	sb.border_width_bottom = 1
+	sb.border_color = Color(UI.GOLD, 0.28)
+	_top.add_theme_stylebox_override("panel", sb)
+	_top.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_top)
+	_brand = _hall_label("人生顧問局", 24, UI.GOLD)
+	var fv := FontVariation.new()
+	fv.base_font = NOTO
+	fv.variation_opentype = {2003265652: 600}
+	fv.spacing_glyph = 5
+	_brand.add_theme_font_override("font", fv)
+	_top.add_child(_brand)
+	_brand_rule = ColorRect.new()
+	_brand_rule.color = Color(UI.GOLD, 0.5)
+	_brand_rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top.add_child(_brand_rule)
 
-	v.add_child(UI.label("顧問姓名", 15, UI.MUTED))
+	# Ongoing multiplayer seat (shown only when the server still holds it)
+	_resume_container = UI.vbox(0)
+	_top.add_child(_resume_container)
+	_resume_container.child_entered_tree.connect(func(_n): _layout.call_deferred())
+	_check_saved_seat()
+
+	_id_pill = Button.new()
+	_id_pill.focus_mode = Control.FOCUS_NONE
+	_id_pill.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var pill := StyleBoxFlat.new()
+	pill.bg_color = Color(UI.BG, 0.6)
+	pill.set_corner_radius_all(22)
+	pill.set_border_width_all(1)
+	pill.border_color = Color(UI.TEXT, 0.4)
+	pill.anti_aliasing = true
+	var pill_h := pill.duplicate() as StyleBoxFlat
+	pill_h.border_color = Color(UI.TEXT, 0.75)
+	pill_h.bg_color = Color(UI.PANEL, 0.8)
+	_id_pill.add_theme_stylebox_override("normal", pill)
+	_id_pill.add_theme_stylebox_override("hover", pill_h)
+	_id_pill.add_theme_stylebox_override("pressed", pill_h)
+	_id_pill.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	_id_pill.pressed.connect(func(): _toggle_identity())
+	_top.add_child(_id_pill)
+	_id_icon = LineIcon.new("user", UI.TEXT, 1.8)
+	_id_pill.add_child(_id_icon)
+	_id_label = _hall_label("", 15, UI.TEXT)
+	_id_pill.add_child(_id_label)
+	_id_chev = LineIcon.new("chevron_d", UI.TEXT, 1.8)
+	_id_pill.add_child(_id_chev)
+
+	_howto_btn = Button.new()
+	_howto_btn.flat = true
+	_howto_btn.focus_mode = Control.FOCUS_NONE
+	_howto_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_howto_btn.pressed.connect(func(): Sound.play("click", self); _open_brief())
+	_top.add_child(_howto_btn)
+	_howto_icon = LineIcon.new("question", UI.GOLD, 1.8)
+	_howto_btn.add_child(_howto_icon)
+	_howto_label = _hall_label("玩法", 15, UI.TEXT)
+	_howto_btn.add_child(_howto_label)
+	_howto_btn.mouse_entered.connect(func(): _howto_label.add_theme_color_override("font_color", UI.GOLD))
+	_howto_btn.mouse_exited.connect(func(): _howto_label.add_theme_color_override("font_color", UI.TEXT))
+
+
+## Solo options: AI sparring advisor level and how many of them (shown after 單人實戰 is picked)
+func _build_solo_options() -> void:
+	_solo_opts = PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(UI.PANEL, 0.9)
+	sb.set_corner_radius_all(14)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(1, 1, 1, 0.12)
+	sb.content_margin_left = 20
+	sb.content_margin_right = 14
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 8
+	sb.anti_aliasing = true
+	_solo_opts.add_theme_stylebox_override("panel", sb)
+	var box: BoxContainer = UI.vbox(8) if _portrait_mode else UI.hbox(14)
+	_solo_opts.add_child(box)
+
+	var lvl_row := UI.hbox(10)
+	lvl_row.add_child(_hall_label("AI 對練顧問", 16, UI.TEXT))
+	_level_opt = OptionButton.new()
+	for t: String in ["資深顧問（示範正確做法）", "新人顧問（常見錯誤）", "混合"]:
+		_level_opt.add_item(t)
+	_level_opt.select(["pro", "novice", "mix"].find(_level))
+	_level_opt.item_selected.connect(func(i: int): _level = ["pro", "novice", "mix"][i])
+	_level_opt.custom_minimum_size = Vector2(170, 38)
+	_level_opt.clip_text = true
+	_level_opt.fit_to_longest_item = false
+	_level_opt.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_level_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lvl_row.add_child(_level_opt)
+	lvl_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_child(lvl_row)
+
+	if not _portrait_mode:
+		var rule := ColorRect.new()
+		rule.color = Color(1, 1, 1, 0.14)
+		rule.custom_minimum_size = Vector2(1, 30)
+		rule.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		box.add_child(rule)
+
+	var cnt_row := UI.hbox(10)
+	cnt_row.add_child(_hall_label("對練人數", 16, UI.TEXT))
+	_count_opt = OptionButton.new()
+	for t: String in ["1 位", "2 位", "3 位", "不安排（自主練習）"]:
+		_count_opt.add_item(t)
+	_count_opt.select(3 if _opponents == 0 else _opponents - 1)
+	_count_opt.item_selected.connect(func(i: int): _opponents = 0 if i == 3 else i + 1)
+	_count_opt.custom_minimum_size = Vector2(118, 38)
+	_count_opt.clip_text = true
+	_count_opt.fit_to_longest_item = false
+	_count_opt.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_count_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL if _portrait_mode else Control.SIZE_FILL
+	cnt_row.add_child(_count_opt)
+	if _portrait_mode:
+		cnt_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_child(cnt_row)
+
+
+## 「訪客｜顧問」 dropdown: advisor name, login options, records and settings
+func _build_identity_popup() -> void:
+	_id_catcher = Control.new()
+	_id_catcher.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_id_catcher.mouse_filter = Control.MOUSE_FILTER_STOP
+	_id_catcher.visible = false
+	_id_catcher.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed:
+			_toggle_identity(false)
+	)
+	add_child(_id_catcher)
+
+	_id_pop = UI.panel(UI.PANEL, 14, 16)
+	_id_pop.visible = false
+	_id_pop.custom_minimum_size = Vector2(340, 0)
+	add_child(_id_pop)
+	var v := UI.vbox(10)
+	_id_pop.add_child(v)
+
+	v.add_child(UI.label("身分設定", 17, UI.GOLD))
+	v.add_child(UI.label("顧問姓名", 13, UI.MUTED))
 	_name = LineEdit.new()
 	var default_name: String = Net.player_name
 	if Net.is_logged_in():
@@ -191,69 +383,270 @@ func _build_ui() -> void:
 	_name.text = default_name
 	_name.max_length = 12
 	_name.placeholder_text = "輸入你的名字"
-	_name.custom_minimum_size = Vector2(0, 44)
+	_name.custom_minimum_size = Vector2(0, 40)
+	_name.text_changed.connect(func(_t: String): _refresh_auth_ui())
+	_name.text_submitted.connect(func(_t: String): _save(); _toggle_identity(false))
 	v.add_child(_name)
 
-	_resume_container = UI.vbox(0)
-	v.add_child(_resume_container)
-	_check_saved_seat()
+	# PWA update button (kept hidden; updates install silently)
+	_pwa_btn = UI.button("★ 有新版本，點此更新", _on_pwa_btn_pressed, 14, UI.GOLD)
+	_pwa_btn.visible = false
+	v.add_child(_pwa_btn)
+	if OS.has_feature("web") and not AutomationBridge.is_active() and not Engine.is_editor_hint():
+		_check_pwa_update()
+		if not JavaScriptBridge.pwa_update_available.is_connected(_on_pwa_update_avail):
+			JavaScriptBridge.pwa_update_available.connect(_on_pwa_update_avail)
 
-	v.add_child(UI.label("單人練習（對電腦顧問）", 20, UI.TEXT))
-	var opp := UI.hbox(8)
-	opp.add_child(UI.label("對手", 15, UI.MUTED))
-	opp.add_child(UI.button("－", func(): _opponents = max(0, _opponents - 1); _sync_opp(), 15, UI.PANEL_2))
-	_opp_label = UI.label("", 16)
-	opp.add_child(_opp_label)
-	opp.add_child(UI.button("＋", func(): _opponents = min(3, _opponents + 1); _sync_opp(), 15, UI.PANEL_2))
-	var lvl := OptionButton.new()
-	lvl.add_item("資深顧問（示範正確做法）")
-	lvl.add_item("新人顧問（常見錯誤）")
-	lvl.add_item("混合")
-	lvl.item_selected.connect(func(i: int): _level = ["pro", "novice", "mix"][i])
-	# Let the dropdown shrink to the remaining width (ellipsized) instead of widening the whole menu on phones
-	lvl.clip_text = true
-	lvl.fit_to_longest_item = false
-	lvl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	lvl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	opp.add_child(lvl)
-	v.add_child(opp)
-	_sync_opp()
-	v.add_child(UI.button("▶ 開始單人練習", _start_solo, 20))
-
-	v.add_child(HSeparator.new())
-	v.add_child(UI.label("多人連線（2–4 人）", 20, UI.TEXT))
-	if not Net.is_logged_in():
-		v.add_child(UI.label("多人連線需先登入", 13, UI.MUTED))
-	v.add_child(UI.button("建立多人房間", _create_multi, 18))
-	var join := UI.hbox(8)
-	_code = LineEdit.new()
-	_code.placeholder_text = "房間代碼（5 碼）"
-	_code.max_length = 5
-	_code.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_code.text_submitted.connect(func(_t: String): _join())
-	join.add_child(_code)
-	_code.custom_minimum_size = Vector2(0, 44)
-	join.add_child(UI.button("加入", _join, 18))
-	v.add_child(join)
-
-	v.add_child(HSeparator.new())
-	var row := UI.hbox(8)
-	row.add_child(UI.button("遊戲說明", func(): _open_brief(), 15, UI.PANEL_2))
-	row.add_child(UI.button("培訓紀錄", func(): _save(); main.show_records(), 15, UI.PANEL_2))
-	row.add_child(UI.button("設定", func(): _open_settings(), 15, UI.PANEL_2))
-	v.add_child(row)
+	var auth_card := UI.panel(UI.PANEL_2, 12, 10)
+	auth_card.name = "AuthCardPanel"
+	_auth_card_container = UI.vbox(6)
+	auth_card.add_child(_auth_card_container)
+	v.add_child(auth_card)
+	_update_auth_card()
 
 	if not Net.is_web():
 		v.add_child(UI.label("伺服器位址（桌面版）", 13, UI.MUTED))
 		_server = LineEdit.new()
 		_server.text = Net.base_url
-		_server.custom_minimum_size = Vector2(0, 44)
+		_server.custom_minimum_size = Vector2(0, 40)
 		v.add_child(_server)
 
-	v.add_child(UI.label("情境與數值僅供教育訓練模擬；保障卡為功能概念，不對應任何實際保險商品，亦不構成保險或投資建議。", 12, UI.MUTED, true))
+	var row := UI.hbox(8)
+	var rec := UI.button("培訓紀錄", func(): _save(); _toggle_identity(false); main.show_records(), 14, UI.PANEL_2)
+	rec.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(rec)
+	var st := UI.button("設定（聲音・秘書）", func(): _save(); _toggle_identity(false); _open_settings(), 14, UI.PANEL_2)
+	st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(st)
+	v.add_child(row)
 
-	_howto = _build_howto()
-	add_child(_howto)
+
+## Dropdown under the pill. Wrapped labels report their real height only after one layout pass,
+## so the panel is measured again on the next frame.
+func _fit_identity() -> void:
+	if _id_pop == null or not is_instance_valid(_id_pop) or _id_pill == null:
+		return
+	_id_pop.size = Vector2(_id_pop.custom_minimum_size.x, 0)
+	_id_pop.reset_size()
+	_id_pop.position = Vector2(clampf(_id_pill.position.x + _id_pill.size.x - _id_pop.size.x, 8, size.x - _id_pop.size.x - 8), _top.size.y + 8)
+
+
+func _toggle_identity(force: Variant = null) -> void:
+	if _id_pop == null:
+		return
+	var show: bool = (not _id_pop.visible) if force == null else bool(force)
+	if not show and _id_pop.visible:
+		_save()
+	_id_pop.visible = show
+	_id_catcher.visible = show
+	if show:
+		_fit_identity()
+		UI.pop_in(_id_pop, 0.18)
+		await get_tree().process_frame
+		_fit_identity()
+
+
+func _refresh_auth_ui() -> void:
+	if _id_label == null or not is_instance_valid(_id_label):
+		return
+	var who := "訪客"
+	if Net.is_logged_in():
+		var lv: Dictionary = Net.get_level()
+		who = "Lv.%d" % int(lv.get("level", 1)) if not lv.is_empty() else "已登入"
+	var n: String = _name.text.strip_edges() if _name else ""
+	_id_label.text = "%s ｜ %s" % [who, n if n != "" else "顧問"]
+	if _multi_card:
+		var open := Net.is_logged_in()
+		_multi_card.set_tag("已開放" if open else "登入後開放", open)
+		if _multi_card.button:
+			_multi_card.button.dimmed = not open
+	_layout()
+
+
+func _pick_mode(mode: String) -> void:
+	if _selected_mode == mode:
+		return
+	_selected_mode = mode
+	_solo_card.set_selected(mode == "solo")
+	_multi_card.set_selected(mode == "multi")
+	var show := mode == "solo"
+	if show == _solo_opts.visible:
+		return
+	_solo_opts.visible = show
+	_layout()
+	if show and not UI.is_animation_disabled():
+		_solo_opts.modulate.a = 0.0
+		var y := _solo_opts.position.y
+		if not _portrait_mode:
+			_solo_opts.position.y = y - 8
+		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tw.tween_property(_solo_opts, "modulate:a", 1.0, 0.2)
+		if not _portrait_mode:
+			tw.tween_property(_solo_opts, "position:y", y, 0.2)
+
+
+func _on_multi_pressed() -> void:
+	_pick_mode("multi")
+	if not Net.is_logged_in():
+		if main:
+			main.toast("多人演練需先登入", UI.INFO)
+		_toggle_identity(true)
+		return
+	_create_multi()
+
+
+## Room code entry for joining a multiplayer room
+func _open_join() -> void:
+	var m := _open_modal("JoinDialog", "加入多人房間", UI.ACCENT_2)
+	if m.is_empty():
+		return
+	var dim: Control = m[0]
+	var v: VBoxContainer = m[1]
+	if not Net.is_logged_in():
+		v.add_child(UI.label("多人連線需先登入，可從右上角「訪客｜顧問」登入。", 13, UI.MUTED, true))
+	var join := UI.hbox(8)
+	_code = LineEdit.new()
+	_code.placeholder_text = "房間代碼（5 碼）"
+	_code.max_length = 5
+	_code.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_code.custom_minimum_size = Vector2(0, 44)
+	_code.text_submitted.connect(func(_t: String): _join())
+	join.add_child(_code)
+	join.add_child(UI.button("加入", _join, 16))
+	v.add_child(join)
+	dim.tree_exiting.connect(func(): _code = null)
+	_code.grab_focus.call_deferred()
+
+
+func _layout() -> void:
+	if _top == null or not is_instance_valid(_top) or size.x < 10:
+		return
+	var view := size
+	var k := clampf(minf(view.x / 1280.0, view.y / 720.0), 0.62, 1.6)
+	if _portrait_mode:
+		k = clampf(view.x / 480.0, 0.85, 1.4)
+	var top_h := (56.0 if not _portrait_mode else 52.0) * k
+
+	# Top bar
+	_top.position = Vector2.ZERO
+	_top.size = Vector2(view.x, top_h)
+	var side := (32.0 if not _portrait_mode else 14.0) * k
+	_brand.add_theme_font_size_override("font_size", roundi((25.0 if not _portrait_mode else 19.0) * k))
+	_brand.reset_size()
+	_brand.position = Vector2(side, (top_h - _brand.size.y) * 0.5)
+	_brand_rule.size = Vector2(1, 26 * k)
+	_brand_rule.position = Vector2(_brand.position.x + _brand.size.x + 14 * k, (top_h - 26 * k) * 0.5)
+	_brand_rule.visible = not _portrait_mode
+	_howto_label.add_theme_font_size_override("font_size", roundi(15 * k))
+	_howto_label.reset_size()
+	var hi := 24.0 * k
+	_howto_icon.size = Vector2(hi, hi)
+	_howto_btn.size = Vector2(hi + 8 * k + _howto_label.size.x + 8 * k, 40 * k)
+	_howto_btn.position = Vector2(view.x - side - _howto_btn.size.x, (top_h - _howto_btn.size.y) * 0.5)
+	_howto_icon.position = Vector2(4 * k, (_howto_btn.size.y - hi) * 0.5)
+	_howto_label.position = Vector2(hi + 12 * k, (_howto_btn.size.y - _howto_label.size.y) * 0.5)
+	_id_label.add_theme_font_size_override("font_size", roundi(15 * k))
+	_id_label.reset_size()
+	var pi := 22.0 * k
+	var ph := 38.0 * k
+	_id_pill.size = Vector2(12 * k + pi + 10 * k + _id_label.size.x + 10 * k + 14 * k + 14 * k, ph)
+	_id_pill.position = Vector2(_howto_btn.position.x - 18 * k - _id_pill.size.x, (top_h - ph) * 0.5)
+	_id_icon.size = Vector2(pi, pi)
+	_id_icon.position = Vector2(12 * k, (ph - pi) * 0.5)
+	_id_label.position = Vector2(_id_icon.position.x + pi + 10 * k, (ph - _id_label.size.y) * 0.5)
+	_id_chev.size = Vector2(14 * k, 14 * k)
+	_id_chev.position = Vector2(_id_label.position.x + _id_label.size.x + 10 * k, (ph - 14 * k) * 0.5)
+	if _resume_container.get_child_count() > 0:
+		_resume_container.reset_size()
+		_resume_container.position = Vector2(_id_pill.position.x - 16 * k - _resume_container.size.x, (top_h - _resume_container.size.y) * 0.5)
+		if _resume_container.position.x < _brand_rule.position.x + 16 * k:
+			_resume_container.position.x = _brand_rule.position.x + 16 * k
+	_fit_identity()
+
+	for t: Label in [_title_a, _title_b]:
+		t.add_theme_font_size_override("font_size", roundi((48.0 if not _portrait_mode else 30.0) * k))
+	_subtitle.add_theme_font_size_override("font_size", roundi((18.0 if not _portrait_mode else 14.0) * k))
+	_footer.add_theme_font_size_override("font_size", maxi(10, roundi(11 * k)))
+
+	_secretary.layout(view, k, _phone)
+
+	if _portrait_mode:
+		_scroll.position = Vector2(0, top_h)
+		_scroll.size = Vector2(view.x, view.y - top_h)
+		var cw := view.x - 32 * k
+		_stack.add_theme_constant_override("separation", roundi(16 * k))
+		_stack.custom_minimum_size = Vector2(view.x, 0)
+		for n: Control in [_solo_card, _multi_card]:
+			n.custom_minimum_size = Vector2(cw, cw * 292.0 / 406.0)
+			n.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		_solo_opts.custom_minimum_size = Vector2(cw, 0)
+		_solo_opts.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		_ornament.custom_minimum_size = Vector2(cw, 12 * k)
+		_subtitle.custom_minimum_size = Vector2(cw, 0)
+		_subtitle.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		_footer.custom_minimum_size = Vector2(cw, 0)
+		_footer.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		# Leave room so the last card can scroll above the secretary
+		_stack_spacer.custom_minimum_size = Vector2(0, view.y - _secretary.occupied_rect().position.y + 12 * k)
+		return
+
+	# Landscape: title, two cards, solo options; the block centers vertically when the screen is tall
+	var oy := maxf(0.0, (view.y - 720.0 * k) * 0.5)
+	_title_row.reset_size()
+	_title_row.position = Vector2((view.x - _title_row.size.x) * 0.5, top_h + 22 * k + oy)
+	_ornament.size = Vector2(160 * k, 12 * k)
+	_ornament.position = Vector2((view.x - _ornament.size.x) * 0.5, _title_row.position.y + _title_row.size.y + 2 * k)
+	_subtitle.reset_size()
+	_subtitle.position = Vector2((view.x - _subtitle.size.x) * 0.5, _ornament.position.y + _ornament.size.y + 6 * k)
+
+	var cw := 406.0 * k
+	var ch := 292.0 * k
+	var gap := 22.0 * k
+	var x0 := (view.x - (cw * 2 + gap)) * 0.5
+	var cy := _subtitle.position.y + _subtitle.size.y + 22 * k
+	_solo_card.size = Vector2(cw, ch)
+	_solo_card.position = Vector2(x0, cy)
+	_multi_card.size = Vector2(cw, ch)
+	_multi_card.position = Vector2(x0 + cw + gap, cy)
+
+	# Solo options sit under the cards, left of the secretary corner
+	var sec_left := _secretary.occupied_rect().position.x
+	var ow := minf(cw * 1.45, sec_left - 24 * k - x0)
+	_solo_opts.reset_size()
+	_solo_opts.size = Vector2(ow, 54 * k)
+	_solo_opts.position = Vector2(x0, cy + ch + 18 * k)
+	_footer.custom_minimum_size = Vector2(minf(sec_left - 48 * k, 820 * k), 0)
+	_footer.reset_size()
+	_footer.position = Vector2(24 * k, view.y - _footer.size.y - 12 * k)
+
+
+## Entrance: title and cards fade up in sequence
+func _intro() -> void:
+	if UI.is_animation_disabled():
+		return
+	var items: Array = [_title_row, _subtitle, _solo_card, _multi_card] if not _portrait_mode else [_stack]
+	for i in range(items.size()):
+		var n: CanvasItem = items[i]
+		n.modulate.a = 0.0
+		var tw := create_tween()
+		tw.tween_interval(0.06 * i)
+		tw.tween_property(n, "modulate:a", 1.0, 0.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+
+## Gold rule with a small diamond under the hall title
+class Ornament extends Control:
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		resized.connect(queue_redraw)
+
+	func _draw() -> void:
+		var c := size * 0.5
+		var g := Color("#C6A15B", 0.85)
+		var half := minf(size.x * 0.5, 80.0)
+		draw_line(Vector2(c.x - half, c.y), Vector2(c.x - 8, c.y), g, 1.0, true)
+		draw_line(Vector2(c.x + 8, c.y), Vector2(c.x + half, c.y), g, 1.0, true)
+		var d := 4.0
+		draw_polyline(PackedVector2Array([c + Vector2(0, -d), c + Vector2(d, 0), c + Vector2(0, d), c + Vector2(-d, 0), c + Vector2(0, -d)]), g, 1.2, true)
 
 
 func _update_auth_card() -> void:
@@ -305,11 +698,12 @@ func _update_auth_card() -> void:
 		h.add_child(UI.button("登出", _logout, 13, UI.BAD.darkened(0.4)))
 		_auth_card_container.add_child(h)
 	else:
-		var h := UI.hbox(8)
-		h.add_child(UI.label("訪客身分", 15, UI.MUTED))
-		h.add_child(UI.spacer())
+		_auth_card_container.add_child(UI.label("訪客身分", 15, UI.MUTED))
+		var h := HFlowContainer.new()
+		h.add_theme_constant_override("h_separation", 8)
+		h.add_theme_constant_override("v_separation", 8)
 		if bool(Net.auth_config.get("google", true)):
-			h.add_child(UI.button("Google 登入", _login_google, 14, UI.ACCENT))
+			h.add_child(UI.button("正式登入", _login_google, 14, UI.ACCENT))
 		if bool(Net.auth_config.get("demo", false)):
 			h.add_child(UI.button("評審體驗碼", _open_demo_dialog, 14, UI.GOLD))
 		if bool(Net.auth_config.get("dev", false)):
@@ -526,10 +920,6 @@ func _open_demo_dialog() -> void:
 
 	center.add_child(p)
 	add_child(dim)
-
-
-func _sync_opp() -> void:
-	_opp_label.text = "%d 位" % _opponents if _opponents > 0 else "無（自主練習）"
 
 
 func _save() -> void:
@@ -833,7 +1223,7 @@ func _check_saved_seat() -> void:
 	if status == "valid":
 		if _resume_container and is_instance_valid(_resume_container):
 			UI.clear(_resume_container)
-			var resume_btn := UI.button("回到進行中的房間 %s" % room, func(): _save(); main.resume_seat(), 18, UI.GOLD.darkened(0.35))
+			var resume_btn := UI.button("回到進行中的房間 %s" % room, func(): _save(); main.resume_seat(), 14, UI.GOLD.darkened(0.35))
 			_resume_container.add_child(resume_btn)
 	elif status == "invalid":
 		Net.saved_seat = {}

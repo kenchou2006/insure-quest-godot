@@ -78,9 +78,16 @@ func choose(use_guide: bool, selected_role: String) -> void:
 	cfg.set_value("guide", "enabled", enabled)
 	cfg.set_value("guide", "role", role)
 	cfg.set_value("guide", "secretary_id", secretary_id)
+	cfg.set_value("guide", "selected_secretary", selected_secretary())
 	if cfg.save(PREFS) != OK:
 		push_warning("無法保存秘書偏好，本次選擇仍有效。")
 	_find_voice()
+
+## "female", "male" or "none" (自行挑戰): the secretary chosen on the selection screen
+func selected_secretary() -> String:
+	if not enabled:
+		return "none"
+	return "male" if role == "male" else "female"
 
 func unlock_speech() -> void:
 	# Called by the explicit cover enter button, including returning users.
@@ -99,9 +106,8 @@ func dismiss() -> void:
 func screen_changed(kind: String) -> void:
 	dismiss()
 	_active_key = ""
-	if kind == "menu":
-		show_lines("menu", ["歡迎來到法巴新人顧問培訓。從單人練習開始，探索客戶生活圈。", "完成任務後，可以到訓練紀錄回顧決策與回饋。"])
-	elif kind == "report":
+	# The training hall (menu) has its own corner dialog, so the dock stays hidden there
+	if kind == "report":
 		show_lines("report", ["本次培訓已完成。看看能力表現與建議，再回顧自己的關鍵決策。"])
 
 func observe(state: Dictionary) -> void:

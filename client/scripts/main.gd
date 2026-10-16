@@ -331,6 +331,10 @@ func _enter_training() -> void:
 	_guide.unlock_speech()
 	open_secretary_settings()
 
+## Docked guide; holds the stored secretary choice (selected_secretary / secretary_id)
+func secretary_guide() -> Control:
+	return _guide
+
 func open_secretary_settings() -> void:
 	var setup := SecretarySetup.new()
 	if _guide.configured:
