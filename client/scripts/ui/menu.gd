@@ -42,6 +42,9 @@ var _id_chev: Control
 var _howto_btn: Button
 var _howto_icon: Control
 var _howto_label: Label
+var _rec_btn: Button
+var _rec_icon: Control
+var _rec_label: Label
 var _title_row: HBoxContainer
 var _title_a: Label
 var _title_b: Label
@@ -280,6 +283,19 @@ func _build_topbar() -> void:
 	_id_pill.add_child(_id_label)
 	_id_chev = LineIcon.new("chevron_d", UI.TEXT, 1.8)
 	_id_pill.add_child(_id_chev)
+
+	_rec_btn = Button.new()
+	_rec_btn.flat = true
+	_rec_btn.focus_mode = Control.FOCUS_NONE
+	_rec_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_rec_btn.pressed.connect(func(): Sound.play("click", self); _save(); main.show_records())
+	_top.add_child(_rec_btn)
+	_rec_icon = LineIcon.new("doc", UI.GOLD, 1.8)
+	_rec_btn.add_child(_rec_icon)
+	_rec_label = _hall_label("培訓紀錄", 15, UI.TEXT)
+	_rec_btn.add_child(_rec_label)
+	_rec_btn.mouse_entered.connect(func(): _rec_label.add_theme_color_override("font_color", UI.GOLD))
+	_rec_btn.mouse_exited.connect(func(): _rec_label.add_theme_color_override("font_color", UI.TEXT))
 
 	_howto_btn = Button.new()
 	_howto_btn.flat = true
@@ -545,12 +561,20 @@ func _layout() -> void:
 	_howto_btn.position = Vector2(view.x - side - _howto_btn.size.x, (top_h - _howto_btn.size.y) * 0.5)
 	_howto_icon.position = Vector2(4 * k, (_howto_btn.size.y - hi) * 0.5)
 	_howto_label.position = Vector2(hi + 12 * k, (_howto_btn.size.y - _howto_label.size.y) * 0.5)
+	_rec_label.add_theme_font_size_override("font_size", roundi(15 * k))
+	_rec_label.reset_size()
+	_rec_icon.size = Vector2(hi, hi)
+	_rec_label.visible = not _portrait_mode
+	_rec_btn.size = Vector2(hi + 8 * k + (_rec_label.size.x + 8 * k if _rec_label.visible else 0.0), 40 * k)
+	_rec_btn.position = Vector2(_howto_btn.position.x - 14 * k - _rec_btn.size.x, (top_h - _rec_btn.size.y) * 0.5)
+	_rec_icon.position = Vector2(4 * k, (_rec_btn.size.y - hi) * 0.5)
+	_rec_label.position = Vector2(hi + 12 * k, (_rec_btn.size.y - _rec_label.size.y) * 0.5)
 	_id_label.add_theme_font_size_override("font_size", roundi(15 * k))
 	_id_label.reset_size()
 	var pi := 22.0 * k
 	var ph := 38.0 * k
 	_id_pill.size = Vector2(12 * k + pi + 10 * k + _id_label.size.x + 10 * k + 14 * k + 14 * k, ph)
-	_id_pill.position = Vector2(_howto_btn.position.x - 18 * k - _id_pill.size.x, (top_h - ph) * 0.5)
+	_id_pill.position = Vector2(_rec_btn.position.x - 16 * k - _id_pill.size.x, (top_h - ph) * 0.5)
 	_id_icon.size = Vector2(pi, pi)
 	_id_icon.position = Vector2(12 * k, (ph - pi) * 0.5)
 	_id_label.position = Vector2(_id_icon.position.x + pi + 10 * k, (ph - _id_label.size.y) * 0.5)
@@ -699,17 +723,20 @@ func _update_auth_card() -> void:
 		_auth_card_container.add_child(h)
 	else:
 		_auth_card_container.add_child(UI.label("訪客身分", 15, UI.MUTED))
+		var google := UI.button("使用 Google 登入", _login_google, 15, UI.ACCENT)
+		google.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_auth_card_container.add_child(google)
 		var h := HFlowContainer.new()
 		h.add_theme_constant_override("h_separation", 8)
 		h.add_theme_constant_override("v_separation", 8)
-		if bool(Net.auth_config.get("google", true)):
-			h.add_child(UI.button("正式登入", _login_google, 14, UI.ACCENT))
 		if bool(Net.auth_config.get("demo", false)):
 			h.add_child(UI.button("評審體驗碼", _open_demo_dialog, 14, UI.GOLD))
+		# Local development only (server allows it on localhost with DEV_LOGIN)
 		if bool(Net.auth_config.get("dev", false)):
 			h.add_child(UI.button("測試登入", _login_dev, 14, UI.GOLD.darkened(0.3)))
-		_auth_card_container.add_child(h)
-		var guest_note := "訪客模式：訓練紀錄保存在此裝置，AI 功能使用規則版；登入後可使用雲端紀錄與 AI 功能。"
+		if h.get_child_count() > 0:
+			_auth_card_container.add_child(h)
+		var guest_note := "登入 Google 後，培訓紀錄保存到你的帳號，換裝置也能查看，並可使用 AI 功能；訪客紀錄只保存在此裝置。"
 		_auth_card_container.add_child(UI.label(guest_note, 12, UI.MUTED, true))
 
 
@@ -729,6 +756,10 @@ func _load_avatar() -> void:
 
 func _login_google() -> void:
 	_save()
+	if not bool(Net.auth_config.get("google", true)):
+		if main:
+			main.toast("這台伺服器尚未設定 Google 登入（本機測試環境）；正式網址可使用 Google 登入。", UI.INFO, 4.0)
+		return
 	Net.google_sign_in()
 
 

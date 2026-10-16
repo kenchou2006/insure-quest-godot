@@ -144,6 +144,10 @@ func _build_ui() -> void:
 	head.add_child(UI.button("回主選單", func(): main.show_menu(), 13 if UI.is_phone_portrait() else 15))
 	_outer_v.add_child(head)
 
+	# Not logged in and no specified learner: login guide card (as in the original), then on-device records
+	if not Net.is_logged_in() and target_user_id == "":
+		_build_unauth_view()
+
 	# Tab bar (flow layout in phone portrait to prevent overflow)
 	if UI.is_phone_portrait():
 		var flow := HFlowContainer.new()
@@ -193,27 +197,31 @@ func _build_ui() -> void:
 
 
 func _build_unauth_view() -> void:
-	var center := CenterContainer.new()
-	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var p := UI.panel(UI.PANEL, 16, 24)
-	p.custom_minimum_size = Vector2(400 if UI.is_phone_portrait() else 480, 0)
-	var v := UI.vbox(14)
-	p.add_child(v)
+	var p := UI.panel(UI.PANEL, 16, 18 if UI.is_phone_portrait() else 20)
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var row: BoxContainer = UI.vbox(12) if UI.is_portrait() else UI.hbox(24)
+	p.add_child(row)
+	var v := UI.vbox(10)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(v)
 
 	v.add_child(UI.label("登入後可查看培訓紀錄", 20, UI.ACCENT_2))
 	v.add_child(UI.label("登入個人帳號即可享有：\n・歷次面談決策與五力成長趨勢折線圖\n・專屬客戶圖鑑解鎖與最佳評級進度\n・常見決策盲點與改進建議\n・8 項專業顧問成就徽章", 14, UI.TEXT, true))
 
 	var btns := UI.vbox(10)
-	if bool(Net.auth_config.get("google", true)):
-		btns.add_child(UI.button("使用 Google 帳號登入", func():
-			var login_url: String = Net.base_url + "/api/auth/google/start?return=/"
-			if OS.has_feature("web"):
-				JavaScriptBridge.eval("window.location.href='%s'" % login_url)
-			else:
-				OS.shell_open(login_url)
-		, 16, UI.ACCENT))
+	btns.custom_minimum_size = Vector2(0 if UI.is_portrait() else 240, 0)
+	btns.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	btns.add_child(UI.button("使用 Google 帳號登入", func():
+		if not bool(Net.auth_config.get("google", true)):
+			if main:
+				main.toast("這台伺服器尚未設定 Google 登入（本機測試環境）；正式網址可使用 Google 登入。", UI.INFO, 4.0)
+			return
+		var login_url: String = Net.base_url + "/api/auth/google/start?return=/"
+		if OS.has_feature("web"):
+			JavaScriptBridge.eval("window.location.href='%s'" % login_url)
+		else:
+			OS.shell_open(login_url)
+	, 16, UI.ACCENT))
 
 	if bool(Net.auth_config.get("dev", false)):
 		btns.add_child(UI.button("測試登入（本機開發）", func():
@@ -227,10 +235,9 @@ func _build_unauth_view() -> void:
 				OS.shell_open(dev_url)
 		, 15, UI.PANEL_2))
 
-	v.add_child(btns)
-	v.add_child(UI.label("訪客模式下遊玩可體驗遊戲，但紀錄不會被保存。", 12, UI.MUTED, true))
-	center.add_child(p)
-	_outer_v.add_child(center)
+	row.add_child(btns)
+	v.add_child(UI.label("目前為訪客：紀錄只保存在此裝置（見下方「本機訓練紀錄」），登入 Google 後會同步到雲端帳號。", 12, UI.MUTED, true))
+	_outer_v.add_child(p)
 
 
 func _switch_tab(tab_idx: int) -> void:
