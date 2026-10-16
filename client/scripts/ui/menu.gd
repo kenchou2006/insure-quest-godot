@@ -737,11 +737,9 @@ func _check_pwa_update() -> void:
 			return
 		var ver_str: String = str(args[0])
 		if ver_str != "":
+			# Newer build found: update silently instead of asking (the button stays hidden)
 			_target_version = ver_str
-			if _pwa_btn and is_instance_valid(_pwa_btn):
-				_pwa_btn.visible = true
-				_pwa_btn.disabled = false
-				_pwa_btn.text = "★ 有新版本，點此更新"
+			_on_pwa_btn_pressed()
 	)
 	var win = JavaScriptBridge.get_interface("window")
 	if win:
@@ -783,6 +781,11 @@ func _on_pwa_btn_pressed() -> void:
 		_pwa_btn.disabled = true
 		_pwa_btn.text = "更新中…"
 	JavaScriptBridge.eval("""(function(targetVer) {
+		// Version-stamped navigation instead of reload, so the HTTP cache cannot serve the old page
+		function reloadFresh() {
+			try { var u = new URL(location.href); if (targetVer) u.searchParams.set('v', targetVer); location.replace(u.toString()); }
+			catch (e) { location.reload(); }
+		}
 		try {
 			if (targetVer) sessionStorage.setItem('iq-updating', targetVer);
 			if ('serviceWorker' in navigator) {
@@ -790,16 +793,16 @@ func _on_pwa_btn_pressed() -> void:
 					if (reg && reg.waiting) {
 						reg.waiting.postMessage('update');
 						// The service worker navigates every client itself on "update"; only reload if that never happens
-						setTimeout(function() { location.reload(); }, 5000);
+						setTimeout(function() { reloadFresh(); }, 5000);
 					} else {
-						location.reload();
+						reloadFresh();
 					}
-				}).catch(function() { location.reload(); });
+				}).catch(function() { reloadFresh(); });
 			} else {
-				location.reload();
+				reloadFresh();
 			}
 		} catch(e) {
-			location.reload();
+			reloadFresh();
 		}
 	})(%s)""" % JSON.stringify(_target_version), true)
 

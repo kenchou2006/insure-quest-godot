@@ -189,6 +189,43 @@ if (!page.includes('iq-build-stamp')) {
 }
 console.log(`index.html：已注入 IQ_BUILD 版本號（${buildVer}）`);
 
+// Auto-update on load: if version.json is newer than the running (cached) build, activate the new
+// service worker and reload before the game starts, so players never see an "update" prompt.
+// sessionStorage guards against reload loops when the new build cannot be fetched.
+page = readFileSync(html, 'utf8');
+if (!page.includes('iq-auto-update')) {
+  const AUTO_UPDATE = `<script id="iq-auto-update">(function () {
+  try {
+    var cur = window.IQ_BUILD || '';
+    if (!cur || !window.fetch) return;
+    fetch('version.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      if (!d || !d.version || d.version === cur) return;
+      if (sessionStorage.getItem('iq-updating') === d.version) return;
+      sessionStorage.setItem('iq-updating', d.version);
+      // Navigate to a version-stamped URL: a plain reload can be answered from the HTTP cache with the old page
+      var reload = function () { var u = new URL(location.href); u.searchParams.set('v', d.version); location.replace(u.toString()); };
+      if (!('serviceWorker' in navigator)) return reload();
+      navigator.serviceWorker.getRegistration().then(function (reg) {
+        if (!reg) return reload();
+        var activate = function (sw) { sw.postMessage('update'); setTimeout(reload, 4000); };
+        if (reg.waiting) return activate(reg.waiting);
+        reg.update().then(function () {
+          if (reg.waiting) return activate(reg.waiting);
+          var sw = reg.installing;
+          if (!sw) return reload();
+          sw.addEventListener('statechange', function () { if (sw.state === 'installed') activate(sw); });
+          setTimeout(reload, 8000);
+        }).catch(reload);
+      }).catch(reload);
+    }).catch(function () {});
+  } catch (e) {}
+})();</script>`;
+  page = page.replace('<script src="index.js"></script>', `${AUTO_UPDATE}\n\t\t<script src="index.js"></script>`);
+  if (!page.includes('iq-auto-update')) { console.error('index.html: cannot inject auto-update'); process.exit(1); }
+  writeFileSync(html, page);
+}
+console.log('index.html: injected auto-update');
+
 // Icons: copy Android and PWA icon files into icons/
 const iconsDir = join(dir, 'icons');
 if (!existsSync(iconsDir)) mkdirSync(iconsDir, { recursive: true });

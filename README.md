@@ -220,7 +220,7 @@ The same UI dynamically switches layouts based on window CSS dimensions (`main.g
 PWA is enabled during Godot export: generates manifest, icons, offline page, and service worker; supports 「加入主畫面」(Add to Home Screen) for fullscreen launch in portrait or landscape.
 `pack-web.mjs` updates the service worker cache manifest to the actually downloaded `index.wasm.gz`; subsequent launches load the engine from cache.
 An active server connection is required to play (multiplayer and AI run server-side); an offline page is shown when disconnected.
-After deploying updates, installed users first load the cached previous version, and the main menu displays 「有新版本，點此更新」("New version available, click here to update"); the same applies during development (or check "Update on reload" in DevTools).
+After deploying updates, the page checks `version.json` while loading and, if a newer build exists, activates it and reloads automatically before the game starts (no update prompt). The main menu repeats the check and updates silently as well.
 
 ## Licensing and Assets
 
