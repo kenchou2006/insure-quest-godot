@@ -23,14 +23,13 @@ export const CARDS: { id: CardId; tag: string; title: string; detail: string }[]
 ];
 
 const T = (type: Tile['type'], name: string): Tile => ({ type, name });
-/** 101 Advisor HQ itinerary (planning doc names). Tile types, and so the events they trigger, are unchanged. */
 export const BOARD: Tile[] = [
-  T('start', '新人報到'), T('client', '顧問公事包'), T('training', '客戶引薦'), T('client', '初次會談'),
-  T('market', '人生事件'), T('life', '市場情報'), T('client', '需求探索'), T('seminar', '家庭責任'),
-  T('client', '資產盤點'), T('life', '保障缺口'), T('audit', '保險保障卡'), T('client', '客戶異議'),
-  T('market', '轉介紹'), T('client', '資產配置'), T('training', '市場震盪'), T('life', '突發支出'),
-  T('client', '方案調整'), T('referral', '合規提醒'), T('client', '客戶決策'), T('market', '未來壓力測試'),
-  T('life', '保障檢核'), T('client', 'AI顧問覆盤'), T('audit', '主管評核'), T('training', '季度結算'),
+  T('start', '季度結算'), T('client', '社區咖啡廳'), T('training', '合規訓練'), T('client', '公司說明會'),
+  T('market', '市場快訊'), T('life', '人生事件'), T('client', '親友聚餐'), T('seminar', '顧問研討會'),
+  T('client', '商圈拜訪'), T('life', '人生事件'), T('audit', '合規稽核'), T('client', '線上諮詢'),
+  T('market', '市場快訊'), T('client', '共同工作空間'), T('training', '合規訓練'), T('life', '人生事件'),
+  T('client', '傳統市場'), T('referral', '客戶轉介紹'), T('client', '親子活動'), T('market', '市場快訊'),
+  T('life', '人生事件'), T('client', '醫院附近'), T('audit', '合規稽核'), T('training', '合規訓練'),
 ];
 
 export const MARKET_EVENTS: MarketEvent[] = [

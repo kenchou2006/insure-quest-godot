@@ -5,7 +5,7 @@ extends Control
 
 ## Taipei 101 Advisor HQ, 3D isometric board (board_hq.gd is the earlier painted-map version;
 ## the 3D city board in board.gd stays available to the preview studio)
-const Board := preload("res://scripts/ui/board_hq3d.gd")
+const Board := preload("res://scripts/ui/board_aerial.gd")
 
 # HQ interface palette
 const C_BG := Color("#062F2A")
@@ -21,6 +21,70 @@ const STEP_TASKS := {
 	"objection": ["回應客戶疑慮", "選擇或寫下合規、誠實的回覆。"],
 	"result": ["查看面談結果", "確認成交結果與教練回饋後繼續。"],
 }
+## What each station trains: shown in the task card with its goals
+const STATION_INFO := {
+	"start": ["季度結算：檢視客戶簿，滿意的客戶續約，不滿意的客戶解約。", ["客戶滿意度維持 60 以上即可續約", "避免滿意度低於 30 而解約", "累積業績與聲望"]],
+	"client": ["客戶會談：從生活與目標找出客戶真正的需求。", ["觀察場景線索並提問", "依需求配置預備金、保障與成長", "合規回應客戶疑慮"]],
+	"training": ["合規訓練：用測驗或情境抉擇練習合規判斷。", ["正確回答合規測驗", "在業績與合規之間做出正確選擇", "避免保證收益與誇大說法"]],
+	"market": ["市場快訊：市場變動會檢驗所有客戶的資產配置。", ["檢查配置能否承受波動", "預備金守住短期需求", "理解事件背後的投資觀念"]],
+	"life": ["人生事件：客戶的人生出現變化，檢驗保障是否到位。", ["確認保障能承接事件", "協助客戶理賠與調整", "維持客戶滿意度"]],
+	"audit": ["合規稽核：稽核人員抽查你的客戶紀錄。", ["配置與需求相符", "紀錄完整、沒有不當說法", "通過稽核累積聲望"]],
+	"seminar": ["顧問研討會：資深顧問針對你的表現給建議。", ["回顧最近的決策", "吸收 AI 教練建議", "持續學習，聲望 +2"]],
+	"referral": ["客戶轉介紹：被好好服務的客戶會介紹新朋友。", ["客戶滿意度維持 70 以上", "拓展人脈", "轉介紹客戶信任 +10"]],
+}
+
+
+class LineIcon extends Control:
+	## Small 2px line icon for panel headers, stat tiles and the record timeline
+	var kind := ""
+	var color := Color("#F3F0E7")
+
+	func _init(icon_kind: String, sz := 22.0, col := Color("#F3F0E7")) -> void:
+		kind = icon_kind
+		color = col
+		custom_minimum_size = Vector2(sz, sz)
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var c := size * 0.5
+		var r := minf(size.x, size.y) * 0.42
+		var w := 2.0
+		match kind:
+			"pin":
+				draw_arc(c + Vector2(0, -r * 0.25), r * 0.55, PI * 0.85, PI * 2.15, 16, color, w, true)
+				draw_line(c + Vector2(-r * 0.5, -r * 0.05), c + Vector2(0, r), color, w, true)
+				draw_line(c + Vector2(r * 0.5, -r * 0.05), c + Vector2(0, r), color, w, true)
+				draw_circle(c + Vector2(0, -r * 0.25), r * 0.15, color)
+			"people":
+				draw_arc(c + Vector2(-r * 0.35, -r * 0.35), r * 0.3, 0, TAU, 12, color, w, true)
+				draw_arc(c + Vector2(r * 0.4, -r * 0.35), r * 0.3, 0, TAU, 12, color, w, true)
+				draw_arc(c + Vector2(-r * 0.35, r * 0.85), r * 0.6, PI * 1.1, PI * 1.9, 10, color, w, true)
+				draw_arc(c + Vector2(r * 0.4, r * 0.85), r * 0.6, PI * 1.1, PI * 1.9, 10, color, w, true)
+			"handshake":
+				draw_polyline(PackedVector2Array([c + Vector2(-r, -r * 0.1), c + Vector2(-r * 0.3, -r * 0.5), c + Vector2(r * 0.2, -r * 0.1), c + Vector2(-r * 0.1, r * 0.3), c + Vector2(r * 0.4, r * 0.5), c + Vector2(r, 0)]), color, w, true)
+			"bars":
+				for k in range(3):
+					draw_line(c + Vector2(-r * 0.6 + k * r * 0.6, r * 0.8), c + Vector2(-r * 0.6 + k * r * 0.6, r * 0.8 - r * (0.6 + k * 0.5)), color, w + 1, true)
+			"coins":
+				for k in range(3):
+					draw_arc(c + Vector2(0, r * 0.5 - k * r * 0.45), r * 0.7, PI, TAU, 12, color, w, true)
+					draw_arc(c + Vector2(0, r * 0.5 - k * r * 0.45), r * 0.7, 0, PI, 12, Color(color, 0.4), w, true)
+			"doc":
+				draw_rect(Rect2(c - Vector2(r * 0.7, r), Vector2(r * 1.4, r * 2)), color, false, w)
+				for k in range(3):
+					draw_line(c + Vector2(-r * 0.4, -r * 0.45 + k * r * 0.45), c + Vector2(r * 0.4, -r * 0.45 + k * r * 0.45), color, w, true)
+			"done":
+				draw_circle(c, r * 0.45, color)
+			"now":
+				draw_arc(c, r * 0.6, 0, TAU, 20, color, w, true)
+				draw_circle(c, r * 0.32, color)
+			"goal":
+				draw_arc(c, r * 0.55, 0, TAU, 16, color, w, true)
+			"goal_done":
+				draw_arc(c, r * 0.55, 0, TAU, 16, color, w, true)
+				draw_polyline(PackedVector2Array([c + Vector2(-r * 0.3, 0), c + Vector2(-r * 0.05, r * 0.25), c + Vector2(r * 0.32, -r * 0.25)]), color, w, true)
+
+
 const TILE_HINTS := {
 	"start": "結算本季業績與聲望",
 	"client": "可能遇見一位新客戶",
@@ -105,6 +169,13 @@ var _task_title: Label
 var _task_body: Label
 var _task_quest: Label
 var _task_case: Label
+var _task_where: Label
+var _task_img: TextureRect
+var _goals_box: VBoxContainer
+var _stats_box: GridContainer
+var _timeline_box: VBoxContainer
+## Stations this advisor has landed on, newest last (for the record timeline)
+var _history: Array = []
 var _case_setup: Control
 var _client_box: VBoxContainer
 var _record_box: VBoxContainer
@@ -395,36 +466,66 @@ func _build_ui() -> void:
 	top.add_child(_quiet_button("離開", func(): _confirm_leave()))
 	sv.add_child(top)
 
-	# 1. Current task
-	var task_v := UI.vbox(6)
-	task_v.add_child(_section_label("目前任務"))
-	_task_title = UI.label("", 19, C_TEXT, true)
+	# 1. Current task: where I am, what this station trains, goals
+	var task_v := UI.vbox(10)
+	var th := _panel_header("pin", "目前任務")
+	_task_where = UI.label("", 14, C_GOLD)
+	th.add_child(_task_where)
+	task_v.add_child(th)
+	_task_img = TextureRect.new()
+	_task_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_task_img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_task_img.custom_minimum_size = Vector2(0, 112 if not UI.is_phone() else 96)
+	_task_img.material = UI.get_rounded_material(0.06)
+	task_v.add_child(_task_img)
+	_task_title = UI.label("", 18, C_TEXT, true)
 	task_v.add_child(_task_title)
-	_task_body = UI.label("", 15, C_MUTED, true)
+	_task_body = UI.label("", 14, C_MUTED, true)
 	task_v.add_child(_task_body)
+	var goals := PanelContainer.new()
+	var gsb := _card_style(0.5)
+	gsb.shadow_size = 0
+	gsb.bg_color = Color(C_BG, 0.6)
+	gsb.content_margin_top = 10
+	gsb.content_margin_bottom = 10
+	goals.add_theme_stylebox_override("panel", gsb)
+	var gv := UI.vbox(6)
+	gv.add_child(UI.label("任務目標", 14, C_GOLD))
+	_goals_box = UI.vbox(6)
+	gv.add_child(_goals_box)
+	goals.add_child(gv)
+	task_v.add_child(goals)
 	_task_case = UI.label("", 13, C_GREEN, true)
 	task_v.add_child(_task_case)
 	_task_quest = UI.label("", 13, C_GOLD, true)
 	task_v.add_child(_task_quest)
 	sv.add_child(_card(task_v))
 
-	# 2. Client status
-	var client_v := UI.vbox(8)
-	client_v.add_child(_section_label("客戶狀態"))
+	# 2. Client status: four stat tiles, then the client being served
+	var client_v := UI.vbox(10)
+	client_v.add_child(_panel_header("people", "客戶狀態"))
+	_stats_box = GridContainer.new()
+	_stats_box.columns = 2
+	_stats_box.add_theme_constant_override("h_separation", 8)
+	_stats_box.add_theme_constant_override("v_separation", 8)
+	client_v.add_child(_stats_box)
 	_client_box = UI.vbox(8)
 	client_v.add_child(_client_box)
 	sv.add_child(_card(client_v))
 
-	# 3. Advisor record: latest decision + latest AI hint
-	var record_v := UI.vbox(8)
-	record_v.add_child(_section_label("顧問紀錄"))
-	_record_box = UI.vbox(8)
-	record_v.add_child(_record_box)
+	# 3. Advisor record: timeline of stations visited
+	var record_v := UI.vbox(10)
+	record_v.add_child(_panel_header("doc", "顧問紀錄"))
+	_timeline_box = UI.vbox(4)
+	record_v.add_child(_timeline_box)
 	sv.add_child(_card(record_v))
 
 	# Secondary information: collapsed drawers
 	var drawers := UI.vbox(8)
 	sv.add_child(drawers)
+
+	_record_box = UI.vbox(8)
+	drawers.add_child(_drawer("決策與 AI 提示", _record_box)[0])
 
 	_quests_content = UI.vbox(6)
 	var qd: Array = _drawer("本季任務", _quests_content)
@@ -524,7 +625,8 @@ func _sync_center_bounds() -> void:
 	# The HUD card sits in the board's reserved strip at the bottom of the map
 	var r: Rect2 = _board.get_inner_rect()
 	_center.add_theme_constant_override("separation", 0)
-	_dice_ctl.set_dice_size(40.0 if UI.is_phone() else 46.0)
+	# The map design docks only the main button; the dice animation still plays as a cutscene
+	_dice_ctl.visible = false
 	for legacy: Control in [_my_turn_banner, _spectator_ribbon, _dice_roll_info_lbl, _client_strip, _top_label]:
 		if legacy != null:
 			legacy.hide()
@@ -617,44 +719,15 @@ func _drawer(title: String, content: Control) -> Array:
 	return [box, title_lbl]
 
 
+## Action dock: just the main button, placed by the board under the current station
 func _build_hud() -> void:
 	_hud_card = PanelContainer.new()
-	var sb := _card_style(0.92)
-	sb.content_margin_left = 20
-	sb.content_margin_right = 16
-	_hud_card.add_theme_stylebox_override("panel", sb)
-	_hud_card.size_flags_vertical = Control.SIZE_SHRINK_END
+	_hud_card.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	_hud_card.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_center.add_child(_hud_card)
-	# Phone: info stacked above the button; otherwise one row (info | numbers | button)
-	var row: BoxContainer = UI.vbox(10) if UI.is_phone() else UI.hbox(20)
-	_hud_card.add_child(row)
-
-	var info := UI.vbox(4)
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.alignment = BoxContainer.ALIGNMENT_CENTER
-	_hud_status = UI.label("", 12, C_MUTED, true)
-	info.add_child(_hud_status)
-	_hud_title = UI.label("", 18 if UI.is_phone() else 20, C_TEXT, true)
-	info.add_child(_hud_title)
-	_hud_hint = UI.label("", 13, C_MUTED, true)
-	info.add_child(_hud_hint)
-	row.add_child(info)
-
-	if not UI.is_phone():
-		var stats := UI.hbox(16)
-		stats.alignment = BoxContainer.ALIGNMENT_CENTER
-		var a: Array = _hud_stat("剩餘回合")
-		_hud_rounds = a[1]
-		stats.add_child(a[0])
-		var b: Array = _hud_stat("聲望")
-		_hud_rep = b[1]
-		stats.add_child(b[0])
-		row.add_child(stats)
-
 	_hud_action = UI.hbox(10)
 	_hud_action.alignment = BoxContainer.ALIGNMENT_CENTER
-	_hud_action.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	row.add_child(_hud_action)
+	_hud_card.add_child(_hud_action)
 
 
 func _hud_stat(caption: String) -> Array:
@@ -667,10 +740,12 @@ func _hud_stat(caption: String) -> Array:
 
 
 func _refresh_hud(s: Dictionary, mine: bool, cur_name: String, stage: String, round_num: int) -> void:
-	if _hud_title == null:
-		return
 	var total_rounds: int = int(s.get("settings", {}).get("rounds", 5))
 	var turn_text := "輪到你了" if mine else "%s 行動中" % cur_name
+	if "title_sub" in _board:
+		_board.title_sub = "第 %d / %d 回合｜%s" % [round_num, total_rounds, turn_text]
+	if _hud_title == null:
+		return
 	_hud_status.text = "第 %d / %d 回合｜%s" % [round_num, total_rounds, turn_text]
 	var tiles: Array = Net.static_data.get("board", [])
 	if not tiles.is_empty():
@@ -717,12 +792,19 @@ func _refresh_task(s: Dictionary, mine: bool, cur_name: String, stage: String, d
 	else:
 		_task_title.text = "等待 %s 行動" % cur_name
 		_task_body.text = "其他顧問的回合。展開下方抽屜可以查看完整動態。"
-	# Itinerary position (node names live here; the map shows icons only) and primary-case progress
-	var lines: Array = []
+	# Station header, image and what this station trains
 	var board: Array = Net.static_data.get("board", [])
+	var kind := ""
 	if not board.is_empty():
 		var idx := int(Net.current_player().get("pos", 0)) % board.size()
-		lines.append(Board.tile_label(idx, str((board[idx] as Dictionary).get("name", ""))))
+		var tile: Dictionary = board[idx]
+		kind = str(tile.get("type", ""))
+		_task_where.text = "%02d %s" % [idx, str(tile.get("name", ""))]
+		_task_img.texture = _station_image(idx, kind)
+		if mine and stage == "roll" and not (sess is Dictionary) and not (ev is Dictionary):
+			_task_body.text = str(STATION_INFO.get(kind, ["", []])[0]) + "\n按地圖上的「前往下一站」擲骰前進。"
+	_refresh_goals(kind)
+	var lines: Array = []
 	var mc = Net.me().get("mainCase")
 	if mc is Dictionary:
 		if bool(mc.get("done", false)):
@@ -749,6 +831,133 @@ func _sync_case_setup(s: Dictionary) -> void:
 	elif not need and _case_setup != null and is_instance_valid(_case_setup):
 		_case_setup.queue_free()
 		_case_setup = null
+
+
+func _panel_header(icon_kind: String, title: String) -> HBoxContainer:
+	var h := UI.hbox(8)
+	var ic := LineIcon.new(icon_kind, 22, C_GOLD)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(ic)
+	h.add_child(UI.label(title, 18, C_TEXT))
+	h.add_child(UI.spacer())
+	return h
+
+
+## Station picture: the primary client's scene at client stations, otherwise a view of that spot on the map
+func _station_image(idx: int, kind: String) -> Texture2D:
+	var mc = Net.me().get("mainCase")
+	if kind == "client" and mc is Dictionary and not bool(mc.get("done", false)):
+		var path := UI.client_scene_path(str(mc.get("clientId", "")))
+		if path != "" and ResourceLoader.exists(path):
+			return load(path)
+	if _board != null and _board.has_method("station_crop"):
+		return _board.station_crop(idx)
+	return null
+
+
+## Goals checklist: meeting stages at a client station during the primary case, otherwise the station's goals
+func _refresh_goals(kind: String) -> void:
+	if _goals_box == null:
+		return
+	UI.clear(_goals_box)
+	var goals: Array = STATION_INFO.get(kind, ["", []])[1]
+	var done_flags: Array = [false, false, false]
+	var mc = Net.me().get("mainCase")
+	if kind == "client" and mc is Dictionary and not bool(mc.get("done", false)):
+		goals = ["需求訪談：找出 %s 真正在意的事" % str(mc.get("clientName", "")), "方案設計：配置資源與保障卡", "異議處理：合規回應並等待決定"]
+		var step := str(mc.get("step", ""))
+		var reached: int = {"plan": 1, "objection": 2, "result": 3}.get(step, 0)
+		for k in range(3):
+			done_flags[k] = k < reached
+	for k in range(goals.size()):
+		var row := UI.hbox(8)
+		var ic := LineIcon.new("goal_done" if done_flags[k] else "goal", 18, C_GREEN if done_flags[k] else C_MUTED)
+		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(ic)
+		var l := UI.label(str(goals[k]), 14, C_TEXT if not done_flags[k] else C_MUTED, true)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		_goals_box.add_child(row)
+
+
+func _stat_tile(icon_kind: String, caption: String, value: String, progress := -1.0) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := _card_style(0.5)
+	sb.shadow_size = 0
+	sb.bg_color = Color(C_BG, 0.55)
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	p.add_theme_stylebox_override("panel", sb)
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var h := UI.hbox(10)
+	var ic := LineIcon.new(icon_kind, 28, C_TEXT)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(ic)
+	var v := UI.vbox(2)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_child(UI.label(caption, 12, C_MUTED))
+	v.add_child(UI.label(value, 20, C_TEXT))
+	if progress >= 0.0:
+		var bar := UI.bar(progress * 100.0, C_GREEN, 80)
+		bar.custom_minimum_size.y = 4
+		v.add_child(bar)
+	h.add_child(v)
+	p.add_child(h)
+	return p
+
+
+func _refresh_stats(s: Dictionary) -> void:
+	if _stats_box == null:
+		return
+	UI.clear(_stats_box)
+	var me_p: Dictionary = Net.me()
+	var book: Array = me_p.get("book", [])
+	var commission := int(me_p.get("commission", 0))
+	_stats_box.add_child(_stat_tile("handshake", "潛在客戶", "%d 位" % int(s.get("deckLeft", 0))))
+	_stats_box.add_child(_stat_tile("people", "現有客戶", "%d 位" % book.size()))
+	_stats_box.add_child(_stat_tile("bars", "聲望", str(int(me_p.get("reputation", 0)))))
+	_stats_box.add_child(_stat_tile("coins", "業績目標", "%d / 100" % commission, clampf(commission / 100.0, 0.0, 1.0)))
+
+
+## Timeline of stations this advisor landed on: current first, then completed ones
+func _refresh_timeline() -> void:
+	if _timeline_box == null:
+		return
+	UI.clear(_timeline_box)
+	var board: Array = Net.static_data.get("board", [])
+	if board.is_empty() or _history.is_empty():
+		_timeline_box.add_child(UI.label("還沒有行程紀錄。", 14, C_MUTED, true))
+		return
+	var shown := 0
+	for k in range(_history.size() - 1, -1, -1):
+		if shown >= 4:
+			break
+		var idx: int = _history[k]
+		var is_now := k == _history.size() - 1
+		var row := PanelContainer.new()
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(C_BG, 0.6) if is_now else Color(0, 0, 0, 0)
+		sb.set_corner_radius_all(10)
+		sb.set_border_width_all(1 if is_now else 0)
+		sb.border_color = Color(C_GREEN, 0.7)
+		sb.content_margin_left = 8
+		sb.content_margin_right = 10
+		sb.content_margin_top = 6
+		sb.content_margin_bottom = 6
+		row.add_theme_stylebox_override("panel", sb)
+		var h := UI.hbox(10)
+		var ic := LineIcon.new("now" if is_now else "done", 18, C_GREEN if is_now else C_MUTED)
+		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(ic)
+		var l := UI.label("%02d  %s" % [idx, str((board[idx % board.size()] as Dictionary).get("name", ""))], 14, C_TEXT)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(l)
+		h.add_child(UI.label("進行中" if is_now else "已完成", 13, C_GREEN if is_now else C_MUTED))
+		row.add_child(h)
+		_timeline_box.add_child(row)
+		shown += 1
 
 
 func _status_row(caption: String, value: float) -> HBoxContainer:
@@ -1149,6 +1358,11 @@ func refresh(s: Dictionary) -> void:
 		_quests_content.add_child(qv)
 	_quests_title_lbl.text = "本季任務 %d/%d" % [done_count, quests.size()]
 
+	var my_pos := int(Net.me().get("pos", -1))
+	if my_pos >= 0 and (_history.is_empty() or _history[_history.size() - 1] != my_pos):
+		_history.append(my_pos)
+	_refresh_stats(s)
+	_refresh_timeline()
 	_refresh_hud(s, mine, cur_name, stage, round_num)
 	_sync_case_setup(s)
 	_refresh_task(s, mine, cur_name, stage, done_count, quests.size())
