@@ -12,7 +12,9 @@ const LineIcon := preload("res://scripts/ui/line_icon.gd")
 const HALL_BG := preload("res://assets/startup/loading.png")
 const HALL_SHADER := preload("res://assets/startup/hall_backdrop.gdshader")
 const BOLD := preload("res://assets/fonts/bold.tres")
-const NOTO := preload("res://assets/fonts/NotoSansTC.ttf")
+## Cover logo (INSURE QUEST / 人生顧問局), cropped to its painted area
+const LOGO := preload("res://assets/startup/title.png")
+const LOGO_CROP := Rect2(8, 10, 1944, 760)
 
 ## The secretary greets once per app session; later visits start with the round portrait
 static var _hall_guided := false
@@ -33,7 +35,7 @@ var _portrait_mode := false
 var _phone := false
 var _selected_mode := ""
 var _top: Panel
-var _brand: Label
+var _brand: TextureRect
 var _brand_rule: ColorRect
 var _id_pill: Button
 var _id_icon: Control
@@ -164,7 +166,8 @@ func _build_ui() -> void:
 	_multi_card.icon = "users"
 	_multi_card.rows = [["users", "2–4 位顧問"], ["chart", "比較不同應對方法"], ["doc", "團隊演練紀錄"]]
 	_multi_card.button_text = "建立多人房間"
-	_multi_card.link_text = "房間代碼加入 ›"
+	_multi_card.primary = true
+	_multi_card.link_text = "房間代碼加入"
 	_multi_card.picked.connect(func(): _pick_mode("multi"))
 	_multi_card.activated.connect(_on_multi_pressed)
 	_multi_card.link_pressed.connect(_open_join)
@@ -241,12 +244,14 @@ func _build_topbar() -> void:
 	_top.add_theme_stylebox_override("panel", sb)
 	_top.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_top)
-	_brand = _hall_label("人生顧問局", 24, UI.GOLD)
-	var fv := FontVariation.new()
-	fv.base_font = NOTO
-	fv.variation_opentype = {2003265652: 600}
-	fv.spacing_glyph = 5
-	_brand.add_theme_font_override("font", fv)
+	_brand = TextureRect.new()
+	var logo := AtlasTexture.new()
+	logo.atlas = LOGO
+	logo.region = LOGO_CROP
+	_brand.texture = logo
+	_brand.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_brand.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_brand.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_top.add_child(_brand)
 	_brand_rule = ColorRect.new()
 	_brand_rule.color = Color(UI.GOLD, 0.5)
@@ -474,8 +479,6 @@ func _refresh_auth_ui() -> void:
 	if _multi_card:
 		var open := Net.is_logged_in()
 		_multi_card.set_tag("已開放" if open else "登入後開放", open)
-		if _multi_card.button:
-			_multi_card.button.dimmed = not open
 	_layout()
 
 
@@ -541,15 +544,15 @@ func _layout() -> void:
 	var k := clampf(minf(view.x / 1280.0, view.y / 720.0), 0.62, 1.6)
 	if _portrait_mode:
 		k = clampf(view.x / 480.0, 0.85, 1.4)
-	var top_h := (56.0 if not _portrait_mode else 52.0) * k
+	var top_h := (64.0 if not _portrait_mode else 56.0) * k
 
 	# Top bar
 	_top.position = Vector2.ZERO
 	_top.size = Vector2(view.x, top_h)
 	var side := (32.0 if not _portrait_mode else 14.0) * k
-	_brand.add_theme_font_size_override("font_size", roundi((25.0 if not _portrait_mode else 19.0) * k))
-	_brand.reset_size()
-	_brand.position = Vector2(side, (top_h - _brand.size.y) * 0.5)
+	var logo_h := top_h * 0.88
+	_brand.size = Vector2(logo_h * LOGO_CROP.size.x / LOGO_CROP.size.y, logo_h)
+	_brand.position = Vector2(side, (top_h - logo_h) * 0.5)
 	_brand_rule.size = Vector2(1, 26 * k)
 	_brand_rule.position = Vector2(_brand.position.x + _brand.size.x + 14 * k, (top_h - 26 * k) * 0.5)
 	_brand_rule.visible = not _portrait_mode
@@ -617,7 +620,7 @@ func _layout() -> void:
 	# Landscape: title, two cards, solo options; the block centers vertically when the screen is tall
 	var oy := maxf(0.0, (view.y - 720.0 * k) * 0.5)
 	_title_row.reset_size()
-	_title_row.position = Vector2((view.x - _title_row.size.x) * 0.5, top_h + 22 * k + oy)
+	_title_row.position = Vector2((view.x - _title_row.size.x) * 0.5, top_h + 14 * k + oy)
 	_ornament.size = Vector2(160 * k, 12 * k)
 	_ornament.position = Vector2((view.x - _ornament.size.x) * 0.5, _title_row.position.y + _title_row.size.y + 2 * k)
 	_subtitle.reset_size()

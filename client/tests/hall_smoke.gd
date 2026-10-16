@@ -66,7 +66,8 @@ func _portraits(n: Node) -> Array:
 	var found: Array = []
 	for c in n.find_children("*", "TextureRect", true, false):
 		var t: Texture2D = (c as TextureRect).texture
-		if c.is_visible_in_tree() and t is AtlasTexture:
+		# Secretary portraits only (the top-bar logo is a cropped texture too)
+		if c.is_visible_in_tree() and t is AtlasTexture and (t as AtlasTexture).atlas in [FEMALE, MALE]:
 			found.append((t as AtlasTexture).atlas)
 	return found
 

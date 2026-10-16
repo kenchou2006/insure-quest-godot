@@ -34,6 +34,7 @@ var _icon: Control
 var _title: Label
 var _row_nodes: Array = []
 var _link: Label
+var _link_arrow: Control
 var _hover := false
 
 
@@ -76,9 +77,17 @@ func _ready() -> void:
 			if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 				link_pressed.emit()
 		)
-		_link.mouse_entered.connect(func(): _link.add_theme_color_override("font_color", CREAM))
-		_link.mouse_exited.connect(func(): _link.add_theme_color_override("font_color", MUTED))
+		_link_arrow = LineIcon.new("chevron_r", MUTED, 1.6)
+		_link.mouse_entered.connect(func():
+			_link.add_theme_color_override("font_color", CREAM)
+			_link_arrow.set_color(CREAM)
+		)
+		_link.mouse_exited.connect(func():
+			_link.add_theme_color_override("font_color", MUTED)
+			_link_arrow.set_color(MUTED)
+		)
 		_visual.add_child(_link)
+		_visual.add_child(_link_arrow)
 
 	mouse_entered.connect(func(): _set_hover(true))
 	mouse_exited.connect(func(): _set_hover(false))
@@ -168,7 +177,10 @@ func _layout() -> void:
 	if _link:
 		_link.add_theme_font_size_override("font_size", maxi(12, roundi(14 * k)))
 		_link.reset_size()
-		_link.position = Vector2(size.x - pad - _link.size.x, pad * 0.8 + 2 * k)
+		var aw := 12.0 * k
+		_link_arrow.size = Vector2(aw, aw)
+		_link.position = Vector2(size.x - pad - aw - 2 * k - _link.size.x, pad * 0.8 + 2 * k)
+		_link_arrow.position = Vector2(size.x - pad - aw, _link.position.y + (_link.size.y - aw) * 0.5)
 
 
 func _set_hover(on: bool) -> void:
