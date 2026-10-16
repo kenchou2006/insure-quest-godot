@@ -3,10 +3,13 @@ extends Control
 ## Main controller: screen switching, solo/multiplayer flow, and toast messages.
 
 const MenuScreen := preload("res://scripts/ui/menu.gd")
+const StartupScreen := preload("res://scripts/ui/startup.gd")
 const LobbyScreen := preload("res://scripts/ui/lobby.gd")
 const GameScreen := preload("res://scripts/ui/game.gd")
 const ReportScreen := preload("res://scripts/ui/report.gd")
 const RecordsScreen := preload("res://scripts/ui/records.gd")
+const SecretaryGuide := preload("res://scripts/ui/training_secretary.gd")
+const SecretarySetup := preload("res://scripts/ui/secretary_setup.gd")
 const AutomationBridge := preload("res://scripts/automation.gd")
 
 signal layout_changed(is_portrait: bool)
@@ -18,6 +21,8 @@ var _solo_bots: Array = []
 var _solo := false
 var _busy_label: Label
 var _auto: Node = null
+var _guide: Control
+var _guide_height := 0.0
 
 
 var _was_quota_exhausted := false
@@ -30,6 +35,7 @@ func _ready() -> void:
 		preview.screen = "menu"
 		add_child(preview)
 		return
+	UI.load_preferences()
 	theme = UI.make_theme()
 	var bg := ColorRect.new()
 	bg.color = UI.BG
@@ -38,9 +44,9 @@ func _ready() -> void:
 	add_child(bg)
 
 	# Taipei urban life low-contrast background texture (dark base, low detail, creating a warm advisor atmosphere)
-	if ResourceLoader.exists("res://assets/title.jpg"):
+	if ResourceLoader.exists("res://assets/unified/background.webp"):
 		var bg_tex := TextureRect.new()
-		bg_tex.texture = load("res://assets/title.jpg")
+		bg_tex.texture = load("res://assets/unified/background.webp")
 		bg_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		bg_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		bg_tex.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -80,8 +86,16 @@ func _ready() -> void:
 		else:
 			_was_quota_exhausted = false
 	)
+	_guide = SecretaryGuide.new()
+	add_child(_guide)
+	_guide.dock_changed.connect(_on_guide_dock)
 	_init_auth()
-	show_menu()
+	if AutomationBridge.is_active():
+		show_menu()
+	else:
+		var startup := StartupScreen.new()
+		startup.entered.connect(_enter_training)
+		_set_screen("startup", startup)
 	add_child(_toasts)
 	add_child(_busy_label)
 	if AutomationBridge.is_active():
@@ -144,6 +158,8 @@ func _on_size_changed() -> void:
 
 
 func _set_screen(kind: String, node: Control) -> void:
+	if _guide != null:
+		_guide.dismiss()
 	if _screen and is_instance_valid(_screen):
 		_screen.visible = false
 		if _screen.get_parent() == self:
@@ -153,6 +169,9 @@ func _set_screen(kind: String, node: Control) -> void:
 	_screen_kind = kind
 	node.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(node)
+	if _guide != null:
+		move_child(_guide, get_child_count() - 1)
+		_guide.screen_changed(kind)
 	if _toasts and _toasts.get_parent() == self:
 		move_child(_toasts, get_child_count() - 1)
 		move_child(_busy_label, get_child_count() - 1)
@@ -196,6 +215,7 @@ func set_busy(text: String) -> void:
 # ───────── Flow ─────────
 
 func create_and_join(solo_bots: Array, solo: bool) -> void:
+	_guide.begin_training()
 	if solo and not Net.is_logged_in() and Net.local_available():
 		_solo_bots = solo_bots
 		_solo = solo
@@ -217,6 +237,7 @@ func create_and_join(solo_bots: Array, solo: bool) -> void:
 
 
 func resume_seat() -> void:
+	_guide.begin_training()
 	_solo_bots = []
 	_solo = false
 	Net.is_solo = false
@@ -225,6 +246,7 @@ func resume_seat() -> void:
 
 
 func join_room(code: String) -> void:
+	_guide.begin_training()
 	_solo_bots = []
 	_solo = false
 	Net.is_solo = false
@@ -292,7 +314,30 @@ func _on_state(state: Dictionary) -> void:
 				_set_screen("report", r)
 	if _screen and _screen.has_method("refresh"):
 		_screen.refresh(state)
+	if _guide != null:
+		_guide.observe(state)
 
 
 func get_screen_kind() -> String:
 	return _screen_kind
+
+func _enter_training() -> void:
+	if not _guide.configured:
+		open_secretary_settings()
+	else:
+		_guide.unlock_speech()
+		show_menu()
+
+func open_secretary_settings() -> void:
+	var setup := SecretarySetup.new()
+	setup.selected.connect(func(use_guide: bool, role: String):
+		_guide.choose(use_guide, role)
+		show_menu()
+	)
+	_set_screen("secretary_setup", setup)
+
+func _on_guide_dock(height: float) -> void:
+	_guide_height = height
+	if is_instance_valid(_screen):
+		_screen.offset_bottom = -height
+

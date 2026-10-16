@@ -213,6 +213,9 @@ export interface FinalRow {
 }
 
 export interface GameState {
+  trainingAttemptId?: string;
+  trainingStartedAt?: number;
+  trainingClosed?: boolean;
   code: string; phase: 'lobby' | 'playing' | 'ended';
   hostId: string | null;
   settings: { rounds: number; aiClients: boolean };

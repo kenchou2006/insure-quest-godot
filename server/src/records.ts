@@ -9,8 +9,14 @@ import type { Env } from './index.ts';
 import { buildProfile, type RecordRow } from './game/profile.ts';
 import { TAG_INFO } from './game/game.ts';
 
-export interface RecordInput { name: string; ts: number; score: number; grade: string; players: number; data: unknown; userId: string; room?: string }
+export interface TrainingAttempt {
+  attempt_id: string; userId: string; status: 'in_progress' | 'completed' | 'abandoned';
+  started_at: number; updated_at: number; room: string; name: string; round: number; stage: string;
+  score: number | null; grade: string | null; data: unknown;
+}
+export interface RecordInput { attemptId?: string; name: string; ts: number; score: number; grade: string; players: number; data: unknown; userId: string; room?: string }
 export interface RecordSummary {
+  attemptId?: string;
   name: string;
   ts: number;
   score: number;
@@ -91,6 +97,10 @@ export class Records extends DurableObject<Env> {
     if (!cols.includes('sessions')) sql.exec('ALTER TABLE records ADD COLUMN sessions INTEGER DEFAULT 0');
     if (!cols.includes('violations')) sql.exec('ALTER TABLE records ADD COLUMN violations INTEGER DEFAULT 0');
     if (!cols.includes('warnings')) sql.exec('ALTER TABLE records ADD COLUMN warnings INTEGER DEFAULT 0');
+    if (!cols.includes('attempt_id')) sql.exec('ALTER TABLE records ADD COLUMN attempt_id TEXT');
+    sql.exec('CREATE UNIQUE INDEX IF NOT EXISTS records_attempt ON records(user_id, attempt_id)');
+    sql.exec(`CREATE TABLE IF NOT EXISTS training_attempts (attempt_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(user_id, attempt_id))`);
+    sql.exec('CREATE INDEX IF NOT EXISTS training_attempts_user ON training_attempts(user_id, started_at DESC)');
     sql.exec('CREATE INDEX IF NOT EXISTS records_user ON records(user_id, ts)');
     sql.exec(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT, name TEXT, picture TEXT, created_at INTEGER, last_login INTEGER)`);
@@ -178,6 +188,7 @@ export class Records extends DurableObject<Env> {
     this.ctx.storage.sql.exec('DELETE FROM sessions WHERE user_id = ?', userId);
     this.ctx.storage.sql.exec('DELETE FROM demo_accounts WHERE user_id = ?', userId);
     this.ctx.storage.sql.exec('DELETE FROM records WHERE user_id = ?', userId);
+    this.ctx.storage.sql.exec('DELETE FROM training_attempts WHERE user_id = ?', userId);
     this.ctx.storage.sql.exec('DELETE FROM ai_usage WHERE user_id = ?', userId);
     this.ctx.storage.sql.exec('DELETE FROM ai_calls WHERE user_id = ?', userId);
     if (this.env?.RECORDS) {
@@ -242,7 +253,8 @@ export class Records extends DurableObject<Env> {
     for (const r of rows) {
       const uid = String(r.id);
       const played = await userRecords(this.env, uid).xpSummary(uid).then(x => x.games > 0).catch(() => true);
-      if (played) continue;
+      const attempts = await userRecords(this.env, uid).listAttempts(uid, 1, 0).then(x => x.attempts.length > 0).catch(() => true);
+      if (played || attempts) continue;
       await this.deleteUserData(uid);
       purged.push(uid);
     }
@@ -301,21 +313,51 @@ export class Records extends DurableObject<Env> {
 
   /* ───────── Training Records ───────── */
 
+  /** Only authoritative Room RPC writes attempts; clients cannot supply scores. */
+  saveAttempt(a: TrainingAttempt) {
+    this.ctx.storage.sql.exec(`INSERT INTO training_attempts (attempt_id, user_id, status, started_at, updated_at, data)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, attempt_id) DO UPDATE SET
+      status = excluded.status, updated_at = excluded.updated_at, data = excluded.data
+      WHERE excluded.updated_at >= training_attempts.updated_at
+        AND (training_attempts.status = 'in_progress' OR training_attempts.status = excluded.status)`,
+      a.attempt_id, a.userId, a.status, a.started_at, a.updated_at, JSON.stringify(a));
+  }
+
+  listAttempts(userId: string, limit = 50, offset = 0) {
+    const lim = Math.max(1, Math.min(100, Math.trunc(limit) || 50));
+    const skip = Math.max(0, Math.trunc(offset) || 0);
+    const rows = this.ctx.storage.sql.exec('SELECT data FROM training_attempts WHERE user_id = ? ORDER BY started_at DESC, attempt_id DESC LIMIT ? OFFSET ?', userId, lim + 1, skip).toArray();
+    return { attempts: rows.slice(0, lim).map(r => {
+      const { data, userId: _userId, ...summary } = JSON.parse(String(r.data)) as TrainingAttempt;
+      return summary;
+    }), next_offset: rows.length > lim ? skip + lim : null };
+  }
+
+  getAttempt(userId: string, id: string) {
+    const row = this.ctx.storage.sql.exec('SELECT data FROM training_attempts WHERE user_id = ? AND attempt_id = ?', userId, id).toArray()[0];
+    if (!row) return null;
+    const { userId: _userId, ...attempt } = JSON.parse(String(row.data)) as TrainingAttempt;
+    return attempt;
+  }
+
   /** Full record write (called by personal shard DO, preserves full decision history and context) */
   add(r: RecordInput) {
-    this.ctx.storage.sql.exec('INSERT INTO records (name, ts, score, grade, players, data, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      r.name.slice(0, 24), r.ts, r.score, r.grade, r.players, JSON.stringify(r.data), r.userId);
+    this.ctx.storage.sql.exec(`INSERT INTO records (name, ts, score, grade, players, data, user_id, attempt_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, attempt_id) DO UPDATE SET data = excluded.data, score = excluded.score, grade = excluded.grade`,
+      r.name.slice(0, 24), r.ts, r.score, r.grade, r.players, JSON.stringify(r.data), r.userId, r.attemptId ?? null);
   }
 
   /** Lightweight summary write (called by global DO, omits bulky data, for trainer backend rapid stats) */
   addSummary(r: RecordSummary) {
     this.ctx.storage.sql.exec(
-      'INSERT INTO records (name, ts, score, grade, players, data, user_id, tags, sessions, violations, warnings) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)',
+      `INSERT INTO records (name, ts, score, grade, players, data, user_id, tags, sessions, violations, warnings, attempt_id) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, attempt_id) DO UPDATE SET score = excluded.score, grade = excluded.grade, tags = excluded.tags, sessions = excluded.sessions, violations = excluded.violations, warnings = excluded.warnings`,
       r.name.slice(0, 24), r.ts, r.score, r.grade, r.players, r.userId,
       r.tags ? JSON.stringify(r.tags) : null,
       r.sessions ?? 0,
       r.violations ?? 0,
       r.warnings ?? 0,
+      r.attemptId ?? null,
     );
   }
 

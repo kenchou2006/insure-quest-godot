@@ -144,11 +144,6 @@ func _build_ui() -> void:
 	head.add_child(UI.button("回主選單", func(): main.show_menu(), 13 if UI.is_phone_portrait() else 15))
 	_outer_v.add_child(head)
 
-	# Not logged in and no specified learner: display login guide card
-	if not Net.is_logged_in() and target_user_id == "":
-		_build_unauth_view()
-		return
-
 	# Tab bar (flow layout in phone portrait to prevent overflow)
 	if UI.is_phone_portrait():
 		var flow := HFlowContainer.new()
@@ -160,8 +155,14 @@ func _build_ui() -> void:
 	_tab_buttons.clear()
 	var tabs: Array = ["成長總覽", "客戶圖鑑", "歷次紀錄"]
 	_tab_ids = ["overview", "codex", "history"]
-	# AI usage records are only viewed for oneself (hidden when trainer views a learner)
 	if target_user_id == "" or target_user_id == str(Net.get_user().get("id", "")):
+		tabs.push_front("每次訓練")
+		_tab_ids.push_front("attempts")
+	if not Net.is_logged_in():
+		tabs = ["本機訓練紀錄"]
+		_tab_ids = ["attempts"]
+	# AI usage records are only viewed for oneself (hidden when trainer views a learner)
+	if Net.is_logged_in() and (target_user_id == "" or target_user_id == str(Net.get_user().get("id", ""))):
 		tabs.append("AI 使用")
 		_tab_ids.append("ai")
 	if Net.is_trainer() and target_user_id == "":
@@ -244,6 +245,8 @@ func _switch_tab(tab_idx: int) -> void:
 	UI.clear(_body_area)
 
 	match str(_tab_ids[_current_tab]) if _current_tab < _tab_ids.size() else "overview":
+		"attempts":
+			_render_attempts_tab()
 		"overview":
 			_render_overview_tab()
 		"codex":
@@ -1090,3 +1093,139 @@ func _render_insights_tab() -> void:
 
 		heat_v.add_child(scroll_grid)
 	content.add_child(heat_card)
+
+# All attempts, including unfinished practice. Cloud scores remain server-owned.
+func _render_attempts_tab() -> void:
+	var content := UI.vbox(10)
+	_body_area.add_child(UI.scroll(content))
+	var owner := Net.training_owner()
+	var note := "每次訓練自動保留進度與決策；未完成也能回顧。"
+	note += "\n本機備份與帳號雲端紀錄會合併顯示。" if Net.is_logged_in() else "\n訪客紀錄保存在此裝置；清除瀏覽器資料後將無法找回。"
+	content.add_child(UI.label(note, 14, UI.MUTED, true))
+	var status := UI.label("", 13, UI.MUTED, true)
+	content.add_child(status)
+	var update_status := func(_state: Dictionary):
+		if not is_instance_valid(status): return
+		var s: Dictionary = Net.training_save_status
+		var cloud := str(s.get("cloud", "idle"))
+		status.text = str(s.get("message", ""))
+		if status.text.is_empty():
+			status.text = "本機紀錄已儲存" if s.get("local") == "saved" else "訓練開始後自動儲存"
+		if cloud == "saved": status.text += "・最近一次雲端同步成功"
+		elif cloud == "failed": status.text += "・雲端同步失敗，可重試"
+		elif cloud == "pending": status.text += "・等待雲端確認"
+	update_status.call(Net.training_save_status)
+	Net.training_save_changed.connect(update_status)
+	status.tree_exiting.connect(func():
+		if Net.training_save_changed.is_connected(update_status): Net.training_save_changed.disconnect(update_status)
+	)
+	var actions := UI.hbox(8)
+	actions.add_child(UI.button("重新整理", func(): _switch_tab(_current_tab), 13))
+	actions.add_child(UI.button("重試儲存", Net.retry_training_save, 13, UI.PANEL_2))
+	content.add_child(actions)
+	var list := UI.vbox(8)
+	content.add_child(list)
+	var merged: Dictionary = {}
+	for record: Dictionary in Net.local_training_attempts():
+		record["_source"] = "本機備份"
+		merged[str(record.attempt_id)] = record
+	_draw_attempt_list(list, merged)
+	if not Net.is_logged_in(): return
+	var offset := 0
+	while offset >= 0:
+		var response: Array = await Net.fetch_training_attempts(offset)
+		if not is_instance_valid(list) or owner != Net.training_owner(): return
+		if not bool(response[0]):
+			list.add_child(UI.label("雲端讀取失敗，目前顯示本機備份：" + str(response[1]), 13, UI.BAD, true))
+			return
+		var payload: Dictionary = response[1] if response[1] is Dictionary else {}
+		for record: Dictionary in payload.get("attempts", []):
+			var id := str(record.get("attempt_id", ""))
+			if not merged.has(id) or int(record.get("updated_at", 0)) >= int(merged[id].get("updated_at", 0)):
+				record["_source"] = "雲端紀錄"
+				merged[id] = record
+		_draw_attempt_list(list, merged)
+		var next: Variant = payload.get("next_offset")
+		if next == null or int(next) <= offset: break
+		offset = int(next)
+
+func _draw_attempt_list(list: VBoxContainer, merged: Dictionary) -> void:
+	UI.clear(list)
+	var records: Array = merged.values()
+	records.sort_custom(func(a: Dictionary, b: Dictionary): return int(a.get("updated_at", 0)) > int(b.get("updated_at", 0)))
+	if records.is_empty():
+		list.add_child(UI.label("還沒有訓練紀錄。開始第一次顧問旅程後，這裡會保留每次練習。", 14, UI.MUTED, true))
+	for record: Dictionary in records:
+		var card := UI.panel(UI.PANEL_2, 12, 12)
+		var body := UI.vbox(6)
+		card.add_child(body)
+		var timestamp := int(record.get("started_at", 0)) / 1000 + int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+		var date := Time.get_datetime_string_from_unix_time(timestamp).replace("T", " ").substr(0, 16)
+		var state_label: String = {"in_progress": "進行中／尚未結算", "completed": "已完成", "abandoned": "提前結束"}.get(str(record.get("status", "")), "已保存")
+		body.add_child(UI.label("%s｜%s｜第 %d 回合" % [date, state_label, int(record.get("round", 1))], 15, UI.ACCENT_2, true))
+		body.add_child(UI.label("%s・%s・%s" % [str(record.get("name", "顧問")), _training_stage(str(record.get("stage", ""))), str(record.get("_source", ""))], 12, UI.MUTED, true))
+		var detail := UI.vbox(6)
+		detail.visible = false
+		var button := UI.button("查看決策與面談", func():
+			detail.visible = not detail.visible
+			if detail.visible and detail.get_child_count() == 0: _load_attempt_detail(record, detail)
+		, 13)
+		body.add_child(button)
+		body.add_child(detail)
+		list.add_child(card)
+
+func _training_stage(stage: String) -> String:
+	return {"roll": "地圖探索", "session": "客戶面談", "event": "情境任務", "done": "回合完成", "discover": "需求訪談", "plan": "方案配置", "objection": "異議處理", "result": "面談結果"}.get(stage, stage)
+
+func _load_attempt_detail(record: Dictionary, detail: VBoxContainer) -> void:
+	var owner := Net.training_owner()
+	var row := record
+	if not row.has("data"):
+		detail.add_child(UI.label("讀取完整歷程……", 13, UI.MUTED))
+		var response: Array = await Net.fetch_training_attempt(str(row.attempt_id))
+		if not is_instance_valid(detail) or owner != Net.training_owner(): return
+		UI.clear(detail)
+		if not bool(response[0]):
+			detail.add_child(UI.label("無法讀取：" + str(response[1]), 13, UI.BAD, true))
+			detail.add_child(UI.button("重試讀取", func():
+				UI.clear(detail)
+				_load_attempt_detail(record, detail)
+			, 13))
+			return
+		row = response[1].get("attempt", {})
+	var data: Dictionary = row.get("data", {})
+	if row.get("score") != null:
+		detail.add_child(UI.label("總分 %s・評級 %s" % [str(row.score), str(row.get("grade", ""))], 16, UI.GOLD))
+	var decisions: Array = data.get("decisions", [])
+	detail.add_child(UI.label("決策歷程（%d 筆）" % decisions.size(), 14, UI.GOLD))
+	for decision: Dictionary in decisions:
+		detail.add_child(UI.label("第 %d 回合・%s・%s\n%s\n%s" % [int(decision.get("round", 1)), str(decision.get("clientName", "")), _training_stage(str(decision.get("stage", ""))), str(decision.get("title", "")), str(decision.get("body", ""))], 13, UI.TEXT, true))
+	var sessions: Array = data.get("sessions", [])
+	for session: Dictionary in sessions:
+		detail.add_child(UI.label("面談：%s・%s 分" % [str(session.get("clientName", "客戶")), str(session.get("score", ""))], 14, UI.ACCENT_2, true))
+		for question: Dictionary in session.get("questions", []):
+			detail.add_child(UI.label("提問：" + str(question.get("text", "")), 13, UI.TEXT, true))
+		_training_plan_detail(session, detail)
+	var interviews: Dictionary = data.get("interviews", {})
+	for session: Dictionary in interviews.values(): _training_session_detail(session, detail)
+	if interviews.is_empty() and data.get("currentSession") is Dictionary:
+		_training_session_detail(data.currentSession, detail)
+	var final: Variant = data.get("final")
+	if final is Dictionary and not str(final.get("coach", "")).is_empty():
+		detail.add_child(UI.label("教練回饋\n" + str(final.coach), 13, UI.GOLD, true))
+
+func _training_session_detail(session: Dictionary, detail: VBoxContainer) -> void:
+	var client: Dictionary = session.get("client", {})
+	detail.add_child(UI.label("面談：%s・%s" % [str(client.get("name", session.get("clientName", "客戶"))), _training_stage(str(session.get("step", "")))], 14, UI.ACCENT_2, true))
+	for question: Dictionary in session.get("asked", []):
+		detail.add_child(UI.label("顧問：%s\n客戶：%s" % [str(question.get("question", "")), str(question.get("answer", ""))], 13, UI.TEXT, true))
+	_training_plan_detail(session, detail)
+
+func _training_plan_detail(session: Dictionary, detail: VBoxContainer) -> void:
+	var plan: Variant = session.get("plan")
+	if plan is Dictionary:
+		var alloc: Dictionary = plan.get("alloc", {})
+		detail.add_child(UI.label("方案：現金預備 %s%%・風險保障 %s%%・目標成長 %s%%" % [str(alloc.get("cash", 0)), str(alloc.get("protect", 0)), str(alloc.get("growth", 0))], 13, UI.TEXT, true))
+	var objection: Variant = session.get("objectionReply", session.get("objection"))
+	if objection is Dictionary:
+		detail.add_child(UI.label("異議回應：" + str(objection.get("text", objection.get("title", ""))), 13, UI.TEXT, true))

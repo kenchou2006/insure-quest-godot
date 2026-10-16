@@ -7,7 +7,7 @@ import { FakeState } from './helpers/fake-do.ts';
 
 async function soloLobby() {
   const state = new FakeState();
-  const stub = { add: async () => {}, addSummary: async () => {}, aiUsage: async () => 0 };
+  const stub = { saveAttempt: async () => {}, listAttempts: async () => ({ attempts: [] }), add: async () => {}, addSummary: async () => {}, aiUsage: async () => 0 };
   const env = { AI_PROVIDER: 'rules', RECORDS: { idFromName: (n: string) => n, get: () => stub } } as any;
   const room = new Room(state as any, env);
   await state.ready;
@@ -274,6 +274,7 @@ test('monthly purge deletes only never-played, logged-out accounts idle for 90 d
   const env = { RECORDS: { idFromName: (n: string) => n, get: (id: string) => ({
     async wipe() { wiped.push(id); },
     async xpSummary() { return { games: shardGames[id] ?? 0, xp: 0 }; },
+    async listAttempts() { return { attempts: id === 'user:g:attemptOnly' ? [{ attempt_id: 'unfinished' }] : [] }; },
   }) } } as any;
   const rec = new Records(state as any, env);
   const now = 1_800_000_000_000;
@@ -288,11 +289,12 @@ test('monthly purge deletes only never-played, logged-out accounts idle for 90 d
   addUser('g:session', old);                                // still has a valid session -> kept
   sql.exec('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)', 'tok', 'g:session', now + 86_400_000);
   addUser('g:shardOnly', old);                              // record only in personal shard -> kept
+  addUser('g:attemptOnly', old);                            // unfinished training must also be retained
   addUser('demo:x', old);                                   // demo accounts are the daily job's business -> kept here
 
   const purged = await rec.purgeInactiveNeverPlayed(200, now);
   assert.deepEqual(purged, ['g:idle']);
   assert.deepEqual(wiped, ['user:g:idle']);
   const left = sql.exec('SELECT id FROM users ORDER BY id').toArray().map(r => String(r.id));
-  assert.deepEqual(left, ['demo:x', 'g:played', 'g:recent', 'g:session', 'g:shardOnly']);
+  assert.deepEqual(left, ['demo:x', 'g:attemptOnly', 'g:played', 'g:recent', 'g:session', 'g:shardOnly']);
 });

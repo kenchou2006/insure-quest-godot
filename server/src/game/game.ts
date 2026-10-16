@@ -1048,6 +1048,7 @@ export function publicView(s: GameState, viewerId: string | null = null) {
   const sess = s.session;
   const c = sess ? s.clients[sess.clientId] : null;
   return {
+    trainingAttemptId: s.trainingAttemptId && viewerId ? `${s.trainingAttemptId}:${viewerId}` : null, trainingStartedAt: s.trainingStartedAt ?? null,
     code: s.code, phase: s.phase, hostId: s.hostId, settings: s.settings,
     territory: s.territory ?? {},
     // AI-generated clients share generic portraits: clientId -> portrait key (built-in clients use their own id)

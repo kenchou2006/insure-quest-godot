@@ -81,7 +81,7 @@ func _build_ui() -> void:
 		art.size_flags_stretch_ratio = 1.25
 	art.clip_contents = true
 	var img := TextureRect.new()
-	img.texture = load("res://assets/title.jpg")
+	img.texture = load("res://assets/unified/background.webp")
 	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	img.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -281,7 +281,7 @@ func _update_auth_card() -> void:
 		var tag_text: String = " ［講師］" if is_trainer else ""
 		# No autowrap: before the first layout pass a zero-width wrapping label renders as a tall multi-line block
 		var name_lbl := UI.label(u_name + tag_text, 15, UI.TEXT)
-		name_lbl.text_overflow_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		name_lbl.custom_minimum_size.x = 0
 		info_v.add_child(name_lbl)
 		# Advisor level and EXP bar (EXP = sum of scores across matches)
@@ -315,7 +315,7 @@ func _update_auth_card() -> void:
 		if bool(Net.auth_config.get("dev", false)):
 			h.add_child(UI.button("測試登入", _login_dev, 14, UI.GOLD.darkened(0.3)))
 		_auth_card_container.add_child(h)
-		var guest_note := "訪客模式：單人練習在本機執行、AI 功能改用規則版、紀錄不保存，登入後可使用" if Net.local_available() else "訪客模式：AI 功能改用規則版、紀錄不保存，登入後可使用"
+		var guest_note := "訪客模式：訓練紀錄保存在此裝置，AI 功能使用規則版；登入後可使用雲端紀錄與 AI 功能。"
 		_auth_card_container.add_child(UI.label(guest_note, 12, UI.MUTED, true))
 
 
@@ -403,6 +403,18 @@ func _open_settings() -> void:
 		sound_btn.text = "音效：關" if muted else "音效：開"
 	)
 	v.add_child(sound_btn)
+	v.add_child(HSeparator.new())
+	v.add_child(UI.label("畫面與陪伴", 14, UI.MUTED))
+	var motion := CheckBox.new()
+	motion.text = "減少介面動效"
+	motion.button_pressed = UI.reduce_motion
+	motion.toggled.connect(UI.set_reduce_motion)
+	v.add_child(motion)
+	v.add_child(UI.button("重新選擇語音秘書", func():
+		dim.queue_free()
+		if main and main.has_method("open_secretary_settings"):
+			main.open_secretary_settings()
+	, 15, UI.PANEL_2))
 
 	if Net.is_logged_in():
 		v.add_child(HSeparator.new())

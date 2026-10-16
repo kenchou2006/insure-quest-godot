@@ -229,7 +229,7 @@ func refresh(s: Dictionary) -> void:
 	coach.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var cv := UI.hbox(12)
 	var img := TextureRect.new()
-	img.texture = load("res://assets/coach.png")
+	img.texture = load("res://assets/unified/coach.webp")
 	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
 	img.custom_minimum_size = Vector2(80 if portrait else 110, 100 if portrait else 130)

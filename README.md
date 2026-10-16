@@ -44,6 +44,8 @@ web/           Godot web export output (build artifact, not tracked in version c
 
 ## Local Development
 
+On Windows, double-click `start-server.cmd` in the project root to build the web client and start the local server at `http://127.0.0.1:8787/insure-quest/` (the same flow as `.claude/launch.json`). Requires Node.js, Godot and its Web export templates; the Windows launcher uses PowerShell and does not require Git Bash. The launcher installs missing server dependencies and finds Godot on PATH or in Downloads; alternatively set the `GODOT` environment variable. Keep the terminal open while playing; press Ctrl+C to stop. From a terminal, use `start-server.cmd -SkipBuild` to reuse the current web build, or `start-server.cmd -Port 8788` to select another port.
+
 ```bash
 cd server
 npm install
@@ -225,3 +227,4 @@ After deploying updates, installed users first load the cached previous version,
 - Font: Noto Sans TC (SIL Open Font License).
 - Illustrations (scenes, title, client portraits) are AI-generated with FLUX: `server/tools/generate-all-scenes.mjs` and `server/tools/generate-portraits.mjs` call the local-only `/api/dev/gen-img` (needs `DEV_LOGIN=1`), which uses NVIDIA NIM `flux.1-dev` first and Workers AI `flux-1-schnell` as fallback (NIM's content filter rejects some wordings such as numeric ages or certain clothing terms, so each portrait also has a short NIM-safe `nim` description that is retried on NIM before Workers AI is used).
 - Client scenarios and numerical values are for training simulation purposes only; coverage cards represent functional concepts, do not correspond to any real insurance products, and do not constitute insurance or investment advice.
+

@@ -248,6 +248,24 @@ export default {
       return new Response(res.body, { status: res.status, headers: { ...Object.fromEntries(res.headers), ...CORS } });
     }
 
+    if ((url.pathname === '/api/training-attempts' || url.pathname.startsWith('/api/training-attempts/')) && req.method === 'GET') {
+      const user = await currentUser(req, env);
+      if (!user) return Response.json({ error: '請先登入才能查看培訓紀錄' }, { status: 401 });
+      const target = url.searchParams.get('user');
+      if ((target && target !== user.id) || url.searchParams.get('scope') === 'all') return Response.json({ error: '僅可查看自己的訓練歷程' }, { status: 403 });
+      const records = userRecords(env, user.id);
+      if (url.pathname !== '/api/training-attempts') {
+        let attemptId: string;
+        try { attemptId = decodeURIComponent(url.pathname.slice('/api/training-attempts/'.length)); }
+        catch { return Response.json({ error: '紀錄代碼格式錯誤' }, { status: 400 }); }
+        const attempt = await records.getAttempt(user.id, attemptId);
+        return Response.json({ attempt }, { status: attempt ? 200 : 404 });
+      }
+      const limit = Number(url.searchParams.get('limit'));
+      const offset = Number(url.searchParams.get('offset'));
+      return Response.json(await records.listAttempts(user.id, Number.isFinite(limit) ? limit : 50, Number.isFinite(offset) ? offset : 0));
+    }
+
     if (url.pathname === '/api/records' && req.method === 'GET') {
       const user = await currentUser(req, env);
       if (!user) return Response.json({ error: '請先登入才能查看培訓紀錄' }, { status: 401 });

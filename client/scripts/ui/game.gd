@@ -10,6 +10,9 @@ const EventPanel := preload("res://scripts/ui/event_panel.gd")
 var main: Node
 var _board: Control
 var _center: VBoxContainer
+var _save_label: Label
+var _save_retry: Button
+var _action_row: HBoxContainer
 var _turn_label: Label
 var _roll_btn: Button
 var _session: Control
@@ -239,6 +242,7 @@ func _build_ui() -> void:
 	_turn_label = UI.label("", 16 if UI.is_phone_landscape() else (19 if UI.is_phone_portrait() else (19 if portrait else 22)), UI.TEXT, true)
 	actor_row.add_child(_turn_label)
 	_center.add_child(actor_row)
+	actor_row.hide()
 
 	# Compact client book strip in board center (up to 6 signed clients)
 	_client_strip = UI.panel(Color("#102821", 0.85), 8, 4)
@@ -256,13 +260,16 @@ func _build_ui() -> void:
 
 	_dice_ctl = DiceControl.new()
 	_dice_ctl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_center.add_child(_dice_ctl)
+	_action_row = UI.hbox(12)
+	_action_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_center.add_child(_action_row)
+	_action_row.add_child(_dice_ctl)
 
 	_dice_roll_info_lbl = UI.label("", 11 if UI.is_phone_landscape() else (12 if UI.is_phone_portrait() else 14), UI.GOLD, true)
 	_dice_roll_info_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center.add_child(_dice_roll_info_lbl)
 
-	_roll_btn = UI.button("▶ 擲骰子", func():
+	_roll_btn = UI.button("前往下一站", func():
 		_local_roll_in_flight = true
 		_roll_btn.disabled = true
 		Sound.play("dice", self)
@@ -270,7 +277,7 @@ func _build_ui() -> void:
 	, 16 if UI.is_phone_landscape() else (22 if UI.is_phone_portrait() else (22 if portrait else 24)), UI.ACCENT)
 	_roll_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_roll_btn.custom_minimum_size = Vector2(160 if UI.is_phone_landscape() else (180 if UI.is_phone_portrait() else (180 if portrait else 220)), 38 if UI.is_phone_landscape() else (54 if UI.is_phone_portrait() else (50 if portrait else 56)))
-	_center.add_child(_roll_btn)
+	_action_row.add_child(_roll_btn)
 	_center.add_child(_client_strip)
 
 	if not UI.is_phone():
@@ -278,6 +285,7 @@ func _build_ui() -> void:
 		var legend := UI.label(leg_text, 12 if portrait else 13, UI.MUTED, true)
 		legend.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_center.add_child(legend)
+		legend.hide()
 
 	_session = SessionPanel.new()
 	_session.main = main
@@ -328,6 +336,13 @@ func _build_ui() -> void:
 	if portrait:
 		sv.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_side_panel.add_child(UI.scroll(sv))
+	_save_label = UI.label("", 12, UI.MUTED, true)
+	sv.add_child(_save_label)
+	_save_retry = UI.button("重試儲存訓練紀錄", func(): Net.retry_training_save(), 13, UI.PANEL_2)
+	sv.add_child(_save_retry)
+	if not Net.training_save_changed.is_connected(_show_save_status):
+		Net.training_save_changed.connect(_show_save_status)
+	_show_save_status(Net.training_save_status)
 
 	var top := UI.hbox(8)
 	if Net.is_multiplayer():
@@ -414,10 +429,27 @@ func _build_ui() -> void:
 
 
 func _exit_tree() -> void:
+	if Net.training_save_changed.is_connected(_show_save_status):
+		Net.training_save_changed.disconnect(_show_save_status)
 	if not Engine.is_editor_hint():
 		Portraits.remove_player_avatar_callback(_on_player_avatar_loaded)
 		if Net != null and Net.avatar_loaded.is_connected(_on_player_avatar_loaded):
 			Net.avatar_loaded.disconnect(_on_player_avatar_loaded)
+
+func _show_save_status(status: Dictionary) -> void:
+	if not is_instance_valid(_save_label):
+		return
+	var failed := str(status.get("local", "")) == "failed" or str(status.get("cloud", "")) == "failed"
+	_save_retry.visible = failed
+	if failed:
+		_save_label.text = "訓練紀錄尚未完整儲存，請重試"
+		_save_label.modulate = UI.GOLD
+	else:
+		_save_label.modulate = Color.WHITE
+		match str(status.get("cloud", "")):
+			"saved": _save_label.text = "✓ 本次訓練已同步至帳號"
+			"pending": _save_label.text = "訓練紀錄同步中…"
+			_: _save_label.text = "✓ 本次訓練保存在這個裝置" if str(status.get("local", "")) == "saved" else "每次訓練會自動留下紀錄"
 
 
 func _on_player_avatar_loaded(_arg1: Variant = null, _arg2: Variant = null) -> void:
@@ -439,37 +471,16 @@ func _sync_center_bounds() -> void:
 	if _board == null or _center == null:
 		return
 	var r: Rect2 = _board.get_inner_rect()
-	var is_phone_land := UI.is_phone_landscape()
-	var is_phone_port := UI.is_phone_portrait()
-	var pad := 3.0 if is_phone_land else (4.0 if is_phone_port else 6.0)
-	var avail_w := maxf(80.0, r.size.x - pad * 2.0)
-	var avail_h := maxf(80.0, r.size.y - pad * 2.0)
-
-	if is_phone_land:
-		_center.add_theme_constant_override("separation", 2)
-		var dice_sz := clampf(avail_h * 0.22, 38.0, 48.0)
-		if _dice_ctl != null:
-			_dice_ctl.set_dice_size(dice_sz)
-		if _roll_btn != null:
-			var btn_w := clampf(avail_w * 0.70, 130.0, 160.0)
-			var btn_h := clampf(avail_h * 0.15, 32.0, 38.0)
-			_roll_btn.custom_minimum_size = Vector2(btn_w, btn_h)
-	elif is_phone_port:
-		_center.add_theme_constant_override("separation", 4)
-		var dice_sz := clampf(avail_h * 0.18, 48.0, 64.0)
-		if _dice_ctl != null:
-			_dice_ctl.set_dice_size(dice_sz)
-		if _roll_btn != null:
-			var btn_w := clampf(avail_w * 0.65, 140.0, 175.0)
-			var btn_h := clampf(avail_h * 0.14, 38.0, 46.0)
-			_roll_btn.custom_minimum_size = Vector2(btn_w, btn_h)
-	else:
-		_center.add_theme_constant_override("separation", 8)
-		if _dice_ctl != null:
-			_dice_ctl.set_dice_size(84.0)
-		if _roll_btn != null:
-			_roll_btn.custom_minimum_size = Vector2(220, 56)
-
+	var avail_w := maxf(80.0, r.size.x - 8)
+	var avail_h := r.size.y
+	_center.add_theme_constant_override("separation", 3)
+	_dice_ctl.set_dice_size(38.0 if UI.is_phone() else 44.0)
+	_roll_btn.custom_minimum_size = Vector2(minf(230, avail_w - 60), 44)
+	_roll_btn.add_theme_font_size_override("font_size", 18)
+	_my_turn_banner.hide()
+	_spectator_ribbon.hide()
+	_dice_roll_info_lbl.hide()
+	_client_strip.hide()
 	_center.size = Vector2(avail_w, avail_h)
 	_center.position = r.get_center() - Vector2(avail_w * 0.5, avail_h * 0.5)
 
@@ -558,7 +569,7 @@ func _process(delta: float) -> void:
 	# Dice roll button subtle breathing glow (when it's your turn)
 	if _roll_btn != null and _roll_btn.visible:
 		_btn_pulse += delta * 4.0
-		var sc: float = 1.0 + sin(_btn_pulse) * 0.035
+		var sc: float = 1.0 if UI.reduce_motion else 1.0 + sin(_btn_pulse) * 0.02
 		_roll_btn.scale = Vector2(sc, sc)
 		_roll_btn.pivot_offset = _roll_btn.size * 0.5
 	else:
@@ -595,7 +606,7 @@ func _show_die() -> void:
 	if _dice_roll_info_lbl != null:
 		if roll_val > 0:
 			_dice_roll_info_lbl.text = "上一步擲出 %d 點" % roll_val
-			_dice_roll_info_lbl.visible = true
+			_dice_roll_info_lbl.visible = false
 		else:
 			_dice_roll_info_lbl.text = ""
 			_dice_roll_info_lbl.visible = false
@@ -653,7 +664,7 @@ func refresh(s: Dictionary) -> void:
 		_actor_avatar_panel.visible = false
 	if mine:
 		_turn_label.text = ""
-		_my_turn_banner.visible = true
+		_my_turn_banner.visible = false
 		_spectator_ribbon.visible = false
 		_screen_glow.visible = true
 		_screen_glow.add_theme_stylebox_override("panel", UI.box(Color(0, 0, 0, 0), 12, UI.GOLD, 3, false))
@@ -662,7 +673,7 @@ func refresh(s: Dictionary) -> void:
 		_roll_btn.disabled = false
 	else:
 		_my_turn_banner.visible = false
-		_spectator_ribbon.visible = true
+		_spectator_ribbon.visible = false
 		if UI.is_phone():
 			var clean_name: String = cur_name
 			var p_idx: int = clean_name.find("（")
@@ -688,7 +699,7 @@ func refresh(s: Dictionary) -> void:
 		_dice_ctl.set_value(0)
 		if _dice_roll_info_lbl != null:
 			_dice_roll_info_lbl.text = "請點選下方擲骰" if mine else "等待【%s】擲骰……" % cur_name
-			_dice_roll_info_lbl.visible = true
+			_dice_roll_info_lbl.visible = false
 	elif _prev_stage == "roll":
 		_dice_anim = 0.5
 	elif _dice_anim <= 0:
@@ -873,7 +884,7 @@ func _update_center_client_strip() -> void:
 	var count: int = mini(book.size(), 6)
 	# Hide the strip until the first signing so it never crowds the dice area
 	if _client_strip != null:
-		_client_strip.visible = count > 0
+		_client_strip.visible = false
 	if count == 0:
 		return
 
@@ -996,7 +1007,8 @@ func _play_dice_cutscene(roller_name: String, roll_val: int, is_self: bool) -> v
 	if _center != null:
 		_center.visible = false
 
-	var inner_r: Rect2 = _board.get_inner_rect()
+	# The 3D board has a narrow control dock; the cutscene uses the whole board.
+	var inner_r := Rect2(Vector2.ZERO, _board.size)
 	var box_w: float = clampf(inner_r.size.x * 0.85, 280.0, 360.0)
 	var box_h: float = 170.0
 

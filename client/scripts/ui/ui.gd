@@ -46,6 +46,23 @@ static func tile_badge(type_key: String, compact: bool = false) -> String:
 	return "%s %s" % [ic, tile_name(type_key)]
 
 static var layout_profile: String = "desktop"
+static var reduce_motion := false
+
+static func load_preferences() -> void:
+	if Engine.is_editor_hint():
+		return
+	var prefs := ConfigFile.new()
+	var system_reduced := false
+	if OS.has_feature("web"):
+		system_reduced = bool(JavaScriptBridge.eval("window.matchMedia('(prefers-reduced-motion: reduce)').matches", true))
+	prefs.load("user://ui_preferences.cfg")
+	reduce_motion = bool(prefs.get_value("display", "reduce_motion", system_reduced))
+
+static func set_reduce_motion(enabled: bool) -> void:
+	reduce_motion = enabled
+	var prefs := ConfigFile.new()
+	prefs.set_value("display", "reduce_motion", enabled)
+	prefs.save("user://ui_preferences.cfg")
 static var content_size: Vector2i = Vector2i(1280, 720)
 
 static func is_portrait() -> bool:
@@ -298,8 +315,10 @@ static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> B
 		b.add_theme_stylebox_override(state, button_stylebox(color, state, 10, 12))
 	b.pressed.connect(func():
 		Sound.play("click", b)
-		cb.call()
+		if cb.is_valid(): cb.call()
 	)
+	b.mouse_entered.connect(func(): _button_glint(b, true))
+	b.mouse_exited.connect(func(): _button_glint(b, false))
 	return b
 
 
@@ -329,13 +348,41 @@ static func option_button(text: String, cb: Callable, color := PANEL_2) -> Butto
 
 
 static func is_animation_disabled() -> bool:
-	if Engine.is_editor_hint():
+	if Engine.is_editor_hint() or reduce_motion:
 		return true
 	if OS.has_feature("web"):
 		var res = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('automation') === '1'", true)
 		if bool(res):
 			return true
 	return false
+
+static func _button_glint(button_node: Button, active: bool) -> void:
+	if is_animation_disabled() or button_node.disabled:
+		return
+	var previous: Variant = button_node.get_meta("glint_tween", null)
+	if previous is Tween and previous.is_valid(): previous.kill()
+	var tween := button_node.create_tween()
+	button_node.set_meta("glint_tween", tween)
+	tween.tween_property(button_node, "self_modulate", Color(1.12, 1.12, 1.06) if active else Color.WHITE, 0.14)
+
+static func card_reveal(node: Control) -> void:
+	if is_animation_disabled(): return
+	node.pivot_offset = node.size * 0.5
+	node.scale = Vector2(0.92, 1.0)
+	node.modulate.a = 0.0
+	var tween := node.create_tween().set_parallel(true)
+	tween.tween_property(node, "scale", Vector2.ONE, 0.30).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(node, "modulate:a", 1.0, 0.20)
+
+static func coin_change(node: Control) -> void:
+	if is_animation_disabled(): return
+	var old: Variant = node.get_meta("coin_tween", null)
+	if old is Tween and old.is_valid(): old.kill()
+	node.pivot_offset = node.size * 0.5
+	node.scale = Vector2(1.12, 1.12)
+	var tween := node.create_tween()
+	node.set_meta("coin_tween", tween)
+	tween.tween_property(node, "scale", Vector2.ONE, 0.24).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 ## Typewriter effect on a Label (used for fallback progressive reveal when AI did not stream)
