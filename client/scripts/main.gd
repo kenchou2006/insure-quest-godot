@@ -75,7 +75,7 @@ func _ready() -> void:
 		_solo = false
 		set_busy("")
 		toast(m, UI.INFO, 4.0)
-		show_menu()
+		show_startup()
 	)
 	Net.reaction.connect(func(from_name, emoji): toast("%s %s" % [from_name, emoji], UI.INFO))
 	Net.quota_changed.connect(func(_used: int, _limit: int, exhausted: bool):
@@ -90,12 +90,7 @@ func _ready() -> void:
 	add_child(_guide)
 	_guide.dock_changed.connect(_on_guide_dock)
 	_init_auth()
-	if AutomationBridge.is_active():
-		show_menu()
-	else:
-		var startup := StartupScreen.new()
-		startup.entered.connect(_enter_training)
-		_set_screen("startup", startup)
+	show_startup()
 	add_child(_toasts)
 	add_child(_busy_label)
 	if AutomationBridge.is_active():
@@ -175,6 +170,16 @@ func _set_screen(kind: String, node: Control) -> void:
 	if _toasts and _toasts.get_parent() == self:
 		move_child(_toasts, get_child_count() - 1)
 		move_child(_busy_label, get_child_count() - 1)
+
+
+## Game opening cover; shown at launch and every time the player leaves a game (intro replays each time).
+func show_startup() -> void:
+	if AutomationBridge.is_active():
+		show_menu()
+		return
+	var startup := StartupScreen.new()
+	startup.entered.connect(_enter_training)
+	_set_screen("startup", startup)
 
 
 func show_menu() -> void:
@@ -261,7 +266,7 @@ func leave_to_menu() -> void:
 	_solo_bots = []
 	_solo = false
 	Net.is_solo = false
-	show_menu()
+	show_startup()
 
 
 func _on_welcomed(_data: Dictionary) -> void:
