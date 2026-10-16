@@ -4,9 +4,13 @@ signal dock_changed(height: float)
 const PREFS := "user://training_secretary.cfg"
 const FEMALE := preload("res://assets/startup/advisor_f.png")
 const MALE := preload("res://assets/startup/advisor_m.png")
+const SecretaryVoice := preload("res://scripts/secretary_voice.gd")
 var configured := false
 var enabled := false
 var role := "female"
+## "aly", "kevin" or "none"; decides the portrait, name and speech voice
+var secretary_id := "none"
+## Voice found for the current secretary ("" = subtitles only); re-picked before every line
 var _voice := ""
 var _speech_unlocked := false
 var _seen: Dictionary = {}
@@ -28,6 +32,7 @@ func _ready() -> void:
 		configured = bool(cfg.get_value("guide", "configured", false))
 		enabled = bool(cfg.get_value("guide", "enabled", false))
 		role = str(cfg.get_value("guide", "role", "female"))
+		secretary_id = str(cfg.get_value("guide", "secretary_id", SecretaryVoice.id_from_choice(enabled, role)))
 	_panel = UI.panel(UI.PANEL, 12, 12)
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	_panel.offset_top = -176
@@ -65,12 +70,14 @@ func choose(use_guide: bool, selected_role: String) -> void:
 	configured = true
 	enabled = use_guide
 	role = selected_role if selected_role in ["female", "male"] else "female"
+	secretary_id = SecretaryVoice.id_from_choice(enabled, role)
 	_speech_unlocked = use_guide
 	_seen.clear()
 	var cfg := ConfigFile.new()
 	cfg.set_value("guide", "configured", true)
 	cfg.set_value("guide", "enabled", enabled)
 	cfg.set_value("guide", "role", role)
+	cfg.set_value("guide", "secretary_id", secretary_id)
 	if cfg.save(PREFS) != OK:
 		push_warning("無法保存秘書偏好，本次選擇仍有效。")
 	_find_voice()
@@ -81,12 +88,7 @@ func unlock_speech() -> void:
 	_find_voice()
 
 func _find_voice() -> void:
-	_voice = ""
-	if not enabled or DisplayServer.get_name() == "headless":
-		return
-	var voices := DisplayServer.tts_get_voices_for_language("zh")
-	if not voices.is_empty():
-		_voice = voices[0]
+	_voice = "" if not enabled else SecretaryVoice.pick(secretary_id)
 
 func dismiss() -> void:
 	if _speech_unlocked and DisplayServer.get_name() != "headless":
@@ -142,7 +144,7 @@ func show_lines(key: String, lines: Array) -> void:
 	_seen[key] = true
 	_lines = lines
 	_index = 0
-	_portrait.texture = FEMALE if role == "female" else MALE
+	_portrait.texture = MALE if secretary_id == "kevin" else FEMALE
 	visible = true
 	dock_changed.emit(176.0)
 	_update_line()
@@ -153,7 +155,8 @@ func begin_training() -> void:
 	dismiss()
 
 func _update_line() -> void:
-	_heading.text = ("女性" if role == "female" else "男性") + "培訓秘書 · %d/%d" % [_index + 1, _lines.size()]
+	_find_voice()
+	_heading.text = "%s 培訓秘書 · %d/%d" % [str(SecretaryVoice.profile(secretary_id).name), _index + 1, _lines.size()]
 	if _voice == "":
 		_heading.text += " · 字幕導覽"
 	_subtitle.text = str(_lines[_index])
@@ -162,9 +165,8 @@ func _update_line() -> void:
 	_speak()
 
 func _speak() -> void:
-	if enabled and _speech_unlocked and _voice != "" and not _lines.is_empty():
-		DisplayServer.tts_stop()
-		DisplayServer.tts_speak(str(_lines[_index]), _voice, 80, 1.0, 0.95)
+	if enabled and _speech_unlocked and not _lines.is_empty():
+		SecretaryVoice.speak(secretary_id, str(_lines[_index]))
 
 func _advance() -> void:
 	_index += 1

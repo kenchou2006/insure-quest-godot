@@ -9,6 +9,7 @@ const MALE := preload("res://assets/startup/advisor_m.png")
 const BACKGROUND := preload("res://assets/startup/loading.png")
 const TITLE := preload("res://assets/startup/title.png")
 const CURSOR_LIGHT := preload("res://assets/startup/cursor_light.gdshader")
+const SecretaryVoice := preload("res://scripts/secretary_voice.gd")
 
 const C_BG := Color("#062F2A")
 const C_CARD := Color("#0D4038")
@@ -21,9 +22,9 @@ const IN_TIME := 0.18
 const OUT_TIME := 0.16
 
 const CHOICES := [
-	{"key": "female", "name": "Aly", "enabled": true, "sample": "你好，我是 Aly，你的培訓秘書。我會陪你走完每一個關卡。"},
-	{"key": "male", "name": "Kevin", "enabled": true, "sample": "你好，我是 Kevin。需要提醒的時候，我會在旁邊幫你。"},
-	{"key": "solo", "name": "自行挑戰", "enabled": false, "sample": ""},
+	{"key": "female", "name": "Aly", "enabled": true},
+	{"key": "male", "name": "Kevin", "enabled": true},
+	{"key": "solo", "name": "自行挑戰", "enabled": false},
 ]
 
 ## Card to preselect ("female", "male" or "solo"), e.g. the player's previous choice
@@ -675,15 +676,14 @@ func _on_confirm() -> void:
 	)
 
 
-## Listen button: short spoken greeting in the secretary's voice (subtitle fallback when no Chinese voice)
+## Listen button: greeting in this secretary's own voice (same mapping as the in-game guide)
 func _preview(card: Button) -> void:
 	var info: Dictionary = (card as Card).info
-	var voices := DisplayServer.tts_get_voices_for_language("zh")
-	if voices.is_empty():
-		_hint.text = "此裝置沒有中文語音，啟用秘書後會以字幕導覽"
+	var sid := SecretaryVoice.id_from_choice(bool(info.enabled), str(info.key))
+	var p := SecretaryVoice.profile(sid)
+	if SecretaryVoice.speak(sid, str(p.sample)):
+		_hint.text = "「%s」" % str(p.sample)
 	else:
-		DisplayServer.tts_stop()
-		DisplayServer.tts_speak(str(info.sample), voices[0], 80, 1.0, 1.0 if info.key == "female" else 0.9)
-		_hint.text = "「%s」" % str(info.sample)
+		_hint.text = "此裝置沒有中文%s聲，選擇 %s 後會以字幕導覽" % ["男" if sid == "kevin" else "女", str(p.name)]
 	_hint.reset_size()
 	_hint.position.x = (size.x - _hint.size.x) * 0.5
