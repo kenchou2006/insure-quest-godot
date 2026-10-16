@@ -2,26 +2,26 @@
 class_name UI
 ## UI utilities: color palette, theme, and factory functions for common components. All screens are constructed in code for team maintainability and review.
 
-const BG := Color("#0d231e")
-const PANEL := Color("#14352d")
-const PANEL_2 := Color("#1a4239")
-const ACCENT := Color("#00875a")
-const ACCENT_2 := Color("#2ed59e")
-const GOLD := Color("#e5a93c")
-const TEXT := Color("#f4fbf7")
-const MUTED := Color("#9ebdb3")
-const GOOD := Color("#3ddc97")
-const OK := Color("#e5a93c")
-const BAD := Color("#e63946")
-const INFO := Color("#8fd3c7")
+const BG := Color("#062F2A")
+const PANEL := Color("#0D4038")
+const PANEL_2 := Color("#134A41")
+const ACCENT := Color("#00A86B")
+const ACCENT_2 := Color("#4CC79A")
+const GOLD := Color("#C6A15B")
+const TEXT := Color("#F3F0E7")
+const MUTED := Color("#AABCB5")
+const GOOD := Color("#2FBF86")
+const OK := Color("#C6A15B")
+const BAD := Color("#D9685F")
+const INFO := Color("#9CC5B8")
 
-const PLAYER_COLORS := [Color("#3ddc97"), Color("#f2a541"), Color("#7aa2ff"), Color("#ff6bb5")]
+const PLAYER_COLORS := [Color("#3FC79A"), Color("#C6A15B"), Color("#8FB3C4"), Color("#C9928C")]
 
 const METRIC_NAMES := {"trust": "客戶信任", "insight": "需求洞察", "fit": "方案適配", "risk": "風險管理", "compliance": "合規表達"}
 const RES_NAMES := {"cash": "緊急預備", "protect": "風險保障", "growth": "目標成長"}
 const TILE_COLORS := {
-	"start": Color("#e5a93c"), "client": Color("#00875a"), "life": Color("#e07a5f"), "market": Color("#4ea8de"),
-	"training": Color("#9b72cf"), "referral": Color("#2ed59e"), "audit": Color("#e63946"), "seminar": Color("#8fd3c7"),
+	"start": Color("#C6A15B"), "client": Color("#00A86B"), "life": Color("#7FB9A2"), "market": Color("#8FB3C4"),
+	"training": Color("#4CC79A"), "referral": Color("#9AD3B9"), "audit": Color("#D9685F"), "seminar": Color("#AABCB5"),
 }
 const TILE_ICONS := {
 	"start": "★", "client": "◎", "life": "✚", "market": "↗", "training": "✓", "referral": "♥", "audit": "⚠", "seminar": "◇",
@@ -112,12 +112,12 @@ static func box(color: Color, radius := 14, border := Color(-1, -1, -1, -1), pad
 	s.content_margin_top = pad * 0.75
 	s.content_margin_bottom = pad * 0.75
 	if shadow:
-		s.shadow_color = Color(0, 0, 0, 0.35)
-		s.shadow_size = 6
-		s.shadow_offset = Vector2(0, 3)
+		s.shadow_color = Color(0, 0, 0, 0.14)
+		s.shadow_size = 3
+		s.shadow_offset = Vector2(0, 1)
 	if border == Color(-1, -1, -1, -1):
 		s.set_border_width_all(1)
-		s.border_color = Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.25)
+		s.border_color = Color(1, 1, 1, 0.12)
 	elif border.a > 0:
 		s.set_border_width_all(2)
 		s.border_color = border

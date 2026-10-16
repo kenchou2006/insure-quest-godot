@@ -3,7 +3,33 @@ extends Control
 ## Main game screen: left board (interviews/events shown in overlay panels), right player status, client book, activity log, and emoji reactions.
 ## Supports phone portrait 3-tab switching, dynamic dice roll cutscenes, clear personal/spectator turn transitions, and status ribbons.
 
-const Board := preload("res://scripts/ui/board.gd")
+## Taipei 101 Advisor HQ map (the 3D city board in board.gd stays available to the preview studio)
+const Board := preload("res://scripts/ui/board_hq.gd")
+
+# HQ interface palette
+const C_BG := Color("#062F2A")
+const C_CARD := Color("#0D4038")
+const C_GREEN := Color("#00A86B")
+const C_TEXT := Color("#F3F0E7")
+const C_MUTED := Color("#AABCB5")
+const C_GOLD := Color("#C6A15B")
+const C_RED := Color("#D9685F")
+const STEP_TASKS := {
+	"discover": ["了解客戶需求", "提問並觀察線索，找出客戶真正在意的事。"],
+	"plan": ["設計保障方案", "依照需求分配預備金、保障與成長，並選擇保障卡。"],
+	"objection": ["回應客戶疑慮", "選擇或寫下合規、誠實的回覆。"],
+	"result": ["查看面談結果", "確認成交結果與教練回饋後繼續。"],
+}
+const TILE_HINTS := {
+	"start": "結算本季業績與聲望",
+	"client": "可能遇見一位新客戶",
+	"referral": "老客戶可能介紹一位新客戶",
+	"life": "客戶的人生可能出現變化",
+	"market": "市場變動會考驗客戶的規劃",
+	"training": "完成一題合規測驗",
+	"audit": "檢視過往成交是否合規",
+	"seminar": "與同儕交流，累積專業",
+}
 const SessionPanel := preload("res://scripts/ui/session_panel.gd")
 const EventPanel := preload("res://scripts/ui/event_panel.gd")
 
@@ -52,9 +78,7 @@ var _deferred_overlay_timer: float = 0.0
 # Current match quest cards
 var _quests_card: PanelContainer = null
 var _quests_content: VBoxContainer = null
-var _quests_toggle_btn: Button = null
 var _quests_title_lbl: Label = null
-var _quests_collapsed: bool = true
 
 # Responsive layout and tab control
 var _current_tab: int = 0  # Portrait tabs: 0 game (board, directly shows interview/event panel if active), 1 status activity
@@ -66,11 +90,27 @@ var _tab_bar: HBoxContainer
 var _tab_buttons: Array[Button] = []
 var _dice_ctl: DiceControl
 
+# Map HUD card (where am I / what next / key numbers / main button)
+var _hud_card: PanelContainer
+var _hud_status: Label
+var _hud_title: Label
+var _hud_hint: Label
+var _hud_rounds: Label
+var _hud_rep: Label
+
+# Right panel: three primary layers
+var _task_title: Label
+var _task_body: Label
+var _task_quest: Label
+var _client_box: VBoxContainer
+var _record_box: VBoxContainer
+var _hud_action: HBoxContainer
+
 
 class DiceControl extends Control:
 	var value: int = 0
 	var rolling: bool = false
-	var dot_color: Color = UI.GOLD
+	var dot_color: Color = Color("#F3F0E7")
 
 	func _init() -> void:
 		var sz: float = 72.0 if UI.is_phone_portrait() else (48.0 if UI.is_phone_landscape() else 84.0)
@@ -90,8 +130,8 @@ class DiceControl extends Control:
 
 	func _draw() -> void:
 		var r := Rect2(Vector2.ZERO, size).grow(-3 if UI.is_phone() else -4)
-		var bg_col := Color("#14352d") if not rolling else Color("#1a4239")
-		var border_col := UI.GOLD if not rolling else UI.ACCENT_2
+		var bg_col := Color("#0D4038") if not rolling else Color("#134A41")
+		var border_col := Color(1, 1, 1, 0.35) if not rolling else Color("#00A86B")
 		draw_style_box(UI.box(bg_col, int(size.x * 0.16), border_col, 0), r)
 
 		if value <= 0 or value > 6:
@@ -172,22 +212,6 @@ func _build_ui() -> void:
 	_left_stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(_left_stack)
 
-	# Subtle radial vignette behind the board
-	var vignette := TextureRect.new()
-	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
-	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var grad := Gradient.new()
-	grad.set_color(0, Color(0.08, 0.22, 0.18, 0.0))
-	grad.set_color(1, Color(0.02, 0.06, 0.05, 0.65))
-	var grad_tex := GradientTexture2D.new()
-	grad_tex.gradient = grad
-	grad_tex.fill = GradientTexture2D.FILL_RADIAL
-	grad_tex.fill_from = Vector2(0.5, 0.5)
-	grad_tex.fill_to = Vector2(1.0, 1.0)
-	vignette.texture = grad_tex
-	vignette.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_left_stack.add_child(vignette)
-
 	_board = Board.new()
 	_board.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_left_stack.add_child(_board)
@@ -202,8 +226,9 @@ func _build_ui() -> void:
 
 	_center = UI.vbox(2 if UI.is_phone_landscape() else UI.scale_val(4, 8))
 	_center.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	_center.alignment = BoxContainer.ALIGNMENT_CENTER
+	_center.alignment = BoxContainer.ALIGNMENT_END
 	_left_stack.add_child(_center)
+	_build_hud()
 
 	# Prominent full-width banner when it's your turn
 	_my_turn_banner = UI.panel(Color("#1a4239"), 12, 6)
@@ -260,9 +285,11 @@ func _build_ui() -> void:
 
 	_dice_ctl = DiceControl.new()
 	_dice_ctl.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_action_row = UI.hbox(12)
+	_dice_ctl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_action_row = UI.hbox(10)
 	_action_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_center.add_child(_action_row)
+	_action_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hud_action.add_child(_action_row)
 	_action_row.add_child(_dice_ctl)
 
 	_dice_roll_info_lbl = UI.label("", 11 if UI.is_phone_landscape() else (12 if UI.is_phone_portrait() else 14), UI.GOLD, true)
@@ -274,9 +301,14 @@ func _build_ui() -> void:
 		_roll_btn.disabled = true
 		Sound.play("dice", self)
 		Net.act({"type": "roll"})
-	, 16 if UI.is_phone_landscape() else (22 if UI.is_phone_portrait() else (22 if portrait else 24)), UI.ACCENT)
-	_roll_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_roll_btn.custom_minimum_size = Vector2(160 if UI.is_phone_landscape() else (180 if UI.is_phone_portrait() else (180 if portrait else 220)), 38 if UI.is_phone_landscape() else (54 if UI.is_phone_portrait() else (50 if portrait else 56)))
+	, 18, C_GREEN)
+	_roll_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL if UI.is_phone() else Control.SIZE_SHRINK_CENTER
+	_roll_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_roll_btn.custom_minimum_size = Vector2(176, 52)
+	for st: String in ["normal", "hover", "pressed", "disabled"]:
+		var rsb := UI.button_stylebox(C_GREEN, st, 14, 18)
+		rsb.shadow_size = 0
+		_roll_btn.add_theme_stylebox_override(st, rsb)
 	_action_row.add_child(_roll_btn)
 	_center.add_child(_client_strip)
 
@@ -323,89 +355,101 @@ func _build_ui() -> void:
 	_event.visible = false
 	_left_stack.add_child(_event)
 
-	# Right side / page 2: info column
-	_side_panel = UI.panel(UI.PANEL, 0, 12 if UI.is_phone() else 14)
+	# Right side / page 2: task panel (30%) — three primary layers, everything else in collapsible drawers
+	_side_panel = PanelContainer.new()
+	var side_sb := StyleBoxFlat.new()
+	side_sb.bg_color = C_BG
+	side_sb.border_color = Color(1, 1, 1, 0.08)
+	side_sb.border_width_left = 1
+	side_sb.set_content_margin_all(16 if not UI.is_phone() else 12)
+	_side_panel.add_theme_stylebox_override("panel", side_sb)
 	if not portrait:
-		var side_w: float = 260.0 if UI.is_phone_landscape() else 340.0
+		var side_w: float = 260.0 if UI.is_phone_landscape() else clampf(size.x * 0.30, 320.0, 440.0)
 		_side_panel.custom_minimum_size = Vector2(side_w, 0)
 	else:
 		_side_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	content_box.add_child(_side_panel)
 
-	var sv := UI.vbox(8 if UI.is_phone() else 10)
+	var sv := UI.vbox(16)
 	if portrait:
 		sv.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_side_panel.add_child(UI.scroll(sv))
-	_save_label = UI.label("", 12, UI.MUTED, true)
-	sv.add_child(_save_label)
-	_save_retry = UI.button("重試儲存訓練紀錄", func(): Net.retry_training_save(), 13, UI.PANEL_2)
-	sv.add_child(_save_retry)
-	if not Net.training_save_changed.is_connected(_show_save_status):
-		Net.training_save_changed.connect(_show_save_status)
-	_show_save_status(Net.training_save_status)
 
 	var top := UI.hbox(8)
 	if Net.is_multiplayer():
-		top.add_child(UI.label("房間 " + Net.room_code, 14 if UI.is_phone() else 15, UI.GOLD))
+		top.add_child(UI.label("房間 " + Net.room_code, 13, C_MUTED))
 	else:
-		top.add_child(UI.label("單人練習", 14 if UI.is_phone() else 15, UI.ACCENT_2))
+		top.add_child(UI.label("單人練習", 13, C_MUTED))
 	top.add_child(UI.spacer())
-	var sound_btn: Button = UI.button("音效：關" if Sound.is_muted() else "音效：開", Callable(), 13, UI.PANEL_2)
+	var sound_btn: Button = _quiet_button("音效：關" if Sound.is_muted() else "音效：開", Callable())
 	sound_btn.pressed.connect(func():
 		var m: bool = Sound.toggle_mute()
 		sound_btn.text = "音效：關" if m else "音效：開"
 	)
 	top.add_child(sound_btn)
-	top.add_child(UI.button("離開", func(): _confirm_leave(), 13, UI.PANEL_2))
+	top.add_child(_quiet_button("離開", func(): _confirm_leave()))
 	sv.add_child(top)
 
-	# Collapsible match quest card (collapsed by default into one line "★ 任務 2/3 ▼", click to expand)
-	_quests_card = UI.panel(Color("#14352d"), 8, 8)
-	_quests_card.add_theme_stylebox_override("panel", UI.box(Color("#14352d"), 8, UI.GOLD.darkened(0.3), 8, false))
-	var q_box := UI.vbox(4)
-	var q_head := UI.hbox(6)
-	_quests_title_lbl = UI.label("★ 任務 0/0 ▼", 14 if UI.is_phone() else 15, UI.GOLD)
-	q_head.add_child(_quests_title_lbl)
-	q_head.add_child(UI.spacer())
-	_quests_toggle_btn = UI.button("展開" if _quests_collapsed else "收合", Callable(), 11, UI.PANEL_2)
-	var toggle_fn := func():
-		_quests_collapsed = not _quests_collapsed
-		_quests_toggle_btn.text = "展開" if _quests_collapsed else "收合"
-		_quests_content.visible = not _quests_collapsed
-		_update_quests_title()
-	_quests_toggle_btn.pressed.connect(toggle_fn)
-	q_head.add_child(_quests_toggle_btn)
-	q_box.add_child(q_head)
+	# 1. Current task
+	var task_v := UI.vbox(6)
+	task_v.add_child(_section_label("目前任務"))
+	_task_title = UI.label("", 19, C_TEXT, true)
+	task_v.add_child(_task_title)
+	_task_body = UI.label("", 15, C_MUTED, true)
+	task_v.add_child(_task_body)
+	_task_quest = UI.label("", 13, C_GOLD, true)
+	task_v.add_child(_task_quest)
+	sv.add_child(_card(task_v))
 
-	_quests_content = UI.vbox(4)
-	_quests_content.visible = not _quests_collapsed
-	q_box.add_child(_quests_content)
-	_quests_card.add_child(q_box)
+	# 2. Client status
+	var client_v := UI.vbox(8)
+	client_v.add_child(_section_label("客戶狀態"))
+	_client_box = UI.vbox(8)
+	client_v.add_child(_client_box)
+	sv.add_child(_card(client_v))
+
+	# 3. Advisor record: latest decision + latest AI hint
+	var record_v := UI.vbox(8)
+	record_v.add_child(_section_label("顧問紀錄"))
+	_record_box = UI.vbox(8)
+	record_v.add_child(_record_box)
+	sv.add_child(_card(record_v))
+
+	# Secondary information: collapsed drawers
+	var drawers := UI.vbox(8)
+	sv.add_child(drawers)
+
+	_quests_content = UI.vbox(6)
+	var qd: Array = _drawer("本季任務", _quests_content)
+	_quests_card = qd[0]
+	_quests_title_lbl = qd[1]
 	_quests_card.visible = false
-	sv.add_child(_quests_card)
+	drawers.add_child(_quests_card)
 
-	_players_box = UI.vbox(5 if UI.is_phone() else 6)
-	sv.add_child(_players_box)
+	_players_box = UI.vbox(6)
+	drawers.add_child(_drawer("顧問名單", _players_box)[0])
 
-	sv.add_child(UI.label("我的客戶簿", 15 if UI.is_phone() else 16, UI.ACCENT_2))
 	_book_box = UI.vbox(4)
-	sv.add_child(_book_box)
+	drawers.add_child(_drawer("我的客戶簿", _book_box)[0])
 
-	sv.add_child(UI.label("動態", 15 if UI.is_phone() else 16, UI.ACCENT_2))
-	_log_box = UI.vbox(3)
-	var ls := UI.scroll(_log_box)
-	if portrait:
-		ls.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		ls.custom_minimum_size.y = 120.0
-	else:
-		ls.custom_minimum_size.y = 120.0 if UI.is_phone() else 160.0
-	sv.add_child(ls)
+	_log_box = UI.vbox(4)
+	drawers.add_child(_drawer("完整動態", _log_box)[0])
 
-	var react := UI.hbox(4 if UI.is_phone() else 6)
+	var react := UI.hbox(6)
 	for e: String in ["讚！", "學到了", "好問題", "？", "♥"]:
 		var emo: String = e
-		react.add_child(UI.button(emo, func(): Net.send({"t": "react", "emoji": emo}), 13 if UI.is_phone() else 15, UI.PANEL_2))
-	sv.add_child(react)
+		react.add_child(_quiet_button(emo, func(): Net.send({"t": "react", "emoji": emo})))
+	drawers.add_child(_drawer("互動回應", react)[0])
+
+	var save_v := UI.vbox(6)
+	_save_label = UI.label("", 12, C_MUTED, true)
+	save_v.add_child(_save_label)
+	_save_retry = _quiet_button("重試儲存訓練紀錄", func(): Net.retry_training_save())
+	save_v.add_child(_save_retry)
+	sv.add_child(save_v)
+	if not Net.training_save_changed.is_connected(_show_save_status):
+		Net.training_save_changed.connect(_show_save_status)
+	_show_save_status(Net.training_save_status)
 
 	# Portrait bottom navigation tab bar
 	if portrait:
@@ -470,33 +514,298 @@ func _fit_wrapped_label(lbl: Label, max_w: float) -> void:
 func _sync_center_bounds() -> void:
 	if _board == null or _center == null:
 		return
+	# The HUD card sits in the board's reserved strip at the bottom of the map
 	var r: Rect2 = _board.get_inner_rect()
-	var avail_w := maxf(80.0, r.size.x - 8)
-	var avail_h := r.size.y
-	_center.add_theme_constant_override("separation", 3)
-	_dice_ctl.set_dice_size(38.0 if UI.is_phone() else 44.0)
-	_roll_btn.custom_minimum_size = Vector2(minf(230, avail_w - 60), 44)
-	_roll_btn.add_theme_font_size_override("font_size", 18)
-	_my_turn_banner.hide()
-	_spectator_ribbon.hide()
-	_dice_roll_info_lbl.hide()
-	_client_strip.hide()
-	_center.size = Vector2(avail_w, avail_h)
-	_center.position = r.get_center() - Vector2(avail_w * 0.5, avail_h * 0.5)
-
-	# Wrapping labels inside SHRINK_CENTER boxes collapse to one character per line unless given a width:
-	# size each one to its text, capped at the inner board width
-	_fit_wrapped_label(_spectator_ribbon_lbl, avail_w - 24.0)
-	if _my_turn_banner != null and _my_turn_banner.get_child_count() > 0:
-		_fit_wrapped_label(_my_turn_banner.get_child(0) as Label, avail_w - 24.0)
-	if _top_label != null:
-		_top_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	if _dice_roll_info_lbl != null:
-		_dice_roll_info_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-
+	_center.add_theme_constant_override("separation", 0)
+	_dice_ctl.set_dice_size(40.0 if UI.is_phone() else 46.0)
+	for legacy: Control in [_my_turn_banner, _spectator_ribbon, _dice_roll_info_lbl, _client_strip, _top_label]:
+		if legacy != null:
+			legacy.hide()
+	_center.size = r.size
+	_center.position = r.position
 	if _cutscene_center_box != null and is_instance_valid(_cutscene_center_box):
-		var inner_c: Vector2 = r.get_center()
-		_cutscene_center_box.position = inner_c - (_cutscene_center_box.size * 0.5)
+		_cutscene_center_box.position = (_board.size - _cutscene_center_box.size) * 0.5
+
+
+# ───────── HQ interface building blocks ─────────
+
+func _card_style(alpha := 1.0) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(C_CARD, alpha)
+	sb.set_corner_radius_all(14)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(1, 1, 1, 0.12)
+	sb.shadow_color = Color(0, 0, 0, 0.12)
+	sb.shadow_size = 3
+	sb.shadow_offset = Vector2(0, 1)
+	sb.content_margin_left = 16
+	sb.content_margin_right = 16
+	sb.content_margin_top = 14
+	sb.content_margin_bottom = 14
+	return sb
+
+
+func _card(content: Control) -> PanelContainer:
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", _card_style())
+	p.add_child(content)
+	return p
+
+
+func _section_label(text: String) -> Label:
+	return UI.label(text, 12, C_MUTED)
+
+
+## Low-emphasis text button for secondary actions (sound, leave, reactions)
+func _quiet_button(text: String, cb: Callable) -> Button:
+	var b := UI.button(text, cb, 13, C_CARD)
+	for st: String in ["normal", "hover", "pressed", "disabled"]:
+		var sb := _card_style(0.6 if st == "normal" else 0.95)
+		sb.set_corner_radius_all(10)
+		sb.shadow_size = 0
+		sb.content_margin_top = 6
+		sb.content_margin_bottom = 6
+		sb.content_margin_left = 12
+		sb.content_margin_right = 12
+		b.add_theme_stylebox_override(st, sb)
+	b.add_theme_color_override("font_color", C_TEXT)
+	return b
+
+
+## Collapsible drawer, closed by default. Returns [container, title label].
+func _drawer(title: String, content: Control) -> Array:
+	var box := PanelContainer.new()
+	var sb := _card_style(0.55)
+	sb.shadow_size = 0
+	sb.content_margin_top = 8
+	sb.content_margin_bottom = 8
+	box.add_theme_stylebox_override("panel", sb)
+	var v := UI.vbox(8)
+	box.add_child(v)
+	var head := Button.new()
+	head.flat = true
+	head.focus_mode = Control.FOCUS_NONE
+	head.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	head.custom_minimum_size.y = 32
+	var hh := UI.hbox(8)
+	hh.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var title_lbl := UI.label(title, 14, C_TEXT)
+	title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hh.add_child(title_lbl)
+	var sp := UI.spacer()
+	sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hh.add_child(sp)
+	var arrow := UI.label("展開", 12, C_MUTED)
+	arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hh.add_child(arrow)
+	head.add_child(hh)
+	v.add_child(head)
+	content.visible = false
+	v.add_child(content)
+	head.pressed.connect(func():
+		content.visible = not content.visible
+		arrow.text = "收合" if content.visible else "展開"
+	)
+	return [box, title_lbl]
+
+
+func _build_hud() -> void:
+	_hud_card = PanelContainer.new()
+	var sb := _card_style(0.92)
+	sb.content_margin_left = 20
+	sb.content_margin_right = 16
+	_hud_card.add_theme_stylebox_override("panel", sb)
+	_hud_card.size_flags_vertical = Control.SIZE_SHRINK_END
+	_center.add_child(_hud_card)
+	# Phone: info stacked above the button; otherwise one row (info | numbers | button)
+	var row: BoxContainer = UI.vbox(10) if UI.is_phone() else UI.hbox(20)
+	_hud_card.add_child(row)
+
+	var info := UI.vbox(4)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.alignment = BoxContainer.ALIGNMENT_CENTER
+	_hud_status = UI.label("", 12, C_MUTED, true)
+	info.add_child(_hud_status)
+	_hud_title = UI.label("", 18 if UI.is_phone() else 20, C_TEXT, true)
+	info.add_child(_hud_title)
+	_hud_hint = UI.label("", 13, C_MUTED, true)
+	info.add_child(_hud_hint)
+	row.add_child(info)
+
+	if not UI.is_phone():
+		var stats := UI.hbox(16)
+		stats.alignment = BoxContainer.ALIGNMENT_CENTER
+		var a: Array = _hud_stat("剩餘回合")
+		_hud_rounds = a[1]
+		stats.add_child(a[0])
+		var b: Array = _hud_stat("聲望")
+		_hud_rep = b[1]
+		stats.add_child(b[0])
+		row.add_child(stats)
+
+	_hud_action = UI.hbox(10)
+	_hud_action.alignment = BoxContainer.ALIGNMENT_CENTER
+	_hud_action.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(_hud_action)
+
+
+func _hud_stat(caption: String) -> Array:
+	var v := UI.vbox(0)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_child(UI.label(caption, 12, C_MUTED))
+	var val := UI.label("—", 22, C_TEXT)
+	v.add_child(val)
+	return [v, val]
+
+
+func _refresh_hud(s: Dictionary, mine: bool, cur_name: String, stage: String, round_num: int) -> void:
+	if _hud_title == null:
+		return
+	var total_rounds: int = int(s.get("settings", {}).get("rounds", 5))
+	var turn_text := "輪到你了" if mine else "%s 行動中" % cur_name
+	_hud_status.text = "第 %d / %d 回合｜%s" % [round_num, total_rounds, turn_text]
+	var tiles: Array = Net.static_data.get("board", [])
+	if not tiles.is_empty():
+		var pos := int(Net.current_player().get("pos", 0)) % tiles.size()
+		var tile: Dictionary = tiles[pos]
+		_hud_title.text = "目前位置｜%s" % str(tile.get("name", ""))
+		var owner: Variant = s.get("territory", {}).get(str(pos), null)
+		if mine and stage == "roll":
+			_hud_hint.text = "按「前往下一站」擲骰前進"
+		elif owner is Dictionary:
+			_hud_hint.text = "%s 的生活圈" % str(owner.get("clientName", "客戶"))
+		else:
+			_hud_hint.text = str(TILE_HINTS.get(str(tile.get("type", "")), ""))
+	if _hud_rounds != null:
+		_hud_rounds.text = str(maxi(0, total_rounds - round_num + 1))
+		_hud_rep.text = str(int(Net.me().get("reputation", 0)))
+
+
+func _refresh_task(s: Dictionary, mine: bool, cur_name: String, stage: String, done: int, total: int) -> void:
+	if _task_title == null:
+		return
+	var sess = s.get("session")
+	var ev = s.get("event")
+	if sess is Dictionary:
+		var client_name := str((sess.get("client", {}) as Dictionary).get("name", "客戶"))
+		var step: Array = STEP_TASKS.get(str(sess.get("step", "")), ["客戶面談", ""])
+		if str(sess.get("playerId", "")) == Net.player_id:
+			_task_title.text = "%s｜%s" % [step[0], client_name]
+			_task_body.text = step[1]
+		else:
+			_task_title.text = "觀看面談｜%s" % client_name
+			_task_body.text = "%s 正在與客戶面談，可以先想想你會怎麼問。" % cur_name
+	elif ev is Dictionary:
+		_task_title.text = str(ev.get("title", "處理事件"))
+		_task_body.text = "完成事件卡後繼續。" if str(ev.get("playerId", "")) == Net.player_id else "%s 正在處理事件。" % cur_name
+	elif mine and stage == "roll":
+		_task_title.text = "前往下一站"
+		_task_body.text = "擲骰沿著顧問行程前進，抵達的節點會觸發面談或事件。"
+	elif mine:
+		_task_title.text = "處理目前站點"
+		_task_body.text = "依照畫面提示完成這一站。"
+	else:
+		_task_title.text = "等待 %s 行動" % cur_name
+		_task_body.text = "其他顧問的回合。展開下方抽屜可以查看完整動態。"
+	_task_quest.text = "本季任務已完成 %d / %d" % [done, total] if total > 0 else ""
+	_task_quest.visible = total > 0
+
+
+func _status_row(caption: String, value: float) -> HBoxContainer:
+	var h := UI.hbox(10)
+	var l := UI.label(caption, 14, C_MUTED)
+	l.custom_minimum_size.x = 64
+	h.add_child(l)
+	var bar := UI.bar(value, C_GREEN, 120)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(bar)
+	h.add_child(UI.label(str(int(value)), 14, C_TEXT))
+	return h
+
+
+## level 0 low / 1 medium / 2 high; red is reserved for high risk only
+func _risk_row(level: int) -> HBoxContainer:
+	var h := UI.hbox(10)
+	var l := UI.label("合規風險", 14, C_MUTED)
+	l.custom_minimum_size.x = 64
+	h.add_child(l)
+	h.add_child(UI.spacer())
+	h.add_child(UI.label(["低", "中", "高"][level], 15, [C_GREEN, C_TEXT, C_RED][level]))
+	return h
+
+
+func _refresh_client(s: Dictionary) -> void:
+	if _client_box == null:
+		return
+	UI.clear(_client_box)
+	var sess = s.get("session")
+	if sess is Dictionary:
+		var c: Dictionary = sess.get("client", {})
+		var m: Dictionary = sess.get("metrics", {})
+		_client_box.add_child(UI.label("%s・%s" % [str(c.get("name", "客戶")), str(c.get("job", ""))], 16, C_TEXT, true))
+		_client_box.add_child(_status_row("信任", float(m.get("trust", 0))))
+		_client_box.add_child(_status_row("需求掌握", float(m.get("insight", 0))))
+		var budget := str(c.get("amount", "")).strip_edges()
+		if budget != "":
+			var bh := UI.hbox(10)
+			var bl := UI.label("預算", 14, C_MUTED)
+			bl.custom_minimum_size.x = 64
+			bh.add_child(bl)
+			var bv := UI.label(budget, 14, C_TEXT, true)
+			bv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			bh.add_child(bv)
+			_client_box.add_child(bh)
+		var comp := float(m.get("compliance", 100))
+		_client_box.add_child(_risk_row(0 if comp >= 70 else (1 if comp >= 45 else 2)))
+		return
+	var book: Array = Net.me().get("book", [])
+	if book.is_empty():
+		_client_box.add_child(UI.label("尚未遇到客戶。抵達客戶節點即可開始面談。", 14, C_MUTED, true))
+		return
+	var last: Dictionary = book[book.size() - 1]
+	_client_box.add_child(UI.label("最近簽約｜%s" % str(last.get("name", "客戶")), 16, C_TEXT, true))
+	_client_box.add_child(_status_row("滿意度", float(last.get("satisfaction", 0))))
+	_client_box.add_child(_risk_row(2 if bool(last.get("mis", false)) else 0))
+	if book.size() > 1:
+		_client_box.add_child(UI.label("客戶簿共 %d 位，可在下方抽屜查看。" % book.size(), 12, C_MUTED, true))
+
+
+func _refresh_record(s: Dictionary) -> void:
+	if _record_box == null:
+		return
+	UI.clear(_record_box)
+	var decisions: Array = Net.me().get("decisions", [])
+	if decisions.is_empty():
+		_record_box.add_child(UI.label("還沒有決策紀錄。", 14, C_MUTED, true))
+	else:
+		var d: Dictionary = decisions[decisions.size() - 1]
+		var q := str(d.get("quality", "ok"))
+		var h := UI.hbox(8)
+		h.add_child(UI.label({"good": "佳", "ok": "普通", "bad": "待改進"}.get(q, "普通"), 12, {"good": C_GREEN, "bad": C_RED}.get(q, C_MUTED)))
+		var t := UI.label(str(d.get("title", "")), 15, C_TEXT, true)
+		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(t)
+		_record_box.add_child(h)
+		var body := str(d.get("body", ""))
+		if body != "":
+			_record_box.add_child(UI.label(body, 13, C_MUTED, true))
+	# Latest AI coach hint: the explicit hint, else the newest coach tip of the interview
+	var hint := ""
+	var sess = s.get("session")
+	if sess is Dictionary:
+		if sess.get("hint") != null:
+			hint = str(sess.get("hint"))
+		var asked: Array = sess.get("asked", []) if sess.get("asked") is Array else []
+		for k in range(asked.size() - 1, -1, -1):
+			if hint == "" and str((asked[k] as Dictionary).get("coachTip", "")) != "":
+				hint = str(asked[k].get("coachTip"))
+	if hint != "":
+		var hv := UI.vbox(2)
+		hv.add_child(UI.label("AI 教練提示", 12, C_GREEN))
+		hv.add_child(UI.label(hint, 13, C_TEXT, true))
+		_record_box.add_child(hv)
 
 
 func _switch_tab(tab_idx: int) -> void:
@@ -755,70 +1064,47 @@ func refresh(s: Dictionary) -> void:
 
 	_sync_tabs()
 
-	# Automatically collapse quest card when interview or event opens
-	if has_overlay:
-		_quests_collapsed = true
-
-	# Match quest card update
+	# Quarter quests (drawer); the done count also feeds the "current task" card
 	var quests: Array = s.get("quests", []) if s.get("quests") != null else []
-	if quests.is_empty():
-		_quests_card.visible = false
-	else:
-		_quests_card.visible = true
-		UI.clear(_quests_content)
-		var done_count: int = 0
-		for q: Dictionary in quests:
-			var q_row := UI.panel(Color("#0d231e"), 6, 6)
-			var qv := UI.vbox(2)
-			var qh := UI.hbox(4)
-			var q_title: String = str(q.get("title", "任務"))
-			var q_prog: Dictionary = q.get("progress", {}).get(Net.player_id, {})
-			var cur_p: int = int(q_prog.get("cur", 0))
-			var target_p: int = int(q_prog.get("target", 1))
-			var is_done: bool = bool(q_prog.get("done", false)) or (target_p > 0 and cur_p >= target_p)
-			if is_done:
-				done_count += 1
+	var done_count: int = 0
+	_quests_card.visible = not quests.is_empty()
+	UI.clear(_quests_content)
+	for q: Dictionary in quests:
+		var qv := UI.vbox(2)
+		var qh := UI.hbox(4)
+		var q_prog: Dictionary = q.get("progress", {}).get(Net.player_id, {})
+		var cur_p: int = int(q_prog.get("cur", 0))
+		var target_p: int = int(q_prog.get("target", 1))
+		var is_done: bool = bool(q_prog.get("done", false)) or (target_p > 0 and cur_p >= target_p)
+		if is_done:
+			done_count += 1
+		qh.add_child(UI.label(str(q.get("title", "任務")), 14, C_GOLD if is_done else C_TEXT, true))
+		qh.add_child(UI.spacer())
+		qh.add_child(UI.label("達成" if is_done else "%d/%d" % [cur_p, target_p], 13, C_GOLD if is_done else C_MUTED))
+		qv.add_child(qh)
+		var q_desc: String = str(q.get("desc", ""))
+		if q_desc != "":
+			qv.add_child(UI.label(q_desc, 12, C_MUTED, true))
+		var q_rew_val = q.get("reward", null)
+		if q_rew_val != null and str(q_rew_val) != "":
+			var rew_str: String = str(q_rew_val)
+			if typeof(q_rew_val) in [TYPE_FLOAT, TYPE_INT] or rew_str.is_valid_float():
+				rew_str = "聲望 +%d" % int(float(rew_str))
+			qv.add_child(UI.label("獎勵：%s" % rew_str, 12, C_MUTED, true))
+		_quests_content.add_child(qv)
+	_quests_title_lbl.text = "本季任務 %d/%d" % [done_count, quests.size()]
 
-			qh.add_child(UI.label(q_title, 13 if UI.is_phone() else 14, UI.GOLD if is_done else UI.TEXT, true))
-			qh.add_child(UI.spacer())
-			if is_done:
-				var done_chip := UI.chip(Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.18), UI.GOLD, 4, 8, 3)
-				done_chip.add_child(UI.label("✓ 達成", 11 if UI.is_phone() else 12, UI.GOLD))
-				qh.add_child(done_chip)
-			else:
-				qh.add_child(UI.label("%d/%d" % [cur_p, target_p], 12 if UI.is_phone() else 13, UI.ACCENT_2))
-			qv.add_child(qh)
-
-			var q_desc: String = str(q.get("desc", ""))
-			if q_desc != "":
-				qv.add_child(UI.label(q_desc, 11 if UI.is_phone() else 12, UI.MUTED, true))
-
-			var q_rew_val = q.get("reward", null)
-			if q_rew_val != null and str(q_rew_val) != "":
-				var rew_str: String = str(q_rew_val)
-				if typeof(q_rew_val) in [TYPE_FLOAT, TYPE_INT] or rew_str.is_valid_float():
-					rew_str = "聲望 +%d" % int(float(rew_str))
-				qv.add_child(UI.label("獎勵：%s" % rew_str, 11 if UI.is_phone() else 12, UI.GOLD.darkened(0.2), true))
-
-			q_row.add_child(qv)
-			_quests_content.add_child(q_row)
-
-		if _quests_title_lbl != null:
-			if _quests_collapsed:
-				_quests_title_lbl.text = "★ 任務 %d/%d ▼" % [done_count, quests.size()]
-				_quests_toggle_btn.text = "展開"
-				_quests_content.visible = false
-			else:
-				_quests_title_lbl.text = "★ 任務 %d/%d ▲" % [done_count, quests.size()]
-				_quests_toggle_btn.text = "收合"
-				_quests_content.visible = true
+	_refresh_hud(s, mine, cur_name, stage, round_num)
+	_refresh_task(s, mine, cur_name, stage, done_count, quests.size())
+	_refresh_client(s)
+	_refresh_record(s)
 
 	# Player list
 	UI.clear(_players_box)
 	var i: int = 0
 	for p: Dictionary in s.get("players", []):
 		var is_cur: bool = str(p.get("id", "")) == cur_id
-		var card := UI.panel(UI.PANEL_2 if is_cur else Color("#112d26"), 10, 8)
+		var card := UI.panel(Color(C_CARD, 1.0 if is_cur else 0.55), 10, 8, Color(0, 0, 0, 0))
 		var v := UI.vbox(2)
 		var h := UI.hbox(6)
 		var p_col: Color = UI.PLAYER_COLORS[i % 4]
@@ -838,7 +1124,7 @@ func refresh(s: Dictionary) -> void:
 		else:
 			h.add_child(UI.label("●", 16, p_col))
 		var nm: String = str(p.get("name", "")) + (" (你)" if str(p.get("id", "")) == Net.player_id else "")
-		h.add_child(UI.label(nm, 15, UI.TEXT))
+		h.add_child(UI.label(nm, 15, C_TEXT))
 		var streak: int = int(p.get("complianceStreak", 0))
 		if streak >= 2:
 			var strk_chip := UI.chip(Color(UI.GOLD.r, UI.GOLD.g, UI.GOLD.b, 0.18), UI.GOLD, 4, 8, 3)
@@ -849,29 +1135,12 @@ func refresh(s: Dictionary) -> void:
 			dis_chip.add_child(UI.label("斷線", 11, UI.BAD))
 			h.add_child(dis_chip)
 		if is_cur:
-			h.add_child(UI.label("◀", 14, UI.GOLD))
+			h.add_child(UI.label("行動中", 12, C_GREEN))
 		v.add_child(h)
-		v.add_child(UI.label("聲望 %d　業績 %d　客戶 %d　測驗 %d/%d" % [int(p.get("reputation", 0)), int(p.get("commission", 0)), (p.get("book", []) as Array).size(), int(p.get("quizCorrect", 0)), int(p.get("quizTotal", 0))], 13, UI.MUTED))
+		v.add_child(UI.label("聲望 %d　業績 %d　客戶 %d　測驗 %d/%d" % [int(p.get("reputation", 0)), int(p.get("commission", 0)), (p.get("book", []) as Array).size(), int(p.get("quizCorrect", 0)), int(p.get("quizTotal", 0))], 13, C_MUTED, true))
 		card.add_child(v)
 		_players_box.add_child(card)
 		i += 1
-
-
-func _update_quests_title() -> void:
-	if _quests_title_lbl == null:
-		return
-	var quests: Array = Net.state.get("quests", []) if Net.state.get("quests") != null else []
-	var done_count: int = 0
-	for q: Dictionary in quests:
-		var q_prog: Dictionary = q.get("progress", {}).get(Net.player_id, {})
-		var cur_p: int = int(q_prog.get("cur", 0))
-		var target_p: int = int(q_prog.get("target", 1))
-		if bool(q_prog.get("done", false)) or (target_p > 0 and cur_p >= target_p):
-			done_count += 1
-	if _quests_collapsed:
-		_quests_title_lbl.text = "★ 任務 %d/%d ▼" % [done_count, quests.size()]
-	else:
-		_quests_title_lbl.text = "★ 任務 %d/%d ▲" % [done_count, quests.size()]
 
 
 func _update_center_client_strip() -> void:
