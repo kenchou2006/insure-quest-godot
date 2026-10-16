@@ -153,4 +153,6 @@ func _input(event: InputEvent) -> void:
 
 func _on_entered() -> void:
 	_enter.disabled = true
+	# First user gesture: the web build may start audio only now (no autoplay on page load)
+	MusicManager.play_music()
 	entered.emit()

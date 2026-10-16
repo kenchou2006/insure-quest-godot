@@ -457,12 +457,7 @@ func _build_ui() -> void:
 	else:
 		top.add_child(UI.label("單人練習", 13, C_MUTED))
 	top.add_child(UI.spacer())
-	var sound_btn: Button = _quiet_button("音效：關" if Sound.is_muted() else "音效：開", Callable())
-	sound_btn.pressed.connect(func():
-		var m: bool = Sound.toggle_mute()
-		sound_btn.text = "音效：關" if m else "音效：開"
-	)
-	top.add_child(sound_btn)
+	top.add_child(_quiet_button("聲音", func(): _open_audio_settings()))
 	top.add_child(_quiet_button("離開", func(): _confirm_leave()))
 	sv.add_child(top)
 
@@ -1724,6 +1719,36 @@ func _show_announcement(ann: Dictionary) -> void:
 	, 18)
 	v.add_child(close_btn)
 	Sound.play("alarm", self)
+
+## Volume sliders over the game (same panel as the menu settings); play continues underneath
+func _open_audio_settings() -> void:
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.z_index = 120
+	add_child(dim)
+	var p := UI.panel(UI.PANEL, 16, 20)
+	p.set_anchors_preset(Control.PRESET_CENTER)
+	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	p.grow_vertical = Control.GROW_DIRECTION_BOTH
+	p.custom_minimum_size = Vector2(320 if UI.is_phone() else 400, 0)
+	dim.add_child(p)
+	UI.pop_in(p, 0.2)
+	var v := UI.vbox(14)
+	p.add_child(v)
+	var head := UI.hbox(8)
+	head.add_child(UI.label("聲音", 18 if UI.is_phone() else 20, UI.GOLD))
+	head.add_child(UI.spacer())
+	var close_btn := UI.button("×", func(): UI.pop_out(p, dim.queue_free, 0.16), 16, UI.PANEL_2)
+	close_btn.custom_minimum_size = Vector2(36, 36)
+	head.add_child(close_btn)
+	v.add_child(head)
+	v.add_child(AudioSettings.new())
+	dim.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed and not p.get_global_rect().has_point(e.global_position):
+			UI.pop_out(p, dim.queue_free, 0.16)
+	)
+
 
 func _confirm_leave() -> void:
 	var dim := ColorRect.new()

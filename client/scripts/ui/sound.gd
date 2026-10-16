@@ -1,30 +1,19 @@
 @tool
 class_name Sound
 ## Sound manager: synthesizes sound effects programmatically with AudioStreamWAV without external audio files.
-## Supports mute toggle and web-version delayed playback protection.
+## Everything plays on the SFX bus (buttons, hints, mission complete); volume and mute live in MusicManager.
 
-static var muted: bool = false
 static var _player: AudioStreamPlayer = null
 static var _streams: Dictionary = {}
-
-
-static func is_muted() -> bool:
-	return muted
-
-
-static func toggle_mute() -> bool:
-	muted = not muted
-	return muted
 
 
 static func play(name: String, caller: Node = null) -> void:
 	if Engine.is_editor_hint():
 		return
-	if muted:
-		return
 	if _player == null or not is_instance_valid(_player):
 		_player = AudioStreamPlayer.new()
 		_player.name = "GlobalSoundPlayer"
+		_player.bus = "SFX"
 		if caller != null and caller.get_tree() != null:
 			caller.get_tree().root.add_child(_player)
 		else:

@@ -388,7 +388,7 @@ func _open_modal(node_name: String, title: String, title_color: Color) -> Array:
 	return [dim, v]
 
 
-## Settings: sound, and (when logged in) account deletion
+## Settings: volumes, and (when logged in) account deletion
 func _open_settings() -> void:
 	var m := _open_modal("SettingsDialog", "設定", UI.ACCENT_2)
 	if m.is_empty():
@@ -396,13 +396,8 @@ func _open_settings() -> void:
 	var dim: Control = m[0]
 	var v: VBoxContainer = m[1]
 
-	v.add_child(UI.label("音效", 14, UI.MUTED))
-	var sound_btn: Button = UI.button("音效：關" if Sound.is_muted() else "音效：開", Callable(), 15, UI.PANEL_2)
-	sound_btn.pressed.connect(func():
-		var muted: bool = Sound.toggle_mute()
-		sound_btn.text = "音效：關" if muted else "音效：開"
-	)
-	v.add_child(sound_btn)
+	v.add_child(UI.label("聲音", 14, UI.MUTED))
+	v.add_child(AudioSettings.new())
 	v.add_child(HSeparator.new())
 	v.add_child(UI.label("畫面與陪伴", 14, UI.MUTED))
 	var motion := CheckBox.new()

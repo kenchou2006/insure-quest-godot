@@ -92,16 +92,29 @@ static func _system_voices() -> Array:
 	return DisplayServer.tts_get_voices()
 
 
-## Speaks a line in this secretary's voice. Returns false when it stays silent (no voice / solo).
+## Speaks a line in this secretary's voice at the Voice volume (music dips meanwhile).
+## Returns false when it stays silent (no voice / solo / voice muted).
 static func speak(secretary_id: String, text: String) -> bool:
 	var voice := pick(secretary_id)
 	if voice == "" or text.strip_edges() == "":
 		return false
+	var mm := _music()
+	if mm != null:
+		return mm.speak(text, voice)
 	DisplayServer.tts_stop()
-	DisplayServer.tts_speak(text, voice, 80, 1.0, 1.0)
+	DisplayServer.tts_speak(text, voice, 71, 1.0, 1.0)
 	return true
 
 
 static func stop() -> void:
-	if DisplayServer.get_name() != "headless":
+	var mm := _music()
+	if mm != null:
+		mm.stop_speech()
+	elif DisplayServer.get_name() != "headless":
 		DisplayServer.tts_stop()
+
+
+## MusicManager autoload, looked up at run time so tests can preload this script before autoloads exist
+static func _music() -> Node:
+	var tree := Engine.get_main_loop() as SceneTree
+	return tree.root.get_node_or_null("MusicManager") if tree != null else null

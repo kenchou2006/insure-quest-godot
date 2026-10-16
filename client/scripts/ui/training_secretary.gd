@@ -91,8 +91,8 @@ func _find_voice() -> void:
 	_voice = "" if not enabled else SecretaryVoice.pick(secretary_id)
 
 func dismiss() -> void:
-	if _speech_unlocked and DisplayServer.get_name() != "headless":
-		DisplayServer.tts_stop()
+	if _speech_unlocked:
+		SecretaryVoice.stop()
 	visible = false
 	dock_changed.emit(0.0)
 
@@ -176,6 +176,6 @@ func _advance() -> void:
 		_update_line()
 
 func _exit_tree() -> void:
-	if _speech_unlocked and DisplayServer.get_name() != "headless":
-		DisplayServer.tts_stop()
+	if _speech_unlocked:
+		SecretaryVoice.stop()
 

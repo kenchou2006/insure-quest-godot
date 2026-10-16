@@ -23,6 +23,7 @@ config/icon="res://icon.svg"
 Net="*res://scripts/net.gd"
 WebText="*res://scripts/web_text.gd"
 GoogleAuth="*res://scripts/google_auth.gd"
+MusicManager="*res://scripts/music_manager.gd"
 
 [audio]
 

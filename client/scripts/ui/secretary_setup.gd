@@ -668,6 +668,8 @@ func _preview(card: Button) -> void:
 	var p := SecretaryVoice.profile(sid)
 	if SecretaryVoice.speak(sid, str(p.sample)):
 		_hint.text = "「%s」" % str(p.sample)
+	elif MusicManager.tts_volume() == 0:
+		_hint.text = "秘書語音已關閉，可在「設定」調整音量"
 	else:
 		_hint.text = "此裝置沒有中文%s聲，選擇 %s 後會以字幕導覽" % ["男" if sid == "kevin" else "女", str(p.name)]
 	_hint.reset_size()
