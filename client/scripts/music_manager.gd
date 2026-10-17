@@ -7,6 +7,8 @@ extends Node
 ## volume (with Master and mute) is applied to each spoken line's TTS volume.
 
 signal volumes_changed
+## The current secretary line finished (or was stopped / cancelled)
+signal speech_ended
 
 const BUSES := ["Master", "BGM", "Voice", "SFX"]
 const DEFAULT_DB := {"Master": 0.0, "BGM": -16.0, "Voice": -3.0, "SFX": -8.0}
@@ -203,7 +205,10 @@ func _end_speech(id: int) -> void:
 	if id != _utterance:
 		return
 	_speech_timer.stop()
+	var was_ducked := ducked
 	_set_ducked(false)
+	if was_ducked:
+		speech_ended.emit()
 
 
 func _set_ducked(on: bool) -> void:

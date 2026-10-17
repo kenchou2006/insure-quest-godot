@@ -66,17 +66,18 @@ func _ready() -> void:
 	_veil.color = UI.BG
 	_veil.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_veil.mouse_filter = Control.MOUSE_FILTER_STOP
-	_veil.z_index = 90
+	# Above every screen and the secretary; only toasts and the busy line sit higher
+	_veil.z_index = 200
 	add_child(_veil)
 
 	_toasts = UI.vbox(6)
 	_toasts.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	_toasts.position.y = 12
 	_toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_toasts.z_index = 100
+	_toasts.z_index = 210
 
 	_busy_label = UI.label("", 16, UI.GOLD)
-	_busy_label.z_index = 100
+	_busy_label.z_index = 210
 
 	get_tree().root.size_changed.connect(_on_size_changed)
 	_on_size_changed()

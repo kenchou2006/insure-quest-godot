@@ -58,6 +58,7 @@ var _tool_cards := {}
 var _confirm: Button
 var _status: Label
 var _mute_icon: Control
+var _entry_said := false
 
 
 func _ready() -> void:
@@ -98,6 +99,7 @@ func _ready() -> void:
 	else:
 		_ready_to_accept = true
 		_accept.set_enabled(true)
+		_say_entry()
 
 
 # --- Unlock progress ---------------------------------------------------------------------------
@@ -188,6 +190,7 @@ func _load_profile() -> void:
 			done = true
 			_ready_to_accept = true
 			_accept.set_enabled(true)
+			_say_entry()
 	)
 	var res: Array = await Net.fetch_profile()
 	if done or not is_instance_valid(self) or _accepting:
@@ -199,6 +202,31 @@ func _load_profile() -> void:
 		_layout()
 	_ready_to_accept = true
 	_accept.set_enabled(true)
+	_say_entry()
+
+
+# --- Secretary ---------------------------------------------------------------------------------
+
+func _secretary() -> Control:
+	var main: Node = get_parent().get("main") if get_parent() else null
+	if main and main.has_method("secretary_guide"):
+		return main.secretary_guide()
+	return null
+
+
+## Names the state; the secretary picks the lines, portrait and voice (and plays each state once)
+func _say(states: Array) -> void:
+	var g := _secretary()
+	if g and g.has_method("show_states"):
+		g.show_states(states)
+
+
+func _say_entry() -> void:
+	if _entry_said:
+		return
+	_entry_said = true
+	var later := (info.get("unlocked", []) as Array).size() >= 2
+	_say(["training_entry", "later_matching" if later else "first_assignment"])
 
 
 # --- Top bar & steps ---------------------------------------------------------------------------
@@ -387,6 +415,7 @@ func _on_accept() -> void:
 	_codex_link.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_codex_link.modulate.a = 0.4
 	_file.play_unlock()
+	_say(["dossier_unlocking"])
 	# Safety: never stay on the file if an animation or image fails
 	get_tree().create_timer(1.5).timeout.connect(func():
 		if is_instance_valid(self) and _step == 1:
@@ -401,6 +430,7 @@ func _go_step(n: int) -> void:
 		return
 	_step = n
 	_sync_steps()
+	_say(["clue_review"] if n == 2 else ["tool_selection"])
 	var build := func():
 		UI.clear(_page)
 		if n == 2:
@@ -473,9 +503,15 @@ func _show_clues() -> void:
 		["search", "本次目標", str(c.get("goal", ""))],
 		["book", "客戶背景", str(c.get("intro", ""))],
 	]
+	var shown := 0
 	for r: Array in rows:
 		if str(r[2]).strip_edges() == "":
 			continue
+		if shown == 0 or shown == 3:
+			var sec := _label("三項線索" if shown == 0 else "任務資料", 14, C_GOLD)
+			sec.add_theme_font_override("font", BOLD)
+			sv.add_child(sec)
+		shown += 1
 		var h := UI.hbox(12)
 		var ic: Control = LineIcon.new(str(r[0]), C_GOLD, 1.8)
 		ic.custom_minimum_size = Vector2(22, 22)
@@ -531,12 +567,15 @@ func _show_tools() -> void:
 	_tool_cards.clear()
 	for t: Dictionary in Net.state.get("tools", []):
 		tgrid.add_child(_tool_card(t))
-	var foot := UI.hbox(16)
-	_status = UI.label("", 14, C_MUTED, true)
-	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Centred footer: the bottom corners stay clear for the secretary
+	var foot := UI.vbox(6)
+	foot.alignment = BoxContainer.ALIGNMENT_CENTER
+	_status = UI.label("", 14, C_MUTED)
+	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	foot.add_child(_status)
 	_confirm = UI.button("帶著公事包出發", _on_confirm, 18, C_GREEN)
-	_confirm.custom_minimum_size = Vector2(220, 52)
+	_confirm.custom_minimum_size = Vector2(260, 52)
+	_confirm.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	foot.add_child(_confirm)
 	outer.add_child(foot)
 	_sync_tools()
@@ -580,6 +619,8 @@ func _sync_tools() -> void:
 			b.add_theme_stylebox_override(st, _card_style(_tools.has(id)))
 	var ready_to_go := not client.is_empty() and _tools.size() == _size and not _sent
 	_confirm.disabled = not ready_to_go
+	if ready_to_go:
+		_say(["meeting_ready"])
 	if _sent:
 		_status.text = "準備中……"
 	else:
@@ -608,6 +649,8 @@ func _on_confirm() -> void:
 func _open_codex() -> void:
 	if _accepting:
 		return
+	if (info.get("unlocked", []) as Array).size() < int(info.get("total", 0)):
+		_say(["locked_client_info"])
 	var m := _modal("客戶圖鑑")
 	var v: VBoxContainer = m[1]
 	var unlocked: Array = info.get("unlocked", [])
