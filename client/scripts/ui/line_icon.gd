@@ -1,7 +1,8 @@
 @tool
 extends Control
 ## 2px rounded line icons for the training hall (drawn, no image files).
-## kind: user, users, chat_user, robot, doc, chart, chevron_r, chevron_d, speaker, question, replay, door
+## kind: user, users, chat_user, robot, doc, chart, chevron_r, chevron_l, chevron_d, speaker, speaker_off, question,
+## replay, door, search, briefcase, doc_check, lock, unlock, gear, book, check
 
 var kind := "user"
 var color := Color("#F3F0E7")
@@ -119,3 +120,62 @@ func _draw() -> void:
 			_l(c + Vector2(s * 0.3, 0), c + Vector2(s * 0.46, 0))
 			_l(c + Vector2(s * 0.38, -s * 0.08), c + Vector2(s * 0.46, 0))
 			_l(c + Vector2(s * 0.38, s * 0.08), c + Vector2(s * 0.46, 0))
+		"chevron_l":
+			_l(c + Vector2(s * 0.14, -s * 0.28), c + Vector2(-s * 0.14, 0))
+			_l(c + Vector2(-s * 0.14, 0), c + Vector2(s * 0.14, s * 0.28))
+		"speaker_off":
+			var sp := PackedVector2Array([c + Vector2(-s * 0.36, -s * 0.12), c + Vector2(-s * 0.18, -s * 0.12), c + Vector2(0, -s * 0.3), c + Vector2(0, s * 0.3), c + Vector2(-s * 0.18, s * 0.12), c + Vector2(-s * 0.36, s * 0.12), c + Vector2(-s * 0.36, -s * 0.12)])
+			draw_polyline(sp, color, width, true)
+			_l(c + Vector2(s * 0.14, -s * 0.12), c + Vector2(s * 0.38, s * 0.12))
+			_l(c + Vector2(s * 0.38, -s * 0.12), c + Vector2(s * 0.14, s * 0.12))
+		"search":
+			_arc(c + Vector2(-s * 0.08, -s * 0.08), s * 0.26, 0, TAU)
+			_l(c + Vector2(s * 0.12, s * 0.12), c + Vector2(s * 0.36, s * 0.36))
+		"briefcase":
+			_round_rect(Rect2(o + Vector2(s * 0.12, s * 0.32), Vector2(s * 0.76, s * 0.52)), s * 0.07)
+			_round_rect(Rect2(o + Vector2(s * 0.36, s * 0.16), Vector2(s * 0.28, s * 0.16)), s * 0.04)
+			_l(c + Vector2(-s * 0.38, s * 0.04), c + Vector2(s * 0.38, s * 0.04))
+		"doc_check":
+			var x0 := o.x + s * 0.22
+			var x1 := o.x + s * 0.72
+			var y0 := o.y + s * 0.1
+			var y1 := o.y + s * 0.86
+			var fold := s * 0.14
+			_l(Vector2(x0, y0), Vector2(x1 - fold, y0))
+			_l(Vector2(x1 - fold, y0), Vector2(x1, y0 + fold))
+			_l(Vector2(x1, y0 + fold), Vector2(x1, y0 + s * 0.4))
+			_l(Vector2(x0, y1), Vector2(x0 + s * 0.3, y1))
+			_l(Vector2(x0, y1), Vector2(x0, y0))
+			_l(Vector2(x0 + s * 0.1, y0 + s * 0.24), Vector2(x1 - s * 0.12, y0 + s * 0.24))
+			_l(Vector2(x0 + s * 0.1, y0 + s * 0.38), Vector2(x1 - s * 0.2, y0 + s * 0.38))
+			var cc := Vector2(o.x + s * 0.68, o.y + s * 0.7)
+			_arc(cc, s * 0.18, 0, TAU)
+			_l(cc + Vector2(-s * 0.08, 0), cc + Vector2(-s * 0.02, s * 0.06))
+			_l(cc + Vector2(-s * 0.02, s * 0.06), cc + Vector2(s * 0.09, -s * 0.06))
+		"lock", "unlock":
+			_round_rect(Rect2(o + Vector2(s * 0.22, s * 0.44), Vector2(s * 0.56, s * 0.42)), s * 0.07)
+			if kind == "lock":
+				# Closed shackle resting on the body
+				_arc(c + Vector2(0, -s * 0.06), s * 0.18, PI, TAU)
+			else:
+				# Open shackle: left leg in the body, right leg lifted free
+				_arc(c + Vector2(0, -s * 0.2), s * 0.18, PI, TAU)
+				_l(c + Vector2(-s * 0.18, -s * 0.2), c + Vector2(-s * 0.18, -s * 0.06))
+			draw_circle(c + Vector2(0, s * 0.18), width * 1.1, color)
+		"gear":
+			_arc(c, s * 0.16, 0, TAU)
+			for k in range(8):
+				var a := TAU * k / 8.0
+				_l(c + Vector2(cos(a), sin(a)) * s * 0.28, c + Vector2(cos(a), sin(a)) * s * 0.4)
+			_arc(c, s * 0.28, 0, TAU)
+		"book":
+			_l(c + Vector2(0, -s * 0.26), c + Vector2(0, s * 0.32))
+			_l(c + Vector2(0, -s * 0.26), c + Vector2(-s * 0.4, -s * 0.32))
+			_l(c + Vector2(-s * 0.4, -s * 0.32), c + Vector2(-s * 0.4, s * 0.26))
+			_l(c + Vector2(-s * 0.4, s * 0.26), c + Vector2(0, s * 0.32))
+			_l(c + Vector2(0, -s * 0.26), c + Vector2(s * 0.4, -s * 0.32))
+			_l(c + Vector2(s * 0.4, -s * 0.32), c + Vector2(s * 0.4, s * 0.26))
+			_l(c + Vector2(s * 0.4, s * 0.26), c + Vector2(0, s * 0.32))
+		"check":
+			_l(c + Vector2(-s * 0.26, 0), c + Vector2(-s * 0.06, s * 0.2))
+			_l(c + Vector2(-s * 0.06, s * 0.2), c + Vector2(s * 0.3, -s * 0.22))

@@ -48,6 +48,7 @@ func _ready() -> void:
 	_label.add_theme_color_override("font_color", CREAM)
 	_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_visual.add_child(_label)
+	_label.resized.connect(_layout)
 	if show_arrow:
 		_arrow = LineIcon.new("chevron_r", CREAM, 2.0)
 		_visual.add_child(_arrow)

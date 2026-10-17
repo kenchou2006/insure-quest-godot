@@ -1220,7 +1220,10 @@ export function publicView(s: GameState, viewerId: string | null = null) {
     })),
     caseOptions: CASE_OPTIONS.map(id => s.clients[id]).filter(Boolean).map(c => ({
       id: c.id, name: c.name, age: c.age, gender: c.gender, job: c.job, tag: c.tag, difficulty: c.difficulty, goal: c.goal, family: c.family, intro: c.intro,
+      amount: c.amount, incomeInfo: c.incomeInfo,
     })),
+    // Client codex roster (names only) so the case screen can show unlock progress without a hardcoded total
+    codex: CLIENTS.map(c => ({ id: c.id, name: c.name, job: c.job })),
     tools: TOOLS, briefcaseSize: BRIEFCASE_SIZE,
     turn: s.turn, round: s.round, turnStage: s.turnStage, lastRoll: s.lastRoll,
     deckLeft: s.deck.length,
