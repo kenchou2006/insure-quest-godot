@@ -23,6 +23,13 @@ var _busy_label: Label
 var _auto: Node = null
 var _guide: Control
 var _guide_height := 0.0
+## Deep sea-green loading / transition veil: covers every screen switch so an old or half-built
+## screen (e.g. the multiplayer lobby a solo game passes through) is never seen.
+var _veil: ColorRect
+var _veil_tween: Tween
+var _veil_gen := 0
+## True while we have created / joined a room; late state messages after leaving are ignored
+var _expect_room := false
 
 
 var _was_quota_exhausted := false
@@ -54,6 +61,14 @@ func _ready() -> void:
 		bg_tex.modulate = Color(0.7, 0.85, 0.75, 0.16)
 		add_child(bg_tex)
 
+	# Start on the loading veil: nothing is shown until the first screen has drawn
+	_veil = ColorRect.new()
+	_veil.color = UI.BG
+	_veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_veil.mouse_filter = Control.MOUSE_FILTER_STOP
+	_veil.z_index = 90
+	add_child(_veil)
+
 	_toasts = UI.vbox(6)
 	_toasts.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	_toasts.position.y = 12
@@ -68,9 +83,16 @@ func _ready() -> void:
 
 	Net.welcomed.connect(_on_welcomed)
 	Net.state_changed.connect(_on_state)
-	Net.server_error.connect(func(m): toast(m, UI.BAD))
+	Net.server_error.connect(func(m):
+		toast(m, UI.BAD)
+		# A rejected create / join must not leave the player on the loading veil
+		if _veil_holding():
+			set_busy("")
+			_reveal()
+	)
 	Net.connection_changed.connect(_on_connection)
 	Net.room_closed.connect(func(m: String):
+		_expect_room = false
 		_solo_bots = []
 		_solo = false
 		set_busy("")
@@ -152,7 +174,10 @@ func _on_size_changed() -> void:
 			_screen.on_layout_changed(UI.is_portrait())
 
 
+## Switch order: veil on → old screen hidden and freed → new screen built under the veil →
+## wait until it has drawn (textures uploaded) → veil fades. Only one screen exists at a time.
 func _set_screen(kind: String, node: Control) -> void:
+	_veil_on()
 	if _guide != null:
 		_guide.dismiss()
 	if _screen and is_instance_valid(_screen):
@@ -164,12 +189,63 @@ func _set_screen(kind: String, node: Control) -> void:
 	_screen_kind = kind
 	node.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(node)
+	node.visible = true
 	if _guide != null:
 		move_child(_guide, get_child_count() - 1)
 		_guide.screen_changed(kind)
+	if _veil:
+		move_child(_veil, get_child_count() - 1)
 	if _toasts and _toasts.get_parent() == self:
 		move_child(_toasts, get_child_count() - 1)
 		move_child(_busy_label, get_child_count() - 1)
+	_reveal()
+
+
+## Opaque veil immediately (no fade-in, so nothing old shows through)
+func _veil_on() -> void:
+	if _veil == null:
+		return
+	_veil_gen += 1
+	if _veil_tween:
+		_veil_tween.kill()
+	_veil.modulate.a = 1.0
+	_veil.visible = true
+	_veil.mouse_filter = Control.MOUSE_FILTER_STOP
+
+
+func _veil_holding() -> bool:
+	return _veil != null and _veil.visible and _veil.mouse_filter == Control.MOUSE_FILTER_STOP
+
+
+## Fades the veil once the current screen has been drawn (three frames: built, drawn with its
+## textures uploaded, drawn again). Plain frame waits, so it can never hang on any platform.
+func _reveal() -> void:
+	if _veil == null:
+		return
+	var gen := _veil_gen
+	for i in range(3):
+		await get_tree().process_frame
+	if gen != _veil_gen or not is_instance_valid(_veil):
+		return
+	_veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if UI.is_animation_disabled():
+		_veil.visible = false
+		return
+	_veil_tween = create_tween()
+	_veil_tween.tween_property(_veil, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_veil_tween.tween_callback(func(): _veil.visible = false)
+
+
+## Loading state while waiting on the network: veil stays up (with the busy text) until the next
+## screen arrives; a watchdog lifts it after 15 s so the player is never stuck on a blank screen.
+func _hold_veil() -> void:
+	_veil_on()
+	var gen := _veil_gen
+	get_tree().create_timer(15.0).timeout.connect(func():
+		if gen == _veil_gen and is_instance_valid(_veil) and _veil.visible:
+			set_busy("")
+			_reveal()
+	)
 
 
 ## Game opening cover; shown at launch and every time the player leaves a game (intro replays each time).
@@ -221,6 +297,8 @@ func set_busy(text: String) -> void:
 
 func create_and_join(solo_bots: Array, solo: bool) -> void:
 	_guide.begin_training()
+	_expect_room = true
+	_hold_veil()
 	if solo and not Net.is_logged_in() and Net.local_available():
 		_solo_bots = solo_bots
 		_solo = solo
@@ -232,6 +310,8 @@ func create_and_join(solo_bots: Array, solo: bool) -> void:
 	var r := await Net.create_room(solo)
 	set_busy("")
 	if not r[0]:
+		_expect_room = false
+		_reveal()
 		toast(str(r[1]), UI.BAD, 4.0)
 		return
 	_solo_bots = solo_bots
@@ -243,6 +323,8 @@ func create_and_join(solo_bots: Array, solo: bool) -> void:
 
 func resume_seat() -> void:
 	_guide.begin_training()
+	_expect_room = true
+	_hold_veil()
 	_solo_bots = []
 	_solo = false
 	Net.is_solo = false
@@ -252,6 +334,8 @@ func resume_seat() -> void:
 
 func join_room(code: String) -> void:
 	_guide.begin_training()
+	_expect_room = true
+	_hold_veil()
 	_solo_bots = []
 	_solo = false
 	Net.is_solo = false
@@ -262,6 +346,7 @@ func join_room(code: String) -> void:
 func leave_to_menu() -> void:
 	if Net.is_solo and not Net.is_local():
 		Net.send({"t": "abandon"})
+	_expect_room = false
 	Net.leave()
 	_solo_bots = []
 	_solo = false
@@ -299,12 +384,21 @@ func _on_connection(online: bool) -> void:
 
 
 func _on_state(state: Dictionary) -> void:
+	# Late messages from a room we already left must not bring any old screen back
+	if not _expect_room or Net.room_code == "":
+		return
 	var phase := str(state.get("phase", ""))
 	match phase:
 		"lobby":
-			if _screen_kind != "lobby":
+			if Net.is_solo or _solo:
+				# Solo practice passes through the room lobby while bots are added: keep loading
+				if _screen_kind != "game" and not _veil_holding():
+					_hold_veil()
+			elif _screen_kind != "lobby":
 				var l := LobbyScreen.new()
 				l.main = self
+				# Hidden by default; shown only by the switch below, under the veil
+				l.visible = false
 				_set_screen("lobby", l)
 		"playing":
 			if _screen_kind != "game":
