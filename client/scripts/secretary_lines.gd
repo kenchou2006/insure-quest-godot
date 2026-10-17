@@ -3,6 +3,7 @@ extends RefCounted
 ## voice follow the secretary the player chose. Screens only name the state; the lines live here.
 
 const STATES := {
+	"hall_intro": ["這裡是新人顧問培訓大廳，你可以選擇單人實戰或多人演練。", "第一次培訓建議從單人實戰開始，我會在關鍵時刻提醒你。"],
 	"training_entry": ["接下來，我會依照你的進度安排培訓任務。需要協助時，可以點擊秘書圖示。"],
 	"first_assignment": ["這是你的第一位培訓客戶。先接受任務，再查看客戶留下的線索。"],
 	"dossier_unlocking": ["正在開啟客戶檔案。"],

@@ -16,8 +16,6 @@ const BOLD := preload("res://assets/fonts/bold.tres")
 const LOGO := preload("res://assets/startup/title.png")
 const LOGO_CROP := Rect2(8, 10, 1944, 760)
 
-## The secretary greets once per app session; later visits start with the round portrait
-static var _hall_guided := false
 
 var main: Node
 var _name: LineEdit
@@ -210,9 +208,17 @@ func _build_ui() -> void:
 		var guide: Control = main.secretary_guide()
 		if guide != null:
 			sel = str(guide.selected_secretary())
-	# First visit this session opens the dialog (with voice); later visits start as the round portrait
-	_secretary.setup(sel, not _hall_guided and not _phone)
-	_hall_guided = true
+	# The hall greeting runs as the secretary's 強制聚焦導覽 (first time only); the corner keeps the
+	# round portrait (replays it) or, for 自行挑戰, the 「開啟引導」 pill
+	_secretary.use_tutorial = sel != "none"
+	_secretary.setup(sel, false)
+	_secretary.portrait_pressed.connect(func(): _hall_tutorial(true))
+	if sel != "none" and not Engine.is_editor_hint():
+		# After the screen switch has finished (the switch dismisses any open dialog)
+		get_tree().create_timer(0.4).timeout.connect(func():
+			if is_instance_valid(self) and is_inside_tree():
+				_hall_tutorial(false)
+		)
 
 	_build_identity_popup()
 	_refresh_auth_ui()
@@ -658,6 +664,20 @@ func _intro() -> void:
 		var tw := create_tween()
 		tw.tween_interval(0.06 * i)
 		tw.tween_property(n, "modulate:a", 1.0, 0.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+
+## Hall greeting with both mode cards kept bright; replay=true from the corner portrait
+func _hall_tutorial(replay: bool) -> void:
+	if main == null or not main.has_method("secretary_guide"):
+		return
+	var guide: Control = main.secretary_guide()
+	if guide == null:
+		return
+	var targets := {"hall_intro": [_solo_card, _multi_card]}
+	if replay:
+		guide.replay_states(["hall_intro"], targets)
+	else:
+		guide.show_states(["hall_intro"], targets)
 
 
 ## Gold rule with a small diamond under the hall title

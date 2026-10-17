@@ -6,8 +6,12 @@ extends Control
 ## Kevin a male one. "none" (自行挑戰): no portrait, no automatic speech, only a small 「開啟引導」 pill.
 ## Closing shrinks the dialog into a round portrait (or the pill) that reopens it.
 
+signal portrait_pressed
+
 const LineIcon := preload("res://scripts/ui/line_icon.gd")
 const HallButton := preload("res://scripts/ui/hall_button.gd")
+## When true the round portrait asks the training secretary (強制聚焦導覽) instead of this dialog
+var use_tutorial := false
 const SecretaryVoice := preload("res://scripts/secretary_voice.gd")
 const FEMALE := preload("res://assets/startup/advisor_f.png")
 const MALE := preload("res://assets/startup/advisor_m.png")
@@ -206,7 +210,12 @@ func _build() -> void:
 	face.material = UI.get_circle_material()
 	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_avatar.add_child(face)
-	_avatar.pressed.connect(func(): open_dialog(true))
+	_avatar.pressed.connect(func():
+		if use_tutorial:
+			portrait_pressed.emit()
+		else:
+			open_dialog(true)
+	)
 	_avatar.visible = false
 	add_child(_avatar)
 

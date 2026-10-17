@@ -59,6 +59,11 @@ var _confirm: Button
 var _status: Label
 var _mute_icon: Control
 var _entry_said := false
+## Areas the tutorial keeps bright
+var _steps_area: Control
+var _clue_sheet: Control
+var _tool_grid: Control
+var _codex_panel: Control
 
 
 func _ready() -> void:
@@ -214,11 +219,22 @@ func _secretary() -> Control:
 	return null
 
 
-## Names the state; the secretary picks the lines, portrait and voice (and plays each state once)
-func _say(states: Array) -> void:
+## Names the state; the secretary picks the lines, portrait and voice (and plays each state once).
+## First-time teaching runs as the 強制聚焦導覽, keeping these elements bright.
+func _say(states: Array, modal := true) -> void:
 	var g := _secretary()
-	if g and g.has_method("show_states"):
-		g.show_states(states)
+	if g == null or not g.has_method("show_states"):
+		return
+	var targets := {
+		"training_entry": [_steps_area],
+		"first_assignment": [_file, _accept],
+		"later_matching": [_file, _accept],
+		"clue_review": [_clue_sheet],
+		"tool_selection": [_tool_grid],
+		"meeting_ready": [_confirm],
+		"locked_client_info": [_codex_panel],
+	}
+	g.show_states(states, targets, modal)
 
 
 func _say_entry() -> void:
@@ -305,6 +321,9 @@ func _build_steps() -> void:
 	_steps = Control.new()
 	_steps.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_steps)
+	_steps_area = Control.new()
+	_steps_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_steps.add_child(_steps_area)
 	var defs := [["1", "doc_check", "接受任務"], ["2", "search", "看線索"], ["3", "briefcase", "選工具"]]
 	for i in range(defs.size()):
 		var item := StepItem.new(defs[i][0], defs[i][1], defs[i][2])
@@ -415,7 +434,8 @@ func _on_accept() -> void:
 	_codex_link.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_codex_link.modulate.a = 0.4
 	_file.play_unlock()
-	_say(["dossier_unlocking"])
+	# Status line during the unlock animation: corner card, no lock
+	_say(["dossier_unlocking"], false)
 	# Safety: never stay on the file if an animation or image fails
 	get_tree().create_timer(1.5).timeout.connect(func():
 		if is_instance_valid(self) and _step == 1:
@@ -430,7 +450,6 @@ func _go_step(n: int) -> void:
 		return
 	_step = n
 	_sync_steps()
-	_say(["clue_review"] if n == 2 else ["tool_selection"])
 	var build := func():
 		UI.clear(_page)
 		if n == 2:
@@ -438,6 +457,8 @@ func _go_step(n: int) -> void:
 		else:
 			_show_tools()
 		_layout()
+		# After the page exists, so the tutorial can keep its clue sheet / tool grid bright
+		_say(["clue_review"] if n == 2 else ["tool_selection"])
 		if not UI.is_animation_disabled():
 			_page.modulate.a = 0.0
 			create_tween().tween_property(_page, "modulate:a", 1.0, 0.22)
@@ -492,6 +513,7 @@ func _show_clues() -> void:
 
 	# Clue sheet: family, income, budget, goal, background
 	var sheet := PanelContainer.new()
+	_clue_sheet = sheet
 	sheet.add_theme_stylebox_override("panel", _panel_style(Color(C_CARD, 0.94), 20))
 	sheet.custom_minimum_size = Vector2(420 if not UI.is_portrait() else 0, 0)
 	var sv := UI.vbox(12)
@@ -560,6 +582,7 @@ func _show_tools() -> void:
 	head.add_child(UI.label("工具有限，選對工具能提前掌握資料；少了合規檢核表，對話中的說法風險會更高。", 14, C_MUTED, true))
 	body.add_child(head)
 	var tgrid := GridContainer.new()
+	_tool_grid = tgrid
 	tgrid.columns = 1 if UI.is_phone_portrait() else (2 if UI.is_portrait() or UI.is_phone() else 3)
 	tgrid.add_theme_constant_override("h_separation", 12)
 	tgrid.add_theme_constant_override("v_separation", 12)
@@ -649,9 +672,8 @@ func _on_confirm() -> void:
 func _open_codex() -> void:
 	if _accepting:
 		return
-	if (info.get("unlocked", []) as Array).size() < int(info.get("total", 0)):
-		_say(["locked_client_info"])
 	var m := _modal("客戶圖鑑")
+	_codex_panel = (m[1] as Control).get_parent()
 	var v: VBoxContainer = m[1]
 	var unlocked: Array = info.get("unlocked", [])
 	var served: Dictionary = info.get("served", {})
@@ -696,6 +718,9 @@ func _open_codex() -> void:
 			tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			h.add_child(tv)
 		grid.add_child(cell)
+	# First look at locked clients: explain how they unlock, keeping the codex bright
+	if unlocked.size() < int(info.get("total", 0)):
+		_say(["locked_client_info"])
 
 
 func _open_settings() -> void:
@@ -794,6 +819,8 @@ func _layout() -> void:
 	var gap := (44.0 if not portrait else 22.0) * k
 	total += gap * (_step_items.size() - 1)
 	var x := (size.x - total) * 0.5
+	_steps_area.position = Vector2(x - 6.0 * k, sy - 2.0 * k)
+	_steps_area.size = Vector2(total + 12.0 * k, sh + 4.0 * k)
 	for i in range(_step_items.size()):
 		var it: StepItem = _step_items[i]
 		it.position = Vector2(x, sy + (sh - it.size.y) * 0.5)

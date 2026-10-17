@@ -13,11 +13,14 @@ const FEMALE := preload("res://assets/startup/advisor_f.png")
 const MALE := preload("res://assets/startup/advisor_m.png")
 const SecretaryVoice := preload("res://scripts/secretary_voice.gd")
 const SecretaryLines := preload("res://scripts/secretary_lines.gd")
+const TutorialOverlay := preload("res://scripts/ui/tutorial_overlay.gd")
 ## Waist-up and face crops of the cover portraits
 const CROP_F := Rect2(88, 0, 760, 1000)
 const CROP_M := Rect2(128, 0, 760, 1000)
 const FACE_F := Rect2(340, 90, 340, 340)
 const FACE_M := Rect2(320, 60, 340, 340)
+## Bump when the tutorials change, so players who saw the old version get the new one once
+const TUTORIAL_VERSION := 2
 ## Subtitle speed: in step with Mandarin TTS, faster when reading without voice
 const CPS_VOICE := 4.8
 const CPS_READ := 14.0
@@ -48,6 +51,14 @@ var _reflow := false
 var _icon_allowed := false
 var _speaking := false
 var _line_gen := 0
+## Modal tutorial (強制聚焦導覽) for first-time teaching states; compact corner card otherwise
+var _modal := false
+var _line_targets: Array = []
+var _replay_targets: Array = []
+var _line_t0 := 0.0
+var _line_est := 1.0
+var _line_ready := false
+var _overlay: Control
 
 var _card: Panel
 var _portrait: TextureRect
@@ -71,6 +82,8 @@ func _ready() -> void:
 		voice_on = bool(cfg.get_value("guide", "voice_on", true))
 		var seen: Variant = cfg.get_value("guide", "seen_states", [])
 		_seen_states = (seen as Array).duplicate() if seen is Array else []
+		if int(cfg.get_value("guide", "tutorial_version", 1)) < TUTORIAL_VERSION:
+			_seen_states = []
 	# Above full-screen overlays inside the game (case setup sits at z 110)
 	z_index = 120
 	_build()
@@ -132,6 +145,13 @@ func _build() -> void:
 	_icon.pressed.connect(replay)
 	_icon.visible = false
 	add_child(_icon)
+
+	# Modal tutorial on the very top of the secretary layer
+	_overlay = TutorialOverlay.new()
+	add_child(_overlay)
+	_overlay.skip_pressed.connect(func(): _close_modal(true))
+	_overlay.continue_pressed.connect(_on_continue)
+	_overlay.mute_pressed.connect(_toggle_voice)
 
 
 func _small_button(text: String, cb: Callable) -> Button:
@@ -205,6 +225,7 @@ func _save() -> void:
 	cfg.set_value("guide", "selected_secretary", selected_secretary())
 	cfg.set_value("guide", "voice_on", voice_on)
 	cfg.set_value("guide", "seen_states", _seen_states)
+	cfg.set_value("guide", "tutorial_version", TUTORIAL_VERSION)
 	if cfg.save(PREFS) != OK:
 		push_warning("無法保存秘書偏好，本次選擇仍有效。")
 
@@ -214,25 +235,52 @@ func _save() -> void:
 ## State-driven lines (training_entry, first_assignment, …). Each state plays automatically once.
 ## States named together play in order; a later state replaces what is playing, so the secretary
 ## always talks about the screen the player is on (never lagging a step behind).
-## side: "right" (default) or "left"; reflow: shrink the screen instead of overlapping it.
-func show_states(states: Array, side := "right", reflow := false) -> void:
+## targets: state → Controls to keep bright; modal: first-time teaching shown as the 強制聚焦導覽
+## (locks the interface until 「我知道了」 or 「跳過」), otherwise a compact corner card.
+func show_states(states: Array, targets: Dictionary = {}, modal := true, side := "right", reflow := false) -> void:
 	if not enabled:
 		return
 	var lines: Array = []
+	var line_targets: Array = []
 	var replay_lines: Array = []
+	var replay_targets: Array = []
 	for st: String in states:
 		var l := SecretaryLines.lines(st)
-		replay_lines.append_array(l)
+		var t: Array = targets.get(st, [])
+		for line in l:
+			replay_lines.append(line)
+			replay_targets.append(t)
 		if _seen_states.has(st):
 			continue
 		_seen_states.append(st)
-		lines.append_array(l)
+		for line in l:
+			lines.append(line)
+			line_targets.append(t)
 	if not replay_lines.is_empty():
 		_replay_lines = replay_lines
+		_replay_targets = replay_targets if modal else []
 	if lines.is_empty():
 		return
 	_save()
-	_play("state:" + ",".join(states), lines, side, reflow)
+	_play("state:" + ",".join(states), lines, side, reflow, modal, line_targets)
+
+
+## Plays these states again (corner portrait / 再看一次), seen or not, as the modal tutorial
+func replay_states(states: Array, targets: Dictionary = {}) -> void:
+	if not enabled:
+		return
+	var lines: Array = []
+	var line_targets: Array = []
+	for st: String in states:
+		var t: Array = targets.get(st, [])
+		for line in SecretaryLines.lines(st):
+			lines.append(line)
+			line_targets.append(t)
+	if lines.is_empty():
+		return
+	_replay_lines = lines.duplicate()
+	_replay_targets = line_targets.duplicate()
+	_play("replay:" + ",".join(states), lines, "right", false, true, line_targets)
 
 
 ## In-game step lines keyed by turn; shown once per key and reflowing the screen
@@ -245,6 +293,7 @@ func show_lines(key: String, lines: Array, side := "right", reflow := true) -> v
 		return
 	_seen[key] = true
 	_replay_lines = lines.duplicate()
+	_replay_targets = []
 	_play(key, lines, side, reflow)
 
 
@@ -252,25 +301,38 @@ func show_lines(key: String, lines: Array, side := "right", reflow := true) -> v
 func replay() -> void:
 	if not enabled or _replay_lines.is_empty():
 		return
-	_play("replay", _replay_lines.duplicate(), _side, _reflow)
+	var modal := not _replay_targets.is_empty()
+	_play("replay", _replay_lines.duplicate(), _side, _reflow, modal, _replay_targets.duplicate())
 
 
 func is_open() -> bool:
 	return _open
 
 
-func _play(key: String, lines: Array, side: String, reflow: bool) -> void:
+func _play(key: String, lines: Array, side: String, reflow: bool, modal := false, targets: Array = []) -> void:
 	_stop_voice()
+	if _modal and not modal:
+		_overlay.close(true)
 	_active_key = key
 	_lines = lines
+	_line_targets = targets
 	_queue.clear()
 	_index = 0
 	_side = side
-	_reflow = reflow or UI.is_portrait()
+	_modal = modal
+	_reflow = (reflow or UI.is_portrait()) and not modal
 	_open = true
 	visible = true
 	_refresh_art()
 	_icon.visible = false
+	if modal:
+		_card.visible = false
+		# Keyboard focus off the screen behind: nothing there may be activated meanwhile
+		if get_viewport():
+			get_viewport().gui_release_focus()
+		_overlay.show_overlay(_portrait.texture)
+		_update_line()
+		return
 	_card.visible = true
 	_layout()
 	if _reflow:
@@ -291,18 +353,26 @@ func _update_line() -> void:
 	_mute.text = "關閉語音" if voice_on else "開啟語音"
 	_subtitle.text = line
 	_speaking = false
+	_line_ready = false
+	if _modal:
+		_overlay.set_line(_heading.text, line)
+		_overlay.set_mute_label(_mute.text)
+		_overlay.set_targets(_line_targets[_index] if _index < _line_targets.size() else [])
 	if voice_on and _speech_unlocked and _voice != "":
 		_speaking = SecretaryVoice.speak(secretary_id, line)
 	# Subtitles typed in step with the voice (or at reading pace without it)
 	var dur := line.length() / (CPS_VOICE if _speaking else CPS_READ)
+	_line_t0 = Time.get_ticks_msec() / 1000.0
+	_line_est = maxf(dur, 0.3)
+	var label: Label = _overlay.text_label() if _modal else _subtitle
 	if _type_tween:
 		_type_tween.kill()
 	if UI.is_animation_disabled():
-		_subtitle.visible_ratio = 1.0
+		label.visible_ratio = 1.0
 	else:
-		_subtitle.visible_ratio = 0.0
+		label.visible_ratio = 0.0
 		_type_tween = create_tween()
-		_type_tween.tween_property(_subtitle, "visible_ratio", 1.0, dur)
+		_type_tween.tween_property(label, "visible_ratio", 1.0, dur)
 	# Without a voice report (or no voice) the line ends after typing plus reading time
 	var wait := (line.length() * 0.32 + 1.5) if _speaking else (dur + 1.2)
 	get_tree().create_timer(wait).timeout.connect(func():
@@ -322,6 +392,12 @@ func _line_done() -> void:
 	if _type_tween:
 		_type_tween.kill()
 	_subtitle.visible_ratio = 1.0
+	if _modal:
+		# Spoken: offer 「繼續」 / 「我知道了」 and wait for the player
+		_line_ready = true
+		_overlay.set_progress(1.0, "語音完成" if voice_on and _voice != "" else "字幕完成")
+		_overlay.show_continue("繼續" if _index < _lines.size() - 1 else "我知道了")
+		return
 	_line_gen += 1
 	gen = _line_gen
 	_index += 1
@@ -344,6 +420,9 @@ func _line_done() -> void:
 
 ## Next line now (kept for the step-through test and keyboard use)
 func _advance() -> void:
+	if _modal:
+		_on_continue()
+		return
 	_stop_voice()
 	_line_gen += 1
 	_index += 1
@@ -364,11 +443,16 @@ func _toggle_voice() -> void:
 		_stop_voice()
 		_speaking = false
 	_mute.text = "關閉語音" if voice_on else "開啟語音"
+	if _overlay:
+		_overlay.set_mute_label(_mute.text)
 	_heading.text = _heading.text.trim_suffix(" · 字幕") + ("" if voice_on and _voice != "" else " · 字幕")
 
 
 ## 「略過」 / end of the lines: dialog shrinks to the round portrait in the bottom-right
 func _collapse() -> void:
+	if _modal:
+		_close_modal(false)
+		return
 	_stop_voice()
 	_line_gen += 1
 	_queue.clear()
@@ -386,12 +470,66 @@ func dismiss() -> void:
 	_stop_voice()
 	_line_gen += 1
 	_queue.clear()
+	if _modal and _overlay:
+		_overlay.close(true)
+	_modal = false
 	_open = false
 	if _card:
 		_card.visible = false
 	dock_changed.emit(0.0)
 	if _icon:
 		_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
+
+
+## 「繼續」 / 「我知道了」: next line, or close and give the interface back
+func _on_continue() -> void:
+	if not _open or not _modal:
+		return
+	_stop_voice()
+	_line_gen += 1
+	_index += 1
+	if _index < _lines.size():
+		_update_line()
+	else:
+		_close_modal(false)
+
+
+## Ends the modal tutorial — finished or 「跳過」 — and always unlocks the interface
+func _close_modal(instant: bool) -> void:
+	_stop_voice()
+	_line_gen += 1
+	if _type_tween:
+		_type_tween.kill()
+	_queue.clear()
+	_open = false
+	_modal = false
+	_line_ready = false
+	if _overlay:
+		_overlay.close(instant)
+	_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
+	_layout()
+
+
+func _process(_delta: float) -> void:
+	if not (_open and _modal and _overlay) or _line_ready:
+		return
+	var t := Time.get_ticks_msec() / 1000.0 - _line_t0
+	var p := clampf(t / _line_est, 0.0, 0.98)
+	var speaking := voice_on and _speaking
+	_overlay.set_progress(p, ("語音播放中 %d%%" if speaking else "字幕 %d%%") % roundi(p * 100.0))
+
+
+## Esc skips, Enter / Space continues once the line has been spoken; nothing reaches the screen
+func _input(event: InputEvent) -> void:
+	if not (_open and _modal) or not event is InputEventKey or not event.pressed:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_close_modal(true)
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("ui_accept"):
+		if _line_ready:
+			_on_continue()
+		get_viewport().set_input_as_handled()
 
 
 func _stop_voice() -> void:

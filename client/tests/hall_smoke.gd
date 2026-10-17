@@ -52,7 +52,8 @@ func _hall(sel: String, view := Vector2(1280, 720)) -> Array:
 	stub.guide = guide
 	guide.enabled = sel != "none"
 	guide.role = sel if sel != "none" else "female"
-	MenuScript.set("_hall_guided", false)
+	guide.secretary_id = {"female": "aly", "male": "kevin"}.get(sel, "none")
+	guide._seen_states = []
 	var m: Control = MenuScript.new()
 	m.main = stub
 	m.size = view
@@ -75,16 +76,24 @@ func _portraits(n: Node) -> Array:
 func _run() -> void:
 	MenuScript = load("res://scripts/ui/menu.gd")
 	GuideScript = load("res://scripts/ui/training_secretary.gd")
-	# Female secretary: Aly from the cover's left portrait, labelled 女性培訓秘書
+	# The secretary saves its state: keep the player's own file untouched
+	var prefs: String = GuideScript.PREFS
+	var had := FileAccess.file_exists(prefs)
+	var backup := FileAccess.get_file_as_string(prefs) if had else ""
+	# Female secretary: Aly from the cover's left portrait; the greeting is a 強制聚焦導覽
 	var r := await _hall("female")
 	var m: Control = r[0]
 	var sec = m._secretary
+	var g: Control = (r[1] as MainStub).guide
 	check(sec.selected_secretary == "female" and sec.secretary_id == "aly", "female → aly")
-	check(sec.is_open, "female: dialog opens on the first visit")
-	check(sec._heading.text.begins_with("女性培訓秘書"), "female heading (%s)" % sec._heading.text)
+	check(g.is_open() and g._overlay.visible, "female: hall greeting opens as the modal tutorial")
+	check(g._heading.text.begins_with("女性培訓秘書"), "female heading (%s)" % g._heading.text)
+	check(g._overlay.holes().size() == 2, "both mode cards kept bright")
 	var ps := _portraits(m)
 	check(ps.has(FEMALE) and not ps.has(MALE), "only the female cover portrait is shown")
-	check(sec._text.text == sec.LINES[0], "first line shown")
+	check(g._subtitle.text == g.SecretaryLines.lines("hall_intro")[0], "first greeting line shown")
+	g._close_modal(true)
+	check(not g.is_open() and not g._overlay.visible, "greeting closes and unlocks")
 	for card in [m._solo_card, m._multi_card]:
 		check(not sec.occupied_rect().intersects(card.get_rect()), "dialog clear of %s" % card.title)
 	# Solo options appear only after picking 單人實戰
@@ -95,16 +104,12 @@ func _run() -> void:
 	check(not sec.occupied_rect().intersects(m._solo_opts.get_rect()), "dialog clear of solo options")
 	m._pick_mode("multi")
 	check(not m._solo_opts.visible, "solo options hidden for multi")
-	# Lines: 下一句 → 開始選擇 → collapses to the round portrait
-	sec._advance()
-	check(sec._text.text == sec.LINES[1], "second line")
-	check(sec._next.label_text == "開始選擇", "last line button reads 開始選擇")
-	sec._advance()
-	await _wait(0.5)
-	check(not sec.is_open and sec._avatar.visible, "closing collapses to the round portrait")
+	# Corner portrait replays the greeting tutorial
+	check(not sec.is_open and sec._avatar.visible, "hall keeps the round portrait in the corner")
 	sec._avatar.pressed.emit()
-	await _wait(0.5)
-	check(sec.is_open and sec._index == 0, "round portrait reopens the dialog")
+	await _wait(0.3)
+	check(g.is_open() and g._modal, "round portrait replays the greeting")
+	g._close_modal(true)
 	# 進入單人實戰 starts solo with the existing defaults (2 senior AI advisors)
 	var stub: MainStub = r[1]
 	m._solo_card.activated.emit()
@@ -123,8 +128,10 @@ func _run() -> void:
 	r = await _hall("male")
 	m = r[0]
 	sec = m._secretary
+	g = (r[1] as MainStub).guide
 	check(sec.secretary_id == "kevin", "male → kevin")
-	check(sec._heading.text.begins_with("男性培訓秘書"), "male heading (%s)" % sec._heading.text)
+	check(g._heading.text.begins_with("男性培訓秘書"), "male heading (%s)" % g._heading.text)
+	g._close_modal(true)
 	ps = _portraits(m)
 	check(ps.has(MALE) and not ps.has(FEMALE), "only the male cover portrait is shown")
 	m.queue_free()
@@ -135,7 +142,8 @@ func _run() -> void:
 	r = await _hall("none")
 	m = r[0]
 	sec = m._secretary
-	check(not sec.is_open, "solo challenge: no automatic dialog")
+	g = (r[1] as MainStub).guide
+	check(not sec.is_open and not g.is_open(), "solo challenge: no automatic dialog or tutorial")
 	check(sec._pill.visible and not sec._avatar.visible, "solo challenge: 開啟引導 pill only")
 	check(_portraits(m).is_empty(), "solo challenge: no secretary portrait")
 	sec.open_dialog(false)
@@ -155,6 +163,12 @@ func _run() -> void:
 	r[1].queue_free()
 	UI.set_layout_profile("desktop", Vector2i(1280, 720))
 	await _wait(0.1)
+	if had:
+		var f := FileAccess.open(prefs, FileAccess.WRITE)
+		f.store_string(backup)
+		f.close()
+	elif FileAccess.file_exists(prefs):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(prefs))
 
 	print("hall_smoke: ", "OK" if failures == 0 else "%d failure(s)" % failures)
 	quit(1 if failures else 0)
