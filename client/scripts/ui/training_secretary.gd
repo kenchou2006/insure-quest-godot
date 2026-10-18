@@ -15,6 +15,8 @@ const SecretaryVoice := preload("res://scripts/secretary_voice.gd")
 const SecretaryLines := preload("res://scripts/secretary_lines.gd")
 const TutorialOverlay := preload("res://scripts/ui/tutorial_overlay.gd")
 const UiLock := preload("res://scripts/ui_lock.gd")
+const SecretaryFocus := preload("res://scripts/ui/secretary_focus.gd")
+const LineIcon := preload("res://scripts/ui/line_icon.gd")
 ## Waist-up and face crops of the cover portraits
 const CROP_F := Rect2(88, 0, 760, 1000)
 const CROP_M := Rect2(128, 0, 760, 1000)
@@ -60,6 +62,15 @@ var _line_t0 := 0.0
 var _line_est := 1.0
 var _line_ready := false
 var _overlay: Control
+## Pages whose focus guide has been seen (guide_seen["map"]); saved with the secretary choice
+var guide_seen: Dictionary = {}
+## Map page: the small 培訓秘書 entry, the focus guide, and what the game screen reported
+var _focus: SecretaryFocus
+var _map_pill: Button
+var _map_active := false
+var _map_ctx: Dictionary = {}
+var _map_auto_gen := 0
+var _focus_speaking := false
 
 var _card: Panel
 var _portrait: TextureRect
@@ -83,6 +94,8 @@ func _ready() -> void:
 		voice_on = bool(cfg.get_value("guide", "voice_on", true))
 		var seen: Variant = cfg.get_value("guide", "seen_states", [])
 		_seen_states = (seen as Array).duplicate() if seen is Array else []
+		var gs: Variant = cfg.get_value("guide", "guide_seen", {})
+		guide_seen = (gs as Dictionary).duplicate() if gs is Dictionary else {}
 		if int(cfg.get_value("guide", "tutorial_version", 1)) < TUTORIAL_VERSION:
 			_seen_states = []
 	# Above full-screen overlays inside the game (case setup sits at z 110)
@@ -148,6 +161,156 @@ func _build() -> void:
 	_icon.pressed.connect(replay)
 	_icon.visible = false
 	add_child(_icon)
+	_build_map_entry()
+
+
+## Map page: the small 「培訓秘書」 entry in the bottom-right and the focus guide it opens
+func _build_map_entry() -> void:
+	_map_pill = Button.new()
+	_map_pill.name = "SecretaryEntry"
+	_map_pill.focus_mode = Control.FOCUS_NONE
+	_map_pill.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_map_pill.tooltip_text = "培訓秘書：地圖導覽"
+	var pill_sb := StyleBoxFlat.new()
+	pill_sb.bg_color = Color("#0B3A33", 0.96)
+	pill_sb.set_corner_radius_all(40)
+	pill_sb.set_border_width_all(1)
+	pill_sb.border_color = Color(UI.GOLD, 0.8)
+	pill_sb.shadow_color = Color(0, 0, 0, 0.3)
+	pill_sb.shadow_size = 8
+	pill_sb.anti_aliasing = true
+	for st: String in ["normal", "hover", "pressed", "focus", "hover_pressed"]:
+		_map_pill.add_theme_stylebox_override(st, pill_sb)
+	var face := TextureRect.new()
+	face.name = "Face"
+	face.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	face.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	face.material = UI.get_circle_material()
+	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_map_pill.add_child(face)
+	var chat: Control = LineIcon.new("chat_user", UI.GOLD, 1.8)
+	chat.name = "Chat"
+	_map_pill.add_child(chat)
+	var lbl := Label.new()
+	lbl.name = "Text"
+	lbl.text = "培訓秘書"
+	lbl.add_theme_color_override("font_color", UI.TEXT)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_map_pill.add_child(lbl)
+	# hover: brighter; pressed: 96%
+	_map_pill.mouse_entered.connect(func(): _map_pill.self_modulate = Color(1.15, 1.15, 1.15))
+	_map_pill.mouse_exited.connect(func(): _map_pill.self_modulate = Color.WHITE)
+	_map_pill.button_down.connect(func(): _map_pill.scale = Vector2.ONE * 0.96)
+	_map_pill.button_up.connect(func(): _map_pill.scale = Vector2.ONE)
+	_map_pill.pressed.connect(open_map_guide)
+	_map_pill.visible = false
+	add_child(_map_pill)
+	_focus = SecretaryFocus.new()
+	_focus.name = "SecretaryGuide"
+	_focus.speak_line = _speak_focus_line
+	_focus.stop_voice = _stop_focus_voice
+	_focus.finished.connect(_on_focus_finished)
+	_focus.voice_toggled.connect(func(on: bool):
+		voice_on = on
+		_save()
+	)
+	add_child(_focus)
+
+
+## Game screen, every state: whether the map page is what the player sees, and its context
+## (client_name from the player's case, focus = 「前往下一站」). First visit plays the guide once.
+func map_page(active: bool, ctx: Dictionary = {}) -> void:
+	_map_ctx = ctx
+	active = active and enabled
+	if active == _map_active:
+		_sync_map_entry()
+		return
+	_map_active = active
+	_map_auto_gen += 1
+	if not active:
+		if _focus and _focus.guide_active:
+			_focus.end_secretary_focus("left_map")
+		_sync_map_entry()
+		return
+	# The map's own entry replaces the corner card and round portrait here
+	if _open and not _modal:
+		dismiss()
+	_sync_map_entry()
+	if not bool(guide_seen.get("map", false)):
+		var gen := _map_auto_gen
+		get_tree().create_timer(0.8).timeout.connect(func():
+			if gen == _map_auto_gen and _map_active and not bool(guide_seen.get("map", false)):
+				open_map_guide()
+		)
+
+
+func is_map_guide_active() -> bool:
+	return _focus != null and _focus.guide_active
+
+
+## 「培訓秘書」 (or the first visit): the focus guide for the map page
+func open_map_guide() -> void:
+	if not enabled or not _map_active or _focus == null or _focus.guide_active:
+		return
+	if _open:
+		dismiss()
+	_refresh_art()
+	var lines: Array = SecretaryLines.lines("map_intro")
+	var client := str(_map_ctx.get("client_name", "")).strip_edges()
+	if client != "":
+		lines.append(SecretaryLines.lines("map_client")[0].replace("{client_name}", client))
+	else:
+		lines.append(SecretaryLines.lines("map_no_client")[0])
+	_focus.origin_rect = _map_pill.get_global_rect() if _map_pill.visible else Rect2()
+	var who := "女性培訓秘書 · Aly" if secretary_id != "kevin" else "男性培訓秘書 · Kevin"
+	_icon.visible = false
+	_map_pill.visible = false
+	_focus.begin_secretary_focus("map", lines, selected_secretary(), _portrait.texture, who, voice_on)
+
+
+func _on_focus_finished(page: String, _reason: String) -> void:
+	_focus_speaking = false
+	if page != "":
+		guide_seen[page] = true
+		_save()
+	_sync_map_entry()
+	# Hand the controls back: focus on the page's main action (前往下一站)
+	var target: Variant = _map_ctx.get("focus")
+	if target is Control and is_instance_valid(target) and (target as Control).is_visible_in_tree():
+		var c := target as Control
+		if c.focus_mode == Control.FOCUS_NONE:
+			c.focus_mode = Control.FOCUS_ALL
+		c.grab_focus()
+
+
+func _sync_map_entry() -> void:
+	if _map_pill == null:
+		return
+	_map_pill.visible = _map_active and enabled and not (_focus and _focus.guide_active)
+	_sync_icon()
+	_layout()
+
+
+## Round corner portrait (training screens other than the map, after a line)
+func _sync_icon() -> void:
+	if _icon:
+		_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty() and not _open and not _map_active
+
+
+func _speak_focus_line(line: String) -> bool:
+	_find_voice()
+	_focus_speaking = false
+	if voice_on and _speech_unlocked and _voice != "":
+		_focus_speaking = SecretaryVoice.speak(secretary_id, line)
+	return _focus_speaking
+
+
+func _stop_focus_voice() -> void:
+	# Clear first: stopping reports "speech ended", which must not end the next line
+	var was := _focus_speaking
+	_focus_speaking = false
+	if _speech_unlocked or was:
+		SecretaryVoice.stop()
 
 
 ## The modal tutorial layer exists only while a secretary is chosen (自行挑戰: never created)
@@ -265,6 +428,7 @@ func _save() -> void:
 	cfg.set_value("guide", "selected_secretary", selected_secretary())
 	cfg.set_value("guide", "voice_on", voice_on)
 	cfg.set_value("guide", "seen_states", _seen_states)
+	cfg.set_value("guide", "guide_seen", guide_seen)
 	cfg.set_value("guide", "tutorial_version", TUTORIAL_VERSION)
 	if cfg.save(PREFS) != OK:
 		push_warning("無法保存秘書偏好，本次選擇仍有效。")
@@ -448,6 +612,10 @@ func _update_line() -> void:
 
 
 func _on_speech_ended() -> void:
+	if _focus and _focus.guide_active and _focus_speaking:
+		_focus_speaking = false
+		_focus.on_voice_ended()
+		return
 	if _open and _speaking:
 		_speaking = false
 		_line_done()
@@ -526,7 +694,7 @@ func _collapse() -> void:
 	_card.visible = false
 	if _reflow:
 		dock_changed.emit(0.0)
-	_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
+	_sync_icon()
 	_layout()
 	if _icon.visible and not UI.is_animation_disabled():
 		UI.pop_in(_icon, 0.2)
@@ -544,8 +712,7 @@ func dismiss() -> void:
 	if _card:
 		_card.visible = false
 	dock_changed.emit(0.0)
-	if _icon:
-		_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
+	_sync_icon()
 
 
 ## 「繼續」 / 「我知道了」: next line, or close and give the interface back
@@ -572,7 +739,7 @@ func _close_modal(instant: bool) -> void:
 	_modal = false
 	_line_ready = false
 	_hide_overlay()
-	_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
+	_sync_icon()
 	_layout()
 	UiLock.log_event("secretary_modal_close:" + ("skip" if instant else "done"))
 
@@ -623,6 +790,11 @@ func apply_secretary_selection() -> void:
 		_stop_voice()
 		dismiss()
 		_drop_overlay()
+		if _focus:
+			_focus.end_secretary_focus("no_secretary")
+		_map_active = false
+		if _map_pill:
+			_map_pill.visible = false
 		_voice = ""
 		if _card:
 			_card.visible = false
@@ -633,16 +805,23 @@ func apply_secretary_selection() -> void:
 	_refresh_art()
 	_find_voice()
 	_ensure_overlay()
-	if not _open and _icon:
-		_icon.visible = _icon_allowed and not _replay_lines.is_empty()
+	_sync_icon()
 
 
 func screen_changed(kind: String) -> void:
 	dismiss()
 	_active_key = ""
+	# Leaving the map (or any screen change): the focus guide ends and the entry goes until the
+	# game screen reports the map again
+	if _focus:
+		_focus.end_secretary_focus("scene_change")
+	_map_active = false
+	_map_auto_gen += 1
+	if _map_pill:
+		_map_pill.visible = false
 	# The corner portrait belongs to training screens; the hall and setup screens have their own
 	_icon_allowed = kind in ["game", "report"]
-	_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
+	_sync_icon()
 	apply_secretary_selection()
 	_layout()
 	if kind == "report":
@@ -679,7 +858,8 @@ func observe(state: Dictionary) -> void:
 				dismiss()
 			_active_key = key
 	elif str(state.get("turnStage", "")) == "roll":
-		show_lines(turn_key, ["輪到你了！擲出骰子，前往城市中的下一個培訓任務。"])
+		if not _map_active:
+			show_lines(turn_key, ["輪到你了！擲出骰子，前往城市中的下一個培訓任務。"])
 	else:
 		if _open and not _active_key.begins_with("state:"):
 			dismiss()
@@ -706,6 +886,8 @@ func _refresh_art() -> void:
 	f.atlas = MALE if male else FEMALE
 	f.region = FACE_M if male else FACE_F
 	(_icon.get_node("Face") as TextureRect).texture = f
+	if _map_pill:
+		(_map_pill.get_node("Face") as TextureRect).texture = f
 
 
 func _layout() -> void:
@@ -744,6 +926,22 @@ func _layout() -> void:
 	var face: TextureRect = _icon.get_node("Face")
 	face.position = Vector2(3, 3)
 	face.size = Vector2(a - 6, a - 6)
+	if _map_pill:
+		var ph := 46.0 * k
+		var lbl: Label = _map_pill.get_node("Text")
+		lbl.add_theme_font_size_override("font_size", roundi(15 * k))
+		lbl.reset_size()
+		var pf: TextureRect = _map_pill.get_node("Face")
+		var chat: Control = _map_pill.get_node("Chat")
+		pf.size = Vector2(ph - 8, ph - 8)
+		chat.size = Vector2(18, 18) * k
+		var pill_w := 6.0 + pf.size.x + 10.0 * k + chat.size.x + 6.0 * k + lbl.size.x + 18.0 * k
+		_map_pill.size = Vector2(pill_w, ph)
+		_map_pill.pivot_offset = _map_pill.size * 0.5
+		_map_pill.position = Vector2(size.x - margin - pill_w, size.y - margin - ph - float(_map_ctx.get("entry_bottom", 0.0)))
+		pf.position = Vector2(4, 4)
+		chat.position = Vector2(pf.position.x + pf.size.x + 10.0 * k, (ph - chat.size.y) * 0.5)
+		lbl.position = Vector2(chat.position.x + chat.size.x + 6.0 * k, (ph - lbl.size.y) * 0.5)
 
 
 func _exit_tree() -> void:

@@ -449,6 +449,9 @@ func _build_ui() -> void:
 	side_sb.border_color = Color(1, 1, 1, 0.08)
 	side_sb.border_width_left = 1
 	side_sb.set_content_margin_all(16 if not UI.is_phone() else 12)
+	# The secretary's 培訓秘書 entry sits in a strip of its own under the task panel, covering nothing
+	if not portrait and _secretary_on():
+		side_sb.content_margin_bottom = 74
 	_side_panel.add_theme_stylebox_override("panel", side_sb)
 	if not portrait:
 		var side_w: float = 260.0 if UI.is_phone_landscape() else clampf(size.x * 0.30, 320.0, 440.0)
@@ -839,6 +842,30 @@ func _sync_case_setup(s: Dictionary) -> void:
 		_case_setup = null
 	if _case_setup != null and is_instance_valid(_case_setup):
 		_keep_case_setup_first()
+
+
+## The map page (board + task panel, nothing on top) is what the player sees: the secretary shows
+## its 培訓秘書 entry there and plays the map focus guide on the first visit
+func _sync_map_guide(s: Dictionary) -> void:
+	if main == null or not main.has_method("secretary_guide"):
+		return
+	var g: Node = main.secretary_guide()
+	if g == null or not g.has_method("map_page"):
+		return
+	var on_map := str(s.get("phase", "")) == "playing" and not Net.spectator \
+		and (_case_setup == null or not is_instance_valid(_case_setup)) \
+		and not (s.get("session") is Dictionary) and not (s.get("event") is Dictionary) \
+		and (_announcement_modal == null or not is_instance_valid(_announcement_modal))
+	var mc: Variant = Net.me().get("mainCase")
+	var client_name := str((mc as Dictionary).get("clientName", "")) if mc is Dictionary else ""
+	# Portrait: the entry stays above the bottom tab bar
+	var bottom := _tab_bar.size.y if UI.is_portrait() and _tab_bar != null and is_instance_valid(_tab_bar) else 0.0
+	g.map_page(on_map, {"client_name": client_name, "focus": _roll_btn, "entry_bottom": bottom})
+
+
+func _secretary_on() -> bool:
+	var g: Node = main.secretary_guide() if main != null and main.has_method("secretary_guide") else null
+	return g != null and bool(g.get("enabled"))
 
 
 ## Clicks go to the last child, not to the highest z_index: a layer added after the case setup but
@@ -1384,6 +1411,7 @@ func refresh(s: Dictionary) -> void:
 	_refresh_timeline()
 	_refresh_hud(s, mine, cur_name, stage, round_num)
 	_sync_case_setup(s)
+	_sync_map_guide(s)
 	_refresh_task(s, mine, cur_name, stage, done_count, quests.size())
 	_refresh_client(s)
 	_refresh_record(s)
