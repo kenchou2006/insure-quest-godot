@@ -98,6 +98,7 @@ const TILE_HINTS := {
 const SessionPanel := preload("res://scripts/ui/session_panel.gd")
 const EventPanel := preload("res://scripts/ui/event_panel.gd")
 const CaseSetup := preload("res://scripts/ui/case_setup.gd")
+const UiLock := preload("res://scripts/ui_lock.gd")
 
 var main: Node
 var _board: Control
@@ -247,7 +248,17 @@ func _ready() -> void:
 
 
 func on_layout_changed(_is_portrait: bool) -> void:
+	# The case setup keeps its step, client and packed tools through the rebuild
+	var keep: Control = _case_setup if _case_setup != null and is_instance_valid(_case_setup) else null
+	if keep:
+		keep.set("_moving", true)
+		remove_child(keep)
 	_build_ui()
+	if keep:
+		_case_setup = keep
+		add_child(keep)
+		keep.set("_moving", false)
+		keep.call("refresh_layout")
 	if not Net.state.is_empty():
 		refresh(Net.state)
 
@@ -571,7 +582,7 @@ func _build_ui() -> void:
 
 	if not Engine.is_editor_hint():
 		Portraits.add_player_avatar_callback(_on_player_avatar_loaded)
-		if Net != null:
+		if Net != null and not Net.avatar_loaded.is_connected(_on_player_avatar_loaded):
 			Net.avatar_loaded.connect(_on_player_avatar_loaded)
 
 
@@ -826,6 +837,19 @@ func _sync_case_setup(s: Dictionary) -> void:
 	elif not need and _case_setup != null and is_instance_valid(_case_setup):
 		_case_setup.queue_free()
 		_case_setup = null
+	if _case_setup != null and is_instance_valid(_case_setup):
+		_keep_case_setup_first()
+
+
+## Clicks go to the last child, not to the highest z_index: a layer added after the case setup but
+## drawn under it would take every click while staying out of sight. Keep the case setup after it.
+func _keep_case_setup_first() -> void:
+	for i in range(_case_setup.get_index() + 1, get_child_count()):
+		var c := get_child(i)
+		if c is CanvasItem and (c as CanvasItem).visible and (c as CanvasItem).z_index < _case_setup.z_index:
+			move_child(_case_setup, get_child_count() - 1)
+			UiLock.log_event("case_setup_to_front (over %s)" % c.name)
+			return
 
 
 func _panel_header(icon_kind: String, title: String) -> HBoxContainer:

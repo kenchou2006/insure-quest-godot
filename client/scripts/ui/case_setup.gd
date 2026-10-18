@@ -13,6 +13,7 @@ const LineIcon := preload("res://scripts/ui/line_icon.gd")
 const MissionFile := preload("res://scripts/ui/mission_file.gd")
 const BriefcaseView := preload("res://scripts/ui/briefcase_view.gd")
 const BriefcaseData := preload("res://scripts/briefcase_data.gd")
+const UiLock := preload("res://scripts/ui_lock.gd")
 const BG := preload("res://assets/startup/loading.png")
 const BG_SHADER := preload("res://assets/startup/hall_backdrop.gdshader")
 const LOGO := preload("res://assets/startup/title.png")
@@ -76,6 +77,10 @@ var _status: Label
 var _mute_icon: Control
 var _entry_said := false
 var _built_step := 1
+## Set while the game screen re-attaches this overlay after a layout change (not a real exit)
+var _moving := false
+## Over the done 「看線索」 step on the briefcase page: back to the clues, packed tools kept
+var _back_btn: Button
 ## Areas the tutorial keeps bright
 var _steps_area: Control
 var _clue_sheet: Control
@@ -276,7 +281,30 @@ func _enter_page() -> void:
 
 
 func _exit_tree() -> void:
-	_reset_tutorial()
+	if not _moving:
+		_reset_tutorial()
+
+
+## Lock trace: waiting on the accept animation, the briefcase switch or the server
+func is_busy() -> bool:
+	return (_step == 1 and _accepting) or _opening_tools or _sent
+
+
+## Orientation / size class changed while open: rebuild this page from the same state
+## (step, client, found clues and packed tools are kept; nothing restarts)
+func refresh_layout() -> void:
+	match _step:
+		1:
+			if not _accepting:
+				_show_mission()
+		2:
+			UI.clear(_page)
+			_show_clues()
+		_:
+			UI.clear(_page)
+			_show_tools()
+	_layout()
+	UiLock.log_event("case_setup_relayout")
 
 
 func _say_entry() -> void:
@@ -397,6 +425,20 @@ func _build_steps() -> void:
 		var item := StepItem.new(defs[i][0], defs[i][1], defs[i][2])
 		_steps.add_child(item)
 		_step_items.append(item)
+		if i == 0:
+			_back_btn = Button.new()
+			_back_btn.name = "BackToCluesButton"
+			_back_btn.flat = true
+			_back_btn.focus_mode = Control.FOCUS_NONE
+			_back_btn.tooltip_text = "回到看線索（已選的工具會保留）"
+			_back_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			for st: String in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
+				_back_btn.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+			_back_btn.pressed.connect(_return_to_clues)
+			_back_btn.mouse_entered.connect(func(): item.set_hover(true))
+			_back_btn.mouse_exited.connect(func(): item.set_hover(false))
+			_back_btn.visible = false
+			_steps.add_child(_back_btn)
 		if i < defs.size() - 1:
 			var chev: Control = LineIcon.new("chevron_r", Color(C_MUTED, 0.6), 1.8)
 			chev.name = "Chev%d" % i
@@ -413,6 +455,28 @@ func _sync_steps() -> void:
 		it.set_def(defs[i][0], defs[i][1], defs[i][2])
 		var cur := 2 if briefcase else _step
 		it.set_state("active" if i + 1 == cur else ("done" if i + 1 < cur else "todo"))
+	if _back_btn:
+		_back_btn.visible = briefcase
+		if not briefcase:
+			(_step_items[0] as StepItem).set_hover(false)
+
+
+## Briefcase → clues again (the done 「看線索」 step): same client, found clues and packed tools
+func _return_to_clues() -> void:
+	if _step != 3 or _sent:
+		return
+	Sound.play("click", self)
+	_step = 2
+	_built_step = 2
+	_opening_tools = false
+	_sync_steps()
+	_enter_page()
+	UI.clear(_page)
+	_briefcase = null
+	_show_clues()
+	_layout()
+	_fade_in_page()
+	UiLock.log_event("case_back_to_clues")
 
 
 # --- Step 1: accept the assigned training file -------------------------------------------------
@@ -500,6 +564,7 @@ func _on_accept() -> void:
 	if _accepting or not _ready_to_accept:
 		return
 	_accepting = true
+	UiLock.log_event("case_accept")
 	Sound.play("doc_confirm", self)
 	_accept.set_loading("任務資料解鎖中…")
 	_card_label.text = "正在開啟首次任務" if bool(info.get("first_time", true)) else "正在開啟培訓任務"
@@ -524,8 +589,10 @@ func _go_step(n: int) -> void:
 	_step = n
 	_sync_steps()
 	_enter_page()
+	UiLock.log_event("case_step:%d" % n)
 	var build := func():
-		if _built_step >= n or not is_instance_valid(self):
+		# A late build (fade or safety timer) is dropped once the player has moved on or back
+		if _built_step >= n or _step != n or not is_instance_valid(self):
 			return
 		_built_step = n
 		UI.clear(_page)
@@ -669,6 +736,7 @@ func _on_next_tools() -> void:
 	if _opening_tools or _step != 2:
 		return
 	_opening_tools = true
+	UiLock.log_event("next_tools_pressed")
 	Sound.play("doc_confirm", self)
 	_next_btn.set_loading("正在開啟公事包…")
 	_next_error.visible = false
@@ -706,6 +774,7 @@ func _briefcase_error() -> String:
 
 func _show_next_error(err: String) -> void:
 	_opening_tools = false
+	UiLock.log_event("next_tools_failed: " + err)
 	if _next_btn and is_instance_valid(_next_btn):
 		_next_btn.reset_loading()
 	if _next_error and is_instance_valid(_next_error):
@@ -780,11 +849,13 @@ func _on_confirm() -> void:
 	var payload := {"type": "setup", "clientId": str(client.get("id", "")), "tools": _tools.duplicate()}
 	setup_sent.emit(payload)
 	Net.act(payload)
+	UiLock.set_api("waiting:setup")
 	# Re-enable if the server rejects it (game.gd removes this overlay on success)
 	get_tree().create_timer(3.0).timeout.connect(func():
 		if is_instance_valid(self):
 			_sent = false
 			_sync_tools()
+			UiLock.set_api("failed:setup_no_reply")
 	)
 
 
@@ -979,6 +1050,10 @@ func _layout() -> void:
 			chev.position = Vector2(x + (gap - chev.size.x) * 0.5, sy + (sh - chev.size.y) * 0.5)
 			x += gap
 
+	if _back_btn and _back_btn.visible:
+		var first: StepItem = _step_items[0]
+		_back_btn.position = first.position - Vector2(6, 4) * k
+		_back_btn.size = first.size + Vector2(12, 8) * k
 	var py := sy + sh + 10.0 * k
 	_page.position = Vector2(0, py)
 	_page.size = Vector2(size.x, size.y - py)
@@ -1129,6 +1204,9 @@ class StepItem extends Control:
 		_label.text = t
 		_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(_label)
+
+	func set_hover(on: bool) -> void:
+		_label.add_theme_color_override("font_color", C_GOLD if on else (C_TEXT if state != "todo" else Color(C_MUTED, 0.6)))
 
 	func set_def(n: String, ic: String, t: String) -> void:
 		num = n
@@ -1311,10 +1389,10 @@ class AcceptButton extends Button:
 		if _visual == null:
 			return
 		var sb := StyleBoxFlat.new()
-		sb.bg_color = C_GREEN if not _loading else C_GREEN.darkened(0.35)
+		sb.bg_color = (C_GREEN.lightened(0.12) if hover else C_GREEN) if not _loading else C_GREEN.darkened(0.35)
 		sb.set_corner_radius_all(14)
-		sb.set_border_width_all(1)
-		sb.border_color = Color(C_GOLD, 0.5) if not hover else Color(C_GOLD, 0.85)
+		sb.set_border_width_all(2 if hover else 1)
+		sb.border_color = Color(C_GOLD, 0.5) if not hover else Color("#F1D58C")
 		sb.shadow_color = Color(0, 0, 0, 0.25)
 		sb.shadow_size = 10
 		sb.shadow_offset = Vector2(0, 3)

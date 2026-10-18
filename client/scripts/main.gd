@@ -11,6 +11,7 @@ const RecordsScreen := preload("res://scripts/ui/records.gd")
 const SecretaryGuide := preload("res://scripts/ui/training_secretary.gd")
 const SecretarySetup := preload("res://scripts/ui/secretary_setup.gd")
 const AutomationBridge := preload("res://scripts/automation.gd")
+const UiLock := preload("res://scripts/ui_lock.gd")
 
 signal layout_changed(is_portrait: bool)
 
@@ -181,6 +182,8 @@ func _on_size_changed() -> void:
 ## wait until it has drawn (textures uploaded) → veil fades. Only one screen exists at a time.
 func _set_screen(kind: String, node: Control) -> void:
 	_veil_on()
+	# The old spotlight hangs off the window root, outside every screen: never let it outlive one
+	Tutorial.close_active()
 	if _guide != null:
 		_guide.dismiss()
 	if _screen and is_instance_valid(_screen):
@@ -201,6 +204,7 @@ func _set_screen(kind: String, node: Control) -> void:
 	if _toasts and _toasts.get_parent() == self:
 		move_child(_toasts, get_child_count() - 1)
 		move_child(_busy_label, get_child_count() - 1)
+	UiLock.log_event("screen:" + kind)
 	_reveal()
 
 
@@ -214,6 +218,7 @@ func _veil_on() -> void:
 	_veil.modulate.a = 1.0
 	_veil.visible = true
 	_veil.mouse_filter = Control.MOUSE_FILTER_STOP
+	UiLock.log_event("veil_on")
 
 
 func _veil_holding() -> bool:
@@ -231,6 +236,7 @@ func _reveal() -> void:
 	if gen != _veil_gen or not is_instance_valid(_veil):
 		return
 	_veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	UiLock.log_event("veil_off")
 	if UI.is_animation_disabled():
 		_veil.visible = false
 		return
@@ -246,9 +252,51 @@ func _hold_veil() -> void:
 	var gen := _veil_gen
 	get_tree().create_timer(15.0).timeout.connect(func():
 		if gen == _veil_gen and is_instance_valid(_veil) and _veil.visible:
+			UiLock.log_event("veil_watchdog_release")
 			set_busy("")
 			_reveal()
 	)
+
+
+## Lock state for the [UI-LOCK] trace (scripts/ui_lock.gd)
+func ui_snapshot() -> Dictionary:
+	var scene := _screen_kind
+	var cs: Variant = _screen.get("_case_setup") if _screen != null and is_instance_valid(_screen) else null
+	var has_cs: bool = cs is Control and is_instance_valid(cs)
+	if has_cs:
+		scene += "/case_setup:step%d" % int(cs.get("_step"))
+	var ov_visible := false
+	var ov_filter := "none"
+	var sec := "none"
+	if _guide != null:
+		sec = _guide.state_name()
+		var ov: Variant = _guide.get("_overlay")
+		if ov is Control and is_instance_valid(ov):
+			ov_visible = (ov as Control).visible
+			ov_filter = UiLock.filter_name(((ov as Control).get("_shade") as Control).mouse_filter)
+	var legacy := Tutorial.has_active()
+	var busy: bool = has_cs and bool(cs.call("is_busy"))
+	return {
+		"current_scene": scene,
+		"overlay_visible": ov_visible or legacy,
+		"overlay_mouse_filter": ov_filter + ("+spotlight" if legacy else ""),
+		"input_locked": _veil_holding() or (ov_visible and ov_filter == "STOP") or legacy or busy,
+		"is_transitioning": _veil != null and _veil.visible,
+		"secretary_state": sec,
+	}
+
+
+## Click trace (debug builds, or ?uidebug=1 on the web): which Control received each click
+func _input(event: InputEvent) -> void:
+	if not UiLock.click_trace or not (event is InputEventMouseButton and event.pressed):
+		return
+	var vp := get_viewport()
+	var hit: Control = vp.gui_get_hovered_control()
+	var desc := "none"
+	if hit != null:
+		desc = "%s (%s, z=%d, mouse_filter=%s, disabled=%s)" % [str(hit.get_path()), hit.get_class(), hit.z_index,
+			UiLock.filter_name(hit.mouse_filter), str(hit.get("disabled")) if hit is BaseButton else "-"]
+	UiLock.log_event("click %s → %s" % [str(vp.get_mouse_position().round()), desc])
 
 
 ## Game opening cover; shown at launch and every time the player leaves a game (intro replays each time).

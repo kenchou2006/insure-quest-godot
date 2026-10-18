@@ -14,6 +14,7 @@ const MALE := preload("res://assets/startup/advisor_m.png")
 const SecretaryVoice := preload("res://scripts/secretary_voice.gd")
 const SecretaryLines := preload("res://scripts/secretary_lines.gd")
 const TutorialOverlay := preload("res://scripts/ui/tutorial_overlay.gd")
+const UiLock := preload("res://scripts/ui_lock.gd")
 ## Waist-up and face crops of the cover portraits
 const CROP_F := Rect2(88, 0, 760, 1000)
 const CROP_M := Rect2(128, 0, 760, 1000)
@@ -173,7 +174,10 @@ func _drop_overlay() -> void:
 ## Hides the dim at once and lets every click through (跳過, 我知道了, page and screen changes)
 func _hide_overlay() -> void:
 	if _overlay and is_instance_valid(_overlay):
+		var was_visible := _overlay.visible
 		_overlay.close(true)
+		if was_visible:
+			UiLock.log_event("secretary_overlay_hidden")
 		_overlay.visible = false
 		_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -341,6 +345,15 @@ func replay() -> void:
 	_play("replay", _replay_lines.duplicate(), _side, _reflow, modal, _replay_targets.duplicate())
 
 
+## Lock trace: none (no secretary) / idle / modal:<key> / card:<key>
+func state_name() -> String:
+	if not enabled:
+		return "none"
+	if _open:
+		return ("modal:" if _modal else "card:") + _active_key
+	return "idle"
+
+
 func is_open() -> bool:
 	return _open
 
@@ -374,6 +387,7 @@ func _play(key: String, lines: Array, side: String, reflow: bool, modal := false
 		# Dialog first (line, heading, bright targets), then the dim around it
 		_update_line()
 		_overlay.show_overlay(_portrait.texture)
+		UiLock.log_event("secretary_modal_open")
 		if not _overlay.dialog_showing():
 			_close_modal(true)
 		return
@@ -519,6 +533,8 @@ func _collapse() -> void:
 
 
 func dismiss() -> void:
+	if _open:
+		UiLock.log_event("secretary_dismiss:" + _active_key)
 	_stop_voice()
 	_line_gen += 1
 	_queue.clear()
@@ -558,6 +574,7 @@ func _close_modal(instant: bool) -> void:
 	_hide_overlay()
 	_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
 	_layout()
+	UiLock.log_event("secretary_modal_close:" + ("skip" if instant else "done"))
 
 
 func _process(_delta: float) -> void:
