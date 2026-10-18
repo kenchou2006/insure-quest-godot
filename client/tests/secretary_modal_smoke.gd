@@ -112,11 +112,30 @@ func _run() -> void:
 	g.show_states(["clue_review"])
 	check(not g.is_open(), "seen tutorial not forced again")
 
-	# No secretary: no dim, no dialog
-	g.choose(false, "female")
-	g._seen_states = []
+	# A dim never stands without its dialog: the guard releases it on the next frame
+	g.show_states(["tool_selection"], {}, true)
+	g._seen_states.erase("tool_selection")
+	g._close_modal(true)
+	ov.visible = true
+	ov._shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	await process_frame
+	await process_frame
+	check(not ov.visible and ov.mouse_filter == Control.MOUSE_FILTER_IGNORE, "stray dim without a dialog is released")
+	await _click(behind.get_global_rect().get_center())
+	check(behind_pressed == 3, "interface usable after a stray dim")
+
+	# Page switch while a tutorial is up: reset_overlay unlocks at once
 	g.show_states(["tool_selection"])
-	check(not g.is_open() and not ov.visible, "no secretary: no tutorial overlay")
+	check(g.is_open() and ov.visible, "tutorial up before the page switch")
+	g.reset_overlay()
+	check(not g.is_open() and not ov.visible and ov.mouse_filter == Control.MOUSE_FILTER_IGNORE, "page switch resets the dim")
+
+	# No secretary: the dim layer is never created
+	g.choose(false, "female")
+	await process_frame
+	g._seen_states = []
+	g.show_states(["meeting_ready"])
+	check(not g.is_open() and g._overlay == null and not is_instance_valid(ov), "no secretary: no tutorial overlay")
 
 	holder.queue_free()
 	await process_frame

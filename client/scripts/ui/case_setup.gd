@@ -66,6 +66,7 @@ var _confirm: Button
 var _status: Label
 var _mute_icon: Control
 var _entry_said := false
+var _built_step := 1
 ## Areas the tutorial keeps bright
 var _steps_area: Control
 var _clue_sheet: Control
@@ -76,6 +77,7 @@ var _codex_panel: Control
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_reset_tutorial()
 	var s: Dictionary = Net.state
 	_size = int(s.get("briefcaseSize", 3))
 
@@ -111,7 +113,8 @@ func _ready() -> void:
 	else:
 		_ready_to_accept = true
 		_accept.set_enabled(true)
-		_say_entry()
+		# After the screen switch has finished (it dismisses whatever the secretary showed)
+		_say_entry.call_deferred()
 
 
 # --- Unlock progress ---------------------------------------------------------------------------
@@ -214,7 +217,7 @@ func _load_profile() -> void:
 		_layout()
 	_ready_to_accept = true
 	_accept.set_enabled(true)
-	_say_entry()
+	_say_entry.call_deferred()
 
 
 # --- Secretary ---------------------------------------------------------------------------------
@@ -230,7 +233,8 @@ func _secretary() -> Control:
 ## First-time teaching runs as the 強制聚焦導覽, keeping these elements bright.
 func _say(states: Array, modal := true) -> void:
 	var g := _secretary()
-	if g == null or not g.has_method("show_states"):
+	# No secretary chosen (自行挑戰): nothing to say and never a tutorial lock
+	if g == null or not g.has_method("show_states") or not bool(g.get("enabled")):
 		return
 	var targets := {
 		"training_entry": [_steps_area],
@@ -242,6 +246,17 @@ func _say(states: Array, modal := true) -> void:
 		"locked_client_info": [_codex_panel],
 	}
 	g.show_states(states, targets, modal)
+
+
+## Any tutorial lock from the previous page goes before the next one is built
+func _reset_tutorial() -> void:
+	var g := _secretary()
+	if g and is_instance_valid(g) and g.has_method("reset_overlay"):
+		g.reset_overlay()
+
+
+func _exit_tree() -> void:
+	_reset_tutorial()
 
 
 func _say_entry() -> void:
@@ -462,24 +477,41 @@ func _go_step(n: int) -> void:
 		return
 	_step = n
 	_sync_steps()
+	_reset_tutorial()
 	var build := func():
+		if _built_step >= n or not is_instance_valid(self):
+			return
+		_built_step = n
 		UI.clear(_page)
 		if n == 2:
 			_show_clues()
 		else:
 			_show_tools()
 		_layout()
+		# The page is fully shown whatever the secretary does next
+		_fade_in_page()
 		# After the page exists, so the tutorial can keep its clue sheet / tool grid bright
 		_say(["clue_review"] if n == 2 else ["tool_selection"])
-		if not UI.is_animation_disabled():
-			_page.modulate.a = 0.0
-			create_tween().tween_property(_page, "modulate:a", 1.0, 0.22)
 	if UI.is_animation_disabled():
 		build.call()
 		return
 	var tw := create_tween()
 	tw.tween_property(_page, "modulate:a", 0.0, 0.14)
 	tw.tween_callback(build)
+	# Never left on a faded, half-built page if the fade is interrupted
+	get_tree().create_timer(0.6).timeout.connect(build)
+
+
+func _fade_in_page() -> void:
+	if UI.is_animation_disabled():
+		_page.modulate.a = 1.0
+		return
+	_page.modulate.a = 0.0
+	create_tween().tween_property(_page, "modulate:a", 1.0, 0.22)
+	get_tree().create_timer(0.6).timeout.connect(func():
+		if is_instance_valid(self):
+			_page.modulate.a = 1.0
+	)
 
 
 func _show_clues() -> void:

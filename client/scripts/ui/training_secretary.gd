@@ -87,6 +87,8 @@ func _ready() -> void:
 	# Above full-screen overlays inside the game (case setup sits at z 110)
 	z_index = 120
 	_build()
+	if enabled:
+		_ensure_overlay()
 	resized.connect(_layout)
 	var mm := get_node_or_null("/root/MusicManager")
 	if mm and not mm.speech_ended.is_connected(_on_speech_ended):
@@ -146,12 +148,42 @@ func _build() -> void:
 	_icon.visible = false
 	add_child(_icon)
 
-	# Modal tutorial on the very top of the secretary layer
+
+## The modal tutorial layer exists only while a secretary is chosen (自行挑戰: never created)
+func _ensure_overlay() -> bool:
+	if not enabled:
+		return false
+	if _overlay and is_instance_valid(_overlay):
+		return true
 	_overlay = TutorialOverlay.new()
 	add_child(_overlay)
 	_overlay.skip_pressed.connect(func(): _close_modal(true))
 	_overlay.continue_pressed.connect(_on_continue)
 	_overlay.mute_pressed.connect(_toggle_voice)
+	return true
+
+
+func _drop_overlay() -> void:
+	_hide_overlay()
+	if _overlay and is_instance_valid(_overlay):
+		_overlay.queue_free()
+	_overlay = null
+
+
+## Hides the dim at once and lets every click through (跳過, 我知道了, page and screen changes)
+func _hide_overlay() -> void:
+	if _overlay and is_instance_valid(_overlay):
+		_overlay.close(true)
+		_overlay.visible = false
+		_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+## For screens that switch pages: drop any tutorial lock before the next page is built
+func reset_overlay() -> void:
+	if _modal:
+		_close_modal(true)
+	else:
+		_hide_overlay()
 
 
 func _small_button(text: String, cb: Callable) -> Button:
@@ -195,6 +227,10 @@ func choose(use_guide: bool, selected_role: String) -> void:
 	_save()
 	_find_voice()
 	_refresh_art()
+	if enabled:
+		_ensure_overlay()
+	else:
+		_drop_overlay()
 
 
 ## "female", "male" or "none" (自行挑戰): the secretary chosen on the selection screen
@@ -311,8 +347,14 @@ func is_open() -> bool:
 
 func _play(key: String, lines: Array, side: String, reflow: bool, modal := false, targets: Array = []) -> void:
 	_stop_voice()
+	_refresh_art()
+	# The full-page lock needs a working dialog: lines, the portrait and the overlay itself.
+	# Without them the same lines show in the corner card and nothing is locked.
+	if modal and not _modal_possible(lines):
+		modal = false
+		targets = []
 	if _modal and not modal:
-		_overlay.close(true)
+		_hide_overlay()
 	_active_key = key
 	_lines = lines
 	_line_targets = targets
@@ -323,15 +365,17 @@ func _play(key: String, lines: Array, side: String, reflow: bool, modal := false
 	_reflow = (reflow or UI.is_portrait()) and not modal
 	_open = true
 	visible = true
-	_refresh_art()
 	_icon.visible = false
 	if modal:
 		_card.visible = false
 		# Keyboard focus off the screen behind: nothing there may be activated meanwhile
 		if get_viewport():
 			get_viewport().gui_release_focus()
-		_overlay.show_overlay(_portrait.texture)
+		# Dialog first (line, heading, bright targets), then the dim around it
 		_update_line()
+		_overlay.show_overlay(_portrait.texture)
+		if not _overlay.dialog_showing():
+			_close_modal(true)
 		return
 	_card.visible = true
 	_layout()
@@ -341,6 +385,14 @@ func _play(key: String, lines: Array, side: String, reflow: bool, modal := false
 		_card.modulate.a = 0.0
 		create_tween().tween_property(_card, "modulate:a", 1.0, 0.2)
 	_update_line()
+
+
+func _modal_possible(lines: Array) -> bool:
+	if not enabled or lines.is_empty() or str(lines[0]).strip_edges() == "":
+		return false
+	if _portrait == null or _portrait.texture == null:
+		return false
+	return _ensure_overlay() and _overlay.is_inside_tree() and _overlay.dialog_built()
 
 
 func _update_line() -> void:
@@ -470,8 +522,7 @@ func dismiss() -> void:
 	_stop_voice()
 	_line_gen += 1
 	_queue.clear()
-	if _modal and _overlay:
-		_overlay.close(true)
+	_hide_overlay()
 	_modal = false
 	_open = false
 	if _card:
@@ -504,13 +555,19 @@ func _close_modal(instant: bool) -> void:
 	_open = false
 	_modal = false
 	_line_ready = false
-	if _overlay:
-		_overlay.close(instant)
+	_hide_overlay()
 	_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
 	_layout()
 
 
 func _process(_delta: float) -> void:
+	# A dim may only stand while its dialog is up; anything else is released at once
+	if _overlay and _overlay.visible and not (_open and _modal and _overlay.dialog_showing()):
+		if _modal:
+			_close_modal(true)
+		else:
+			_hide_overlay()
+		return
 	if not (_open and _modal and _overlay) or _line_ready:
 		return
 	var t := Time.get_ticks_msec() / 1000.0 - _line_t0

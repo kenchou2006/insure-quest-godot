@@ -1,7 +1,8 @@
 extends Control
 ## Modal tutorial overlay (強制聚焦導覽) for the training secretary: a full-screen deep green-black
-## dim (60%) that swallows every click, rounded bright "holes" over the interface elements being
-## explained, the secretary's portrait and a gold-framed dialog on top (scales in from 95%),
+## dim (60%) that swallows every click while its dialog is up, rounded bright "holes" over the
+## interface elements being explained, the secretary's portrait and a gold-framed dialog on top
+## (scales in from 95%),
 ## typed subtitles, a voice progress bar, a fixed top-right 「跳過」 and, once the line has been
 ## spoken, 「繼續」 / 「我知道了」. Only a view: training_secretary.gd drives the lines and voice.
 
@@ -139,47 +140,56 @@ func _button(t: String, primary: bool) -> Button:
 
 # --- API used by the secretary -----------------------------------------------------------------
 
+## Shows the dim around a dialog that already holds its line. The layer is fully opaque from the
+## first frame (only the dim and the dialog's scale ease in), so it can never sit invisible while
+## swallowing clicks.
 func show_overlay(portrait: Texture2D) -> void:
+	if not dialog_built():
+		return
 	_portrait.texture = portrait
 	_portrait.visible = portrait != null
+	if _anim:
+		_anim.kill()
+	modulate.a = 1.0
+	_dialog.visible = true
+	_dialog.mouse_filter = Control.MOUSE_FILTER_STOP
 	visible = true
 	is_shown = true
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_shade.mouse_filter = Control.MOUSE_FILTER_STOP
 	_layout()
-	if _anim:
-		_anim.kill()
 	if UI.is_animation_disabled():
-		modulate.a = 1.0
+		_shade.modulate.a = 1.0
 		_dialog.scale = Vector2.ONE
 		return
-	modulate.a = 0.0
+	_shade.modulate.a = 0.0
 	_dialog.scale = Vector2.ONE * 0.95
 	_anim = create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	_anim.tween_property(self, "modulate:a", 1.0, 0.2)
+	_anim.tween_property(_shade, "modulate:a", 1.0, 0.2)
 	_anim.tween_property(_dialog, "scale", Vector2.ONE, 0.22)
 
 
-## Closes and always releases the lock (instant for 「跳過」 and screen changes)
-func close(instant: bool) -> void:
+## Closes at once and releases the lock (跳過, 我知道了, page and screen changes)
+func close(_instant := true) -> void:
 	is_shown = false
-	# Unlock first, before any animation, so nothing can stay blocked
-	_shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_dialog.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _anim:
 		_anim.kill()
-	if instant or UI.is_animation_disabled():
-		visible = false
-		_dialog.mouse_filter = Control.MOUSE_FILTER_STOP
-		return
-	_anim = create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	_anim.tween_property(_dialog, "scale", Vector2.ONE * 0.95, 0.18)
-	_anim.tween_property(self, "modulate:a", 0.0, 0.2)
-	_anim.chain().tween_callback(func():
-		if not is_shown:
-			visible = false
-			_dialog.mouse_filter = Control.MOUSE_FILTER_STOP
-	)
+	if _shade:
+		_shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_shade.modulate.a = 1.0
+	if _dialog:
+		_dialog.scale = Vector2.ONE
+	visible = false
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+func dialog_built() -> bool:
+	return _dialog != null and _text != null
+
+
+## The dialog is on screen with a line in it (the only state in which the dim may stand)
+func dialog_showing() -> bool:
+	return visible and is_shown and dialog_built() and _dialog.visible and _text.text.strip_edges() != ""
 
 
 func set_targets(controls: Array) -> void:
