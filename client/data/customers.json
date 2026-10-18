@@ -1,5 +1,11 @@
 {
-  "_about": "公事包畫面的客戶資料。姓名、年齡、職業與難度由遊戲伺服器的 caseOptions 提供；這裡是結構化的需求與線索。clues 依重要性排序（priority 越小越重要），reveal=dossier 代表案件檔案已知，reveal=interview 代表要在會談中觀察才會取得。tags 用來和 tools.json 的 matched_tags 做規則比對。",
+  "_about": "公事包畫面的客戶資料。姓名、年齡、職業與難度由遊戲伺服器的 caseOptions 提供；這裡是結構化的需求與線索。clues 依重要性排序（priority 越小越重要），reveal=dossier 代表案件檔案已知，reveal=interview 代表要在會談中觀察才會取得。tags 用來和 tools.json 的 matched_tags 做規則比對。線索可用 image 指定插圖；沒有指定時依 tags 從 _clue_images 取圖，都沒有就用 icon 線條圖。",
+  "_clue_images": {
+    "mortgage": "res://assets/briefcase/clue_house.webp",
+    "family_duty": "res://assets/briefcase/clue_family.webp",
+    "dependents": "res://assets/briefcase/clue_family.webp",
+    "budget_limited": "res://assets/briefcase/clue_wallet.webp"
+  },
   "yuqing": {
     "age_group": "青年創業期",
     "family_structure": "單身、與室友合租，沒有扶養對象",

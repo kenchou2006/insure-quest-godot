@@ -62,8 +62,15 @@ static func customer(case_option: Dictionary, found_clue_ids: Array = []) -> Dic
 	clues.sort_custom(func(a: Dictionary, b: Dictionary): return int(a.get("priority", 99)) < int(b.get("priority", 99)))
 	var unlocked: Array = []
 	var locked: Array = []
+	var images: Dictionary = customers().get("_clue_images", {})
 	for c: Dictionary in clues:
 		c.unlocked = str(c.get("reveal", "dossier")) == "dossier" or found_clue_ids.has(str(c.get("id", "")))
+		# Picture: the clue's own, else the first of its tags that has one
+		if str(c.get("image", "")) == "":
+			for t in c.get("tags", []):
+				if images.has(t):
+					c.image = str(images[t])
+					break
 		(unlocked if c.unlocked else locked).append(c)
 	return {
 		"customer_id": id,

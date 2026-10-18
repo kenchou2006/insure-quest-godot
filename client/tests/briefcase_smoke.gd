@@ -54,6 +54,9 @@ func _run() -> void:
 	for t: Dictionary in defs:
 		for f: String in ["id", "name", "category", "icon", "effect", "matched_tags", "usage_limit", "unlock_condition"]:
 			check(t.has(f), "%s has %s" % [t.get("id", "?"), f])
+	for t: Dictionary in defs:
+		var img := str(t.get("image", ""))
+		check(img == "" or ResourceLoader.exists(img), "%s image loads (%s)" % [t.get("id", "?"), img])
 	var all: Dictionary = BriefcaseData.customers()
 	for id: String in ["yuqing", "boting", "wanting", "ziyuan", "zhiming"]:
 		check(all.has(id) and not (all[id].get("clues", []) as Array).is_empty(), "customer data for %s" % id)
@@ -77,6 +80,11 @@ func _run() -> void:
 	check(BriefcaseData.matches(by_id.gap_sheet, yu_found) == ["wrist"], "保障缺口 links once the clue is found")
 	check(BriefcaseData.matches(by_id.compliance_check, yu) == ["compliance"], "合規 → compliance row")
 	var bo: Dictionary = BriefcaseData.customer(_option("boting"))
+	var pics := {}
+	for c: Dictionary in bo.clues:
+		pics[c.id] = str(c.get("image", ""))
+	check(pics.mortgage.ends_with("clue_house.webp") and pics.family.ends_with("clue_family.webp"), "clue pictures picked by tag (%s)" % str(pics))
+	check(pics.company == "", "no picture for a tag without one")
 	check(BriefcaseData.matches(by_id.family_map, bo) == ["family"], "家庭責任圖 → 家庭責任 for a different client")
 	check(BriefcaseData.matches(by_id.cashflow, bo) == ["mortgage"], "收支 → 房貸壓力")
 

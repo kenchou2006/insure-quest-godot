@@ -49,6 +49,8 @@ var _title: Label
 var _right: HBoxContainer
 var _steps: Control
 var _step_items: Array = []
+## Briefcase page (wide screens): 「依照客戶線索，選擇 N 項會談工具」 above the step bar
+var _page_title: HBoxContainer
 var _page: Control
 var _strip: PanelContainer
 var _strip_slots: HBoxContainer
@@ -378,6 +380,18 @@ func _build_steps() -> void:
 	_steps_area = Control.new()
 	_steps_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_steps.add_child(_steps_area)
+	_page_title = HBoxContainer.new()
+	_page_title.name = "PageTitle"
+	_page_title.add_theme_constant_override("separation", 0)
+	_page_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_page_title.visible = false
+	for part: Array in [["依照客戶線索，選擇 ", C_TEXT], ["", C_GOLD], [" 項會談工具", C_TEXT]]:
+		var l := _label(str(part[0]), 30, part[1])
+		l.add_theme_font_override("font", BOLD)
+		l.add_theme_constant_override("outline_size", 6)
+		l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.35))
+		_page_title.add_child(l)
+	_steps.add_child(_page_title)
 	var defs := STEP_DEFS
 	for i in range(defs.size()):
 		var item := StepItem.new(defs[i][0], defs[i][1], defs[i][2])
@@ -931,8 +945,17 @@ func _layout() -> void:
 		var item: Control = _right.get_child(i)
 		item.visible = not portrait or i != 0
 
-	# Steps: centered row under the top bar
+	# Briefcase page on wide screens: the big title first, the steps under it
+	var title_on := _step >= 3 and not portrait
+	_page_title.visible = title_on
 	var sy := top_h + 12.0 * k
+	if title_on:
+		(_page_title.get_child(1) as Label).text = str(_size)
+		for l: Label in _page_title.get_children():
+			l.add_theme_font_size_override("font_size", roundi(30 * k))
+		_page_title.reset_size()
+		_page_title.position = Vector2((size.x - _page_title.size.x) * 0.5, top_h + 8.0 * k)
+		sy = _page_title.position.y + _page_title.size.y + 4.0 * k
 	var sh := 40.0 * k
 	var widths: Array = []
 	var total := 0.0
@@ -969,6 +992,7 @@ func _layout() -> void:
 			# Bottom bar stays clear of the secretary's round corner portrait
 			var on := selected_secretary != "none"
 			_briefcase.reserve_right = ((58.0 if not portrait else 70.0) * k) if on else 0.0
+			_briefcase.title_outside = title_on
 			_briefcase.set_k(k)
 		for n: Node in _page.get_children():
 			if n is Control:
@@ -1138,6 +1162,15 @@ class StepItem extends Control:
 	func _draw() -> void:
 		var d := 34.0 * _k
 		var c := Vector2(d * 0.5, d * 0.5)
+		# Current step: a gold pill around number and label
+		if state == "active" and _label.visible:
+			var pill := StyleBoxFlat.new()
+			pill.bg_color = Color(C_GOLD, 0.1)
+			pill.set_border_width_all(2)
+			pill.border_color = Color(C_GOLD, 0.9)
+			pill.set_corner_radius_all(roundi(d))
+			pill.anti_aliasing = true
+			draw_style_box(pill, Rect2(-4.0 * _k, -4.0 * _k, size.x + 22.0 * _k, d + 8.0 * _k))
 		if state == "active":
 			draw_circle(c, d * 0.5, Color(C_GOLD, 0.95))
 			draw_arc(c, d * 0.5 + 2.0, 0, TAU, 48, Color(C_GOLD, 0.35), 1.0, true)
