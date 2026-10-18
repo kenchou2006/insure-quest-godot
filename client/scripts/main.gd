@@ -30,6 +30,8 @@ var _veil_tween: Tween
 var _veil_gen := 0
 ## True while we have created / joined a room; late state messages after leaving are ignored
 var _expect_room := false
+## Set when a secretary was just chosen: the hall greets with the tutorial right away
+var _hall_greeting := false
 
 
 var _was_quota_exhausted := false
@@ -426,6 +428,12 @@ func _enter_training() -> void:
 	_guide.unlock_speech()
 	open_secretary_settings()
 
+## True once after a secretary was chosen (Aly or Kevin): the hall opens its tutorial without a tap
+func take_hall_greeting() -> bool:
+	var v := _hall_greeting
+	_hall_greeting = false
+	return v
+
 ## Docked guide; holds the stored secretary choice (selected_secretary / secretary_id)
 func secretary_guide() -> Control:
 	return _guide
@@ -436,6 +444,7 @@ func open_secretary_settings() -> void:
 		setup.initial_key = _guide.role if _guide.enabled else "solo"
 	setup.selected.connect(func(use_guide: bool, role: String):
 		_guide.choose(use_guide, role)
+		_hall_greeting = use_guide
 		show_menu()
 	)
 	_set_screen("secretary_setup", setup)

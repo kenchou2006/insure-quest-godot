@@ -14,6 +14,11 @@ var failures := 0
 class MainStub extends Node:
 	var guide: Control
 	var calls: Array = []
+	var greet := false
+	func take_hall_greeting() -> bool:
+		var v := greet
+		greet = false
+		return v
 	func secretary_guide() -> Control:
 		return guide
 	func toast(t: String, _c: Color = Color.WHITE, _s := 3.0) -> void:
@@ -136,6 +141,28 @@ func _run() -> void:
 	check(ps.has(MALE) and not ps.has(FEMALE), "only the male cover portrait is shown")
 	m.queue_free()
 	r[1].queue_free()
+	await _wait(0.1)
+
+	# Just chose Aly again (greeting already seen): the hall still opens the tutorial by itself
+	var stub2 := MainStub.new()
+	root.add_child(stub2)
+	var g2: Control = GuideScript.new()
+	stub2.add_child(g2)
+	stub2.guide = g2
+	g2.enabled = true
+	g2.role = "female"
+	g2.secretary_id = "aly"
+	g2._seen_states = ["hall_intro"]
+	stub2.greet = true
+	var m2: Control = MenuScript.new()
+	m2.main = stub2
+	m2.size = Vector2(1280, 720)
+	root.add_child(m2)
+	await _wait(0.7)
+	check(g2.is_open() and g2._overlay.visible, "after choosing a secretary the hall tutorial opens without a tap")
+	g2._close_modal(true)
+	m2.queue_free()
+	stub2.queue_free()
 	await _wait(0.1)
 
 	# 自行挑戰: no portrait, no dialog until 開啟引導

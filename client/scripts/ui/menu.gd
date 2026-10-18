@@ -217,7 +217,10 @@ func _build_ui() -> void:
 		# After the screen switch has finished (the switch dismisses any open dialog)
 		get_tree().create_timer(0.4).timeout.connect(func():
 			if is_instance_valid(self) and is_inside_tree():
-				_hall_tutorial(false)
+				# Right after choosing Aly / Kevin: always the 強制聚焦導覽, no tap needed;
+				# other visits only the first time
+				var just_chosen: bool = main.has_method("take_hall_greeting") and main.take_hall_greeting()
+				_hall_tutorial(just_chosen)
 		)
 
 	_build_identity_popup()

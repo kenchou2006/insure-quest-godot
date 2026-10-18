@@ -92,7 +92,7 @@ func _ready() -> void:
 	add_child(_portrait)
 
 	# Skip: fixed top-right, always last so nothing covers it
-	_skip = _button("跳過  ›", false)
+	_skip = _button("跳過", false)
 	_skip.pressed.connect(func(): skip_pressed.emit())
 	add_child(_skip)
 	resized.connect(_layout)
