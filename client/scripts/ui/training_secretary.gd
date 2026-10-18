@@ -597,13 +597,36 @@ func _stop_voice() -> void:
 		SecretaryVoice.stop()
 
 
+## Every page calls this on entry. One shared secretary layer follows the saved choice:
+## female → Aly's portrait and a female voice, male → Kevin's portrait and a male voice,
+## none → no portrait, dialog, voice or tutorial dim (the dim layer is not even created).
+func apply_secretary_selection() -> void:
+	var sel := selected_secretary()
+	if sel == "none":
+		_stop_voice()
+		dismiss()
+		_drop_overlay()
+		_voice = ""
+		if _card:
+			_card.visible = false
+		if _icon:
+			_icon.visible = false
+		return
+	secretary_id = SecretaryVoice.id_from_choice(true, sel)
+	_refresh_art()
+	_find_voice()
+	_ensure_overlay()
+	if not _open and _icon:
+		_icon.visible = _icon_allowed and not _replay_lines.is_empty()
+
+
 func screen_changed(kind: String) -> void:
 	dismiss()
 	_active_key = ""
 	# The corner portrait belongs to training screens; the hall and setup screens have their own
 	_icon_allowed = kind in ["game", "report"]
 	_icon.visible = _icon_allowed and enabled and not _replay_lines.is_empty()
-	_refresh_art()
+	apply_secretary_selection()
 	_layout()
 	if kind == "report":
 		show_lines("report", ["本次培訓已完成。看看能力表現與建議，再回顧自己的關鍵決策。"])

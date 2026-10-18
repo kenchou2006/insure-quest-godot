@@ -60,8 +60,15 @@ var _file: Control
 var _accept: AcceptButton
 var _codex_link: Button
 var _briefcase: Control
-## current_customer for the briefcase (data file merged with the server's case option)
-var _customer: Dictionary = {}
+## Saved by 下一步：選工具 and handed to the briefcase: the customer (data file merged with the
+## server's case option), the clues found so far and the chosen secretary (female / male / none)
+var current_customer: Dictionary = {}
+var unlocked_clues: Array = []
+var selected_secretary := "none"
+var _next_btn: AcceptButton
+var _next_error: Label
+var _opening_tools := false
+var _pending_error := ""
 var _confirm: Button
 var _status: Label
 var _mute_icon: Control
@@ -77,7 +84,7 @@ var _codex_panel: Control
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	_reset_tutorial()
+	_enter_page()
 	var s: Dictionary = Net.state
 	_size = int(s.get("briefcaseSize", 3))
 
@@ -255,6 +262,17 @@ func _reset_tutorial() -> void:
 		g.reset_overlay()
 
 
+## Entering a page: the shared secretary layer takes the chosen secretary (female / male / none)
+## and drops any tutorial lock left from the page before
+func _enter_page() -> void:
+	var g := _secretary()
+	var ok := g != null and is_instance_valid(g)
+	if ok and g.has_method("apply_secretary_selection"):
+		g.apply_secretary_selection()
+	selected_secretary = str(g.selected_secretary()) if ok and g.has_method("selected_secretary") else "none"
+	_reset_tutorial()
+
+
 func _exit_tree() -> void:
 	_reset_tutorial()
 
@@ -296,12 +314,17 @@ func _build_top() -> void:
 	if Net.is_logged_in():
 		var lv: Dictionary = Net.get_level()
 		who = "Lv.%d" % int(lv.get("level", 1)) if not lv.is_empty() else "已登入"
-	var pill := _top_item("user", "%s｜%s" % [who, Net.player_name if Net.player_name != "" else "顧問"], Callable())
-	pill.mouse_default_cursor_shape = Control.CURSOR_ARROW
+	var pill := _top_item("user", "%s｜%s" % [who, Net.player_name if Net.player_name != "" else "顧問"], _open_advisor)
+	pill.name = "AdvisorButton"
 	_right.add_child(pill)
-	_right.add_child(_top_item("gear", "設定", _open_settings))
-	_right.add_child(_top_item("doc", "培訓紀錄", _open_records))
+	var settings := _top_item("gear", "設定", _open_settings)
+	settings.name = "SettingsButton"
+	_right.add_child(settings)
+	var records := _top_item("doc", "培訓紀錄", _open_records)
+	records.name = "RecordsButton"
+	_right.add_child(records)
 	var snd := _top_item("speaker_off" if MusicManager.muted else "speaker", "音效", Callable())
+	snd.name = "SoundButton"
 	_mute_icon = snd.get_node("Row/Icon")
 	snd.pressed.connect(func():
 		MusicManager.set_muted(not MusicManager.muted)
@@ -316,8 +339,17 @@ func _top_item(icon: String, text: String, cb: Callable) -> Button:
 	b.flat = true
 	b.focus_mode = Control.FOCUS_NONE
 	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	for st: String in ["normal", "hover", "pressed", "focus"]:
+	for st: String in ["normal", "focus", "disabled"]:
 		b.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+	# Hover lights the label gold over a faint plate; pressed deepens the plate
+	var hv := StyleBoxFlat.new()
+	hv.bg_color = Color(1, 1, 1, 0.05)
+	hv.set_corner_radius_all(8)
+	b.add_theme_stylebox_override("hover", hv)
+	var pr := hv.duplicate() as StyleBoxFlat
+	pr.bg_color = Color(C_GOLD, 0.16)
+	b.add_theme_stylebox_override("pressed", pr)
+	b.add_theme_stylebox_override("hover_pressed", pr)
 	var row := HBoxContainer.new()
 	row.name = "Row"
 	row.add_theme_constant_override("separation", 6)
@@ -477,7 +509,7 @@ func _go_step(n: int) -> void:
 		return
 	_step = n
 	_sync_steps()
-	_reset_tutorial()
+	_enter_page()
 	var build := func():
 		if _built_step >= n or not is_instance_valid(self):
 			return
@@ -596,26 +628,99 @@ func _show_clues() -> void:
 	body.add_child(sheet)
 
 	var next := AcceptButton.new("下一步：選工具", "briefcase")
+	next.name = "NextToolsButton"
 	next.custom_minimum_size = Vector2(360, 60)
 	next.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	next.set_enabled(true)
-	next.activated.connect(func():
-		Sound.play("doc_confirm", self)
-		_go_step(3)
-	)
+	next.activated.connect(_on_next_tools)
 	col.add_child(next)
+	_next_btn = next
+	_next_error = _label("", 14, Color("#F2B8A0"))
+	_next_error.name = "NextToolsError"
+	_next_error.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_next_error.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	_next_error.custom_minimum_size = Vector2(360, 0)
+	_next_error.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_next_error.visible = false
+	col.add_child(_next_error)
+	_opening_tools = false
+	if _pending_error != "":
+		_show_next_error(_pending_error)
+		_pending_error = ""
+
+
+## 下一步：選工具 — loading at once, the customer / found clues / secretary saved, then the briefcase
+## (step 3 of this screen, briefcase_view.gd). Any failure is shown here and the button comes back.
+func _on_next_tools() -> void:
+	if _opening_tools or _step != 2:
+		return
+	_opening_tools = true
+	Sound.play("doc_confirm", self)
+	_next_btn.set_loading("正在開啟公事包…")
+	_next_error.visible = false
+	save_handoff()
+	var err := _briefcase_error()
+	if err != "":
+		_show_next_error(err)
+		return
+	_go_step(3)
+	# The briefcase must be on screen shortly after; otherwise back to the clues with the reason
+	get_tree().create_timer(1.2).timeout.connect(func():
+		if is_instance_valid(self) and _step == 3 and not (_briefcase and is_instance_valid(_briefcase) and _briefcase.is_visible_in_tree()):
+			_back_to_clues("公事包畫面沒有成功開啟，請再按一次「下一步：選工具」。")
+	)
+
+
+## Keeps what the briefcase needs from this page
+func save_handoff() -> void:
+	current_customer = BriefcaseData.customer(client)
+	unlocked_clues = (current_customer.get("unlocked_clues", []) as Array).duplicate(true)
+	var g := _secretary()
+	var ok := g != null and is_instance_valid(g)
+	selected_secretary = str(g.selected_secretary()) if ok and g.has_method("selected_secretary") else "none"
+
+
+func _briefcase_error() -> String:
+	if client.is_empty():
+		return "找不到這次的指定客戶，請回到大廳重新開始培訓。"
+	if str(current_customer.get("customer_name", "")) == "":
+		return "客戶資料載入失敗，請再試一次。"
+	if BriefcaseData.tool_defs().is_empty():
+		return "公事包工具資料（data/tools.json）載入失敗，請重新整理頁面。"
+	return ""
+
+
+func _show_next_error(err: String) -> void:
+	_opening_tools = false
+	if _next_btn and is_instance_valid(_next_btn):
+		_next_btn.reset_loading()
+	if _next_error and is_instance_valid(_next_error):
+		_next_error.text = err
+		_next_error.visible = true
+	var main: Node = get_parent().get("main") if get_parent() else null
+	if main and main.has_method("toast"):
+		main.toast(err, Color("#F2B8A0"))
+
+
+func _back_to_clues(err: String) -> void:
+	_pending_error = err
+	_step = 1
+	_built_step = 1
+	_go_step(2)
 
 
 # --- Step 3: briefcase for the same client -----------------------------------------------------
 
 func _show_tools() -> void:
-	_customer = BriefcaseData.customer(client)
+	if current_customer.is_empty():
+		save_handoff()
 	_briefcase = BriefcaseView.new()
+	_briefcase.name = "BriefcaseView"
 	_page.add_child(_briefcase)
 	_tool_grid = _briefcase.briefcase_area
 	_confirm = _briefcase.start_button
 	_status = _briefcase.status_label
-	_briefcase.set_customer(_customer)
+	_briefcase.set_customer(current_customer)
 	_briefcase.set_tools(_tool_list(), _size)
 	_briefcase.toggle_requested.connect(_on_toggle_tool)
 	_briefcase.start_requested.connect(_on_confirm)
@@ -724,6 +829,23 @@ func _open_codex() -> void:
 	# First look at locked clients: explain how they unlock, keeping the codex bright
 	if unlocked.size() < int(info.get("total", 0)):
 		_say(["locked_client_info"])
+
+
+## 顧問資料: who is playing, whether progress is saved, and the chosen secretary
+func _open_advisor() -> void:
+	var m := _modal("顧問資料")
+	var v: VBoxContainer = m[1]
+	var nm := Net.player_name if Net.player_name != "" else "顧問"
+	v.add_child(UI.label("姓名：%s" % nm, 15, C_TEXT, true))
+	var who := "訪客（登入後可保存培訓紀錄）"
+	if Net.is_logged_in():
+		var lv: Dictionary = Net.get_level()
+		who = "已登入｜Lv.%d" % int(lv.get("level", 1)) if not lv.is_empty() else "已登入"
+	v.add_child(UI.label("身分：%s" % who, 15, C_TEXT, true))
+	var names := {"female": "Aly（女性培訓秘書）", "male": "Kevin（男性培訓秘書）"}
+	var sec := str(names.get(selected_secretary, "自行挑戰（不使用秘書）"))
+	v.add_child(UI.label("培訓秘書：%s" % sec, 15, C_TEXT, true))
+	v.add_child(UI.label("培訓秘書可在大廳變更。", 13, C_MUTED, true))
 
 
 func _open_settings() -> void:
@@ -845,8 +967,7 @@ func _layout() -> void:
 			margin = (28.0 if not portrait else 12.0) * k
 		if _briefcase and is_instance_valid(_briefcase):
 			# Bottom bar stays clear of the secretary's round corner portrait
-			var g := _secretary()
-			var on: bool = g != null and bool(g.get("enabled"))
+			var on := selected_secretary != "none"
 			_briefcase.reserve_right = ((58.0 if not portrait else 70.0) * k) if on else 0.0
 			_briefcase.set_k(k)
 		for n: Node in _page.get_children():
@@ -1112,7 +1233,7 @@ class AcceptButton extends Button:
 		_arrow = LineIcon.new("chevron_r", C_TEXT, 2.0)
 		_visual.add_child(_arrow)
 		_restyle(false)
-		mouse_entered.connect(func(): _restyle(true))
+		mouse_entered.connect(func(): _restyle(not disabled))
 		mouse_exited.connect(func(): _restyle(false))
 		pressed.connect(_on_pressed)
 		resized.connect(_layout)
@@ -1136,6 +1257,20 @@ class AcceptButton extends Button:
 		_icon.visible = false
 		_spinner.visible = true
 		_arrow.visible = false
+		_restyle(false)
+		_layout()
+
+	## Back from loading (the switch failed): label, icon and arrow again, clickable
+	func reset_loading() -> void:
+		_loading = false
+		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		if _label == null:
+			return
+		_label.text = text_value
+		_icon.visible = true
+		_spinner.visible = false
+		_arrow.visible = true
+		set_enabled(_enabled)
 		_restyle(false)
 		_layout()
 

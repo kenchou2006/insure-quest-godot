@@ -153,8 +153,8 @@ func _run() -> void:
 	var rects := [v.clue_panel.get_rect(), v.briefcase_area.get_rect(), v.attr_panel.get_rect(), v._bar.get_rect()]
 	# Another customer in the same scene: data changes, layout does not
 	cs.client = _option("zhiming")
-	cs._customer = BriefcaseData.customer(cs.client)
-	v.set_customer(cs._customer)
+	cs.save_handoff()
+	v.set_customer(cs.current_customer)
 	await _wait(0.2)
 	txt = _texts(v)
 	check(txt.contains("黃志明") and not txt.contains("林雨晴"), "customer switch updates the panel")
