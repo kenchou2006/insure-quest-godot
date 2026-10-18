@@ -20,6 +20,8 @@ const C_MUTED := Color("#AABCB5")
 const C_GOLD := Color("#C6A15B")
 const C_RED := Color("#D9685F")
 const AHEAD := 6
+## Seconds the pawn takes per station (0.18–0.25 s), each with a step tone and a gold ripple
+const STEP_SECONDS := 0.22
 
 var tiles: Array = []
 var players: Array = []
@@ -40,6 +42,11 @@ var _chips: Array = []
 var _dots: Array = []
 var _img_at := Vector2.ZERO
 var _img_scale := 1.0
+## The painted 人生顧問局 title; the game screen turns it off (its header shows the cover logo)
+var show_title := true
+## Gold ripples left where the pawn passes: [station index, age]
+var _ripples: Array = []
+var _view_tween: Tween
 
 
 func _ready() -> void:
@@ -235,11 +242,60 @@ func _process(delta: float) -> void:
 		var before: float = _shown.get(id, float(p.get("pos", 0)))
 		var diff := fposmod(float(p.get("pos", 0)) - before, 24.0)
 		if _freeze_timer <= 0 and diff > 0.001:
-			var after := fposmod(before + minf(diff, delta * 6.0), 24.0)
+			var after := fposmod(before + minf(diff, delta / STEP_SECONDS), 24.0)
 			_shown[id] = after
 			if int(floorf(before)) != int(floorf(after)) and id == current_id and not Engine.is_editor_hint():
-				Sound.play("step", self)
+				AudioManager.play("piece_step")
+				_ripples.append([int(floorf(after)) % 24, 0.0])
+	for r in _ripples:
+		r[1] = float(r[1]) + delta
+	_ripples = _ripples.filter(func(r): return float(r[1]) < 0.55)
 	queue_redraw()
+
+
+## Camera eases onto a station (arrival) — zoom 1.35 centred on it, kept inside the map
+func focus_station(i: int, dur := 0.6) -> void:
+	if _chips.size() != 24 or i < 0:
+		return
+	var raw := _raw_dot(i)
+	var z := 1.35
+	var limit := size * (z - 1.0) * 0.5
+	var target_pan := (-(raw - size * 0.5) * z).clamp(-limit, limit)
+	_tween_view(z, target_pan, dur)
+
+
+## Camera back to the whole route
+func reset_view(dur := 0.5) -> void:
+	if is_equal_approx(_zoom, 1.0) and _pan.length() < 0.5:
+		return
+	_tween_view(1.0, Vector2.ZERO, dur)
+
+
+func _tween_view(z: float, pan: Vector2, dur: float) -> void:
+	if _view_tween and _view_tween.is_valid():
+		_view_tween.kill()
+	if UI.is_animation_disabled() or dur <= 0.0:
+		_zoom = z
+		_pan = pan
+		return
+	var z0 := _zoom
+	var p0 := _pan
+	_view_tween = create_tween()
+	_view_tween.tween_method(func(t: float):
+		_zoom = lerpf(z0, z, t)
+		_pan = p0.lerp(pan, t)
+	, 0.0, 1.0, dur).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+
+
+## Station position on the route before the camera transform
+func _raw_dot(i: int) -> Vector2:
+	var raw := _loop_points()
+	var lengths := PackedFloat32Array()
+	var total := 0.0
+	for k in range(raw.size() - 1):
+		total += raw[k].distance_to(raw[k + 1])
+		lengths.append(total)
+	return _along(raw, lengths, total, float(i) / 24.0)
 
 
 # ───────── Drawing ─────────
@@ -258,7 +314,8 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.16, 0.14, 0.22))
 	var font := get_theme_default_font()
 	if tiles.size() != 24:
-		_draw_title(font)
+		if show_title:
+			_draw_title(font)
 		return
 
 	var raw := _loop_points()
@@ -281,6 +338,8 @@ func _draw() -> void:
 		d += dash + gap
 
 	var cur := current_index() if not players.is_empty() else -1
+	var next_i: int = GameState.next_node() if not Engine.is_editor_hint() else -1
+	var visited: Array = GameState.completed_nodes() if not Engine.is_editor_hint() else []
 	var dots: Array = []
 	for i in range(24):
 		dots.append(_along(pts, lengths, total, float(i) / 24.0))
@@ -293,12 +352,22 @@ func _draw() -> void:
 		var dot: Vector2 = dots[i]
 		var tname := str((tiles[i] as Dictionary).get("name", ""))
 		var is_cur := i == cur
-		var label := "%02d %s" % [i, tname] if (not compact or is_cur) else "%02d" % i
+		# Only the current and next stations carry their names; the rest stay quiet (number + icon)
+		var named := is_cur or i == next_i or i == _hover or i == _selected
+		var label := "%02d %s" % [i, tname] if (named and (not compact or is_cur)) else "%02d" % i
 		var fs := 16 if is_cur else (12 if not compact else 11)
 		var tw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		var icon := 18.0 if is_cur else 14.0
 		var w := tw + icon + 26.0
+		# Room for the check (visited) or lock (beyond one roll) mark at the chip's end
+		var ahead_i := posmod(i - cur, 24) if cur >= 0 else 24
+		if not is_cur and (visited.has(i) or (ahead_i > AHEAD and not named)):
+			w += 14.0
 		var h := 40.0 if is_cur else 28.0
+		if is_cur:
+			# Current station at 115%
+			w *= 1.15
+			h *= 1.15
 		var rel := Vector2((dot.x - _to_view(r.position).x) / maxf(1.0, r.size.x * _zoom), (dot.y - _to_view(r.position).y) / maxf(1.0, r.size.y * _zoom))
 		var chip: Rect2
 		if rel.x < 0.08:
@@ -317,11 +386,52 @@ func _draw() -> void:
 		order.append(cur)
 	for i: int in order:
 		var steps := posmod(i - cur, 24) if cur >= 0 else 24
-		var emphasis := i == cur or i == _hover or i == _selected
-		var alpha := 1.0 if emphasis or steps <= AHEAD else 0.72
-		_draw_chip(font, i, _chips[i], dots[i], i == cur, steps > 0 and steps <= AHEAD, alpha, compact)
+		var emphasis := i == cur or i == _hover or i == _selected or i == next_i
+		var locked := steps > AHEAD and not visited.has(i) and not emphasis
+		var alpha := 1.0 if emphasis or steps <= AHEAD else (0.5 if locked else 0.72)
+		_draw_chip(font, i, _chips[i], dots[i], i == cur, steps > 0 and steps <= AHEAD, alpha, compact, i == cur or i == next_i or i == _hover or i == _selected)
+		_draw_state(font, i, _chips[i], dots[i], i == cur, i == next_i and i != cur, visited.has(i) and i != cur, locked)
 	_draw_pawns(pts, lengths, total)
-	_draw_title(font)
+	for rp in _ripples:
+		var age: float = float(rp[1]) / 0.55
+		var at: Vector2 = dots[int(rp[0])]
+		draw_arc(at, 6.0 + 22.0 * age, 0, TAU, 32, Color(C_GOLD, 0.8 * (1.0 - age)), 2.0, true)
+	if show_title:
+		_draw_title(font)
+
+
+## Station state marks: gold outer frame on the current chip, a breathing green ring and 下一站 tag
+## on the next client station, a check on visited stations, a lock on stations beyond one roll
+func _draw_state(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, next: bool, done: bool, locked: bool) -> void:
+	if current:
+		var outer := StyleBoxFlat.new()
+		outer.draw_center = false
+		outer.set_border_width_all(1)
+		outer.border_color = Color(C_GOLD, 0.55)
+		outer.set_corner_radius_all(15)
+		draw_style_box(outer, chip.grow(4))
+		draw_arc(dot, 15.0, 0, TAU, 32, Color(C_GOLD, 0.9), 1.5, true)
+	if next:
+		var b := 0.5 + 0.5 * sin(_pulse * 2.4)
+		if UI.reduce_motion:
+			b = 0.6
+		draw_arc(dot, 8.0 + b * 4.0, 0, TAU, 28, Color(C_GREEN, 0.45 + 0.4 * b), 2.0, true)
+		var tag := "下一站"
+		var tw := font.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+		var r := Rect2(Vector2(chip.get_center().x - tw * 0.5 - 8, chip.position.y - 22), Vector2(tw + 16, 18))
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(C_GREEN, 0.9)
+		sb.set_corner_radius_all(9)
+		draw_style_box(sb, r)
+		draw_string(font, Vector2(r.position.x + 8, r.position.y + 14), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, C_TEXT)
+	if done:
+		var c := chip.end - Vector2(9, chip.size.y * 0.5)
+		draw_circle(c, 6.0, Color(C_GREEN, 0.95))
+		draw_polyline(PackedVector2Array([c + Vector2(-3, 0), c + Vector2(-1, 2.5), c + Vector2(3.5, -2.5)]), C_TEXT, 1.5, true)
+	elif locked:
+		var lc := chip.end - Vector2(9, chip.size.y * 0.5)
+		draw_rect(Rect2(lc + Vector2(-4, -1), Vector2(8, 6)), Color(C_TEXT, 0.55), false, 1.2)
+		draw_arc(lc + Vector2(0, -1), 2.8, PI, TAU, 8, Color(C_TEXT, 0.55), 1.2, true)
 
 
 ## Title block drawn last, on a soft backdrop, so station chips never cover it
@@ -341,7 +451,7 @@ func _draw_title(font: Font) -> void:
 		draw_string(font, Vector2(30, 24 + fs + 26), title_sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, C_MUTED)
 
 
-func _draw_chip(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, upcoming: bool, alpha: float, compact: bool) -> void:
+func _draw_chip(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, upcoming: bool, alpha: float, compact: bool, named := true) -> void:
 	var tile: Dictionary = tiles[i]
 	var tname := str(tile.get("name", ""))
 	var kind := str(tile.get("type", ""))
@@ -371,7 +481,7 @@ func _draw_chip(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, up
 	if kind == "audit":
 		col = Color(C_RED.lightened(0.2), alpha)
 	_draw_icon(tname, kind, ic, icon * 0.5, col)
-	var label := "%02d %s" % [i, tname] if (not compact or current) else "%02d" % i
+	var label := "%02d %s" % [i, tname] if (named and (not compact or current)) else "%02d" % i
 	var fs := 16 if current else (12 if not compact else 11)
 	draw_string(font, Vector2(chip.position.x + icon + 18, chip.position.y + chip.size.y * 0.5 + fs * 0.36), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(C_TEXT, alpha))
 	var owner: Variant = territory.get(str(i), territory.get(i, null))

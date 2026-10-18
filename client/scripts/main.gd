@@ -7,6 +7,8 @@ const StartupScreen := preload("res://scripts/ui/startup.gd")
 const LobbyScreen := preload("res://scripts/ui/lobby.gd")
 const GameScreen := preload("res://scripts/ui/game.gd")
 const ReportScreen := preload("res://scripts/ui/report.gd")
+## Page 10: the training report (the original report stays for ?classic=1)
+const TrainingReport := preload("res://scripts/quest/pages/training_report_view.gd")
 const RecordsScreen := preload("res://scripts/ui/records.gd")
 const SecretaryGuide := preload("res://scripts/ui/training_secretary.gd")
 const SecretarySetup := preload("res://scripts/ui/secretary_setup.gd")
@@ -241,7 +243,9 @@ func _reveal() -> void:
 		_veil.visible = false
 		return
 	_veil_tween = create_tween()
-	_veil_tween.tween_property(_veil, "modulate:a", 0.0, 0.22).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	# 0.32 s fade out (scene-change spec 0.25–0.4 s); the veil itself goes up at once so the old
+	# screen never flashes through
+	_veil_tween.tween_property(_veil, "modulate:a", 0.0, 0.32).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	_veil_tween.tween_callback(func(): _veil.visible = false)
 
 
@@ -459,8 +463,8 @@ func _on_state(state: Dictionary) -> void:
 		"ended":
 			Tutorial.record_game()
 			if _screen_kind != "report":
-				var r := ReportScreen.new()
-				r.main = self
+				var r: Control = ReportScreen.new() if GameState.classic_ui else TrainingReport.new()
+				r.set("main", self)
 				_set_screen("report", r)
 	if _screen and _screen.has_method("refresh"):
 		_screen.refresh(state)

@@ -3,7 +3,7 @@ extends VBoxContainer
 ## Volume panel used by the menu settings and the in-game 「聲音」 popup:
 ## master / music / secretary voice / SFX sliders plus mute. Changes apply at once and are saved.
 
-const ROWS := [["Master", "總音量"], ["BGM", "背景音樂"], ["Voice", "秘書語音"], ["SFX", "操作音效"]]
+const ROWS := [["Master", "總音量"], ["Music", "背景音樂"], ["Voice", "秘書語音"], ["UI", "操作音效"]]
 
 var _sliders := {}
 var _mute: CheckBox
@@ -49,7 +49,7 @@ func _slider_row(bus: String, title: String) -> Control:
 		_refresh()
 	)
 	# Short click so the player hears the new effect level
-	if bus in ["Master", "SFX"]:
+	if bus in ["Master", "UI"]:
 		s.drag_ended.connect(func(_changed: bool): Sound.play("click", self))
 	return h
 

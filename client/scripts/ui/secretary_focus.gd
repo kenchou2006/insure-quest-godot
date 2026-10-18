@@ -1,15 +1,16 @@
 extends CanvasLayer
-## 培訓秘書聚焦導覽 (map page). A CanvasLayer above the whole game UI, so while it is up nothing
-## underneath gets hover, clicks or cursor changes, whatever the node order below:
+## 培訓秘書聚焦導覽 (map page and every mission page). A CanvasLayer above the whole game UI, so
+## while it is up nothing underneath gets hover, clicks or cursor changes, whatever the node order:
 ##   SecretaryGuide (this, layer 40)
-##   ├─ DimOverlay (ColorRect, #021C19 at 68%)
+##   ├─ DimOverlay (ColorRect, #021C19 at 55%; blocks every click, also over a highlight)
+##   ├─ DimCutout (draws the dim with bright holes over the elements being explained)
 ##   ├─ SecretaryPortrait (TextureRect, chosen secretary, bottom-right)
 ##   ├─ DialoguePanel (PanelContainer: SecretaryName, PageIndicator, DialogueText, VoiceIndicator,
 ##   │                 ContinueButton)
 ##   ├─ SkipGuideButton (top-right)
 ##   └─ VoiceToggleButton
 ## One instance for the whole game; every button signal is connected once, here. Every way out
-## (finished, 開始操作, 略過導覽, voice failure, errors, screen or page change) goes through
+## (finished, 開始操作, 跳過本次引導, voice failure, errors, screen or page change) goes through
 ## end_secretary_focus(reason), which hides everything and sets the dim back to MOUSE_FILTER_IGNORE.
 
 signal finished(page_id: String, reason: String)
@@ -19,7 +20,7 @@ const UiLock := preload("res://scripts/ui_lock.gd")
 const FONT := preload("res://assets/fonts/regular.tres")
 const BOLD := preload("res://assets/fonts/bold.tres")
 const GUIDE_LAYER := 40
-const DIM_COLOR := Color("#021C19", 0.68)
+const DIM_COLOR := Color("#021C19", 0.55)
 const C_PANEL := Color("#0B3A33", 0.97)
 const C_GOLD := Color("#C6A15B")
 const C_TEXT := Color("#F3F0E7")
@@ -45,8 +46,13 @@ var origin_rect := Rect2()
 ## Voice fallback: a line whose end is never reported is treated as finished after this many
 ## seconds per character (+1.5 s); tests shorten it
 var voice_fallback_per_char := 0.32
+## Elements kept bright while the secretary explains them (viewport rects)
+var highlight_rects: Array = []
+## Buttons the portrait and dialogue must not cover (擲骰, 提交, 返回, 下一步, 結算)
+var avoid_rects: Array = []
 
 var dim: ColorRect
+var cutout: Control
 var portrait: TextureRect
 var panel: PanelContainer
 var name_label: Label
@@ -80,6 +86,12 @@ func _build() -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dim.visible = false
 	add_child(dim)
+	cutout = Control.new()
+	cutout.name = "DimCutout"
+	cutout.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cutout.visible = false
+	cutout.draw.connect(_draw_cutout)
+	add_child(cutout)
 
 	portrait = TextureRect.new()
 	portrait.name = "SecretaryPortrait"
@@ -142,13 +154,13 @@ func _build() -> void:
 	voice_indicator.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	voice_indicator.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	foot.add_child(voice_indicator)
-	continue_button = _button("繼續", true)
+	continue_button = _button("下一句", true)
 	continue_button.name = "ContinueButton"
 	continue_button.pressed.connect(advance_dialogue)
 	continue_button.visible = false
 	foot.add_child(continue_button)
 
-	skip_button = _button("略過導覽", false)
+	skip_button = _button("跳過本次引導", false)
 	skip_button.name = "SkipGuideButton"
 	skip_button.pressed.connect(skip_guide)
 	skip_button.visible = false
@@ -200,9 +212,12 @@ func _button(t: String, primary: bool) -> Button:
 # --- Flow --------------------------------------------------------------------------------------
 
 ## Opens the focus guide for a page. A second call while it is open does nothing (one dim only).
-func begin_secretary_focus(pid: String, lines: Array, gender: String, portrait_tex: Texture2D, secretary_name: String, voice_on: bool) -> bool:
+## opts: highlights (Array of Rect2 kept bright), avoid (Array of Rect2 the guide must not cover)
+func begin_secretary_focus(pid: String, lines: Array, gender: String, portrait_tex: Texture2D, secretary_name: String, voice_on: bool, opts := {}) -> bool:
 	if guide_active or lines.is_empty():
 		return false
+	highlight_rects = opts.get("highlights", [])
+	avoid_rects = opts.get("avoid", [])
 	page_id = pid
 	dialogues = lines.duplicate()
 	secretary_gender = gender
@@ -215,6 +230,9 @@ func begin_secretary_focus(pid: String, lines: Array, gender: String, portrait_t
 	visible = true
 	dim.visible = true
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	# With highlights the cut-out draws the dim (holes stay bright); the ColorRect still takes every click
+	dim.color = Color(DIM_COLOR, 0.0) if not highlight_rects.is_empty() else DIM_COLOR
+	cutout.visible = not highlight_rects.is_empty()
 	portrait.visible = portrait_tex != null
 	panel.visible = true
 	skip_button.visible = true
@@ -245,13 +263,15 @@ func show_dialogue(index: int) -> void:
 	text.text = line
 	text.visible_ratio = 0.0
 	page_label.text = "%d／%d" % [index + 1, dialogues.size()]
-	continue_button.text = "開始操作" if index == dialogues.size() - 1 else "繼續"
+	continue_button.text = "開始操作" if index == dialogues.size() - 1 else "下一句"
 	continue_button.visible = false
 	_typing = true
 	if _type_tween:
 		_type_tween.kill()
 	_type_tween = create_tween()
-	_type_tween.tween_property(text, "visible_ratio", 1.0, maxf(line.length() * CHAR_SECONDS, 0.05))
+	# 文字顯示速度 from the settings (立即 shows the whole line)
+	var per_char: float = GameState.char_seconds(CHAR_SECONDS) if not Engine.is_editor_hint() else CHAR_SECONDS
+	_type_tween.tween_property(text, "visible_ratio", 1.0, maxf(line.length() * per_char, 0.05))
 	_type_tween.tween_callback(func():
 		if gen == _gen:
 			complete_typewriter()
@@ -263,6 +283,13 @@ func show_dialogue(index: int) -> void:
 		if ok:
 			_voice_done = false
 			voice_indicator.text = "● 語音播放中"
+			# 字幕關閉: the spoken line is not repeated on screen (shown again when the voice ends or fails)
+			if not GameState.subtitles:
+				if _type_tween:
+					_type_tween.kill()
+				text.text = "（字幕已關閉，語音播放中）"
+				text.visible_ratio = 1.0
+				_typing = false
 			get_tree().create_timer(line.length() * voice_fallback_per_char + 1.5).timeout.connect(func():
 				if gen == _gen and guide_active and not _voice_done:
 					on_voice_ended()
@@ -288,6 +315,9 @@ func on_voice_ended() -> void:
 	if not guide_active:
 		return
 	_voice_done = true
+	if text.text.begins_with("（字幕已關閉"):
+		text.text = str(dialogues[current_dialogue_index])
+		text.visible_ratio = 1.0
 	if voice_indicator.text == "● 語音播放中":
 		voice_indicator.text = "語音完成"
 	_check_ready()
@@ -298,7 +328,7 @@ func _check_ready() -> void:
 		continue_button.visible = true
 
 
-## 繼續 / 開始操作 (and a tap on the dialogue once the line is complete)
+## 下一句 / 開始操作 (and a tap on the dialogue once the line is complete)
 func advance_dialogue() -> void:
 	if not guide_active:
 		return
@@ -356,6 +386,10 @@ func end_secretary_focus(reason: String) -> void:
 	dim.visible = false
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	dim.modulate.a = 1.0
+	dim.color = DIM_COLOR
+	cutout.visible = false
+	highlight_rects = []
+	avoid_rects = []
 	visible = false
 	guide_active = false
 	input_locked = false
@@ -417,6 +451,9 @@ func _layout_for(vs: Vector2) -> void:
 	var margin := 16.0 * k
 	dim.position = Vector2.ZERO
 	dim.size = vs
+	cutout.position = Vector2.ZERO
+	cutout.size = vs
+	cutout.queue_redraw()
 	# Portrait: about 35% of the screen height, bottom-right, never cropped by the edges
 	var ph := clampf(vs.y * 0.35, 130.0, 420.0)
 	var pw := ph * 0.76
@@ -453,12 +490,75 @@ func _layout_for(vs: Vector2) -> void:
 		panel.position = Vector2(margin, portrait.position.y - dh - margin * 0.5)
 	else:
 		panel.position = Vector2(portrait.position.x - margin - dw, vs.y - margin * 1.5 - dh)
+	# Never over the page's key buttons: mirror to the left, then lift the dialogue to the top
+	if _covers_avoid():
+		portrait.position.x = margin
+		if not stacked:
+			panel.position.x = portrait.position.x + pw + margin
+		if _covers_avoid():
+			panel.position.y = margin * 4.0
+			if _covers_avoid():
+				portrait.visible = false
 	_panel_y = panel.position.y
-	# 略過導覽 fixed top-right; the voice toggle beside it
+	# 跳過本次引導 fixed top-right; the voice toggle beside it
 	skip_button.reset_size()
 	voice_button.reset_size()
 	skip_button.position = Vector2(vs.x - margin - skip_button.size.x, margin)
 	voice_button.position = Vector2(skip_button.position.x - 8.0 * k - voice_button.size.x, margin)
+
+
+func _covers_avoid() -> bool:
+	for r in avoid_rects:
+		var rr := r as Rect2
+		if rr.size.x <= 0:
+			continue
+		if (portrait.visible and Rect2(portrait.position, portrait.size).intersects(rr)) or Rect2(panel.position, panel.size).intersects(rr):
+			return true
+	return false
+
+
+## Dim with bright holes (soft gold outline) over the highlighted elements
+func _draw_cutout() -> void:
+	var vs := cutout.size
+	var holes: Array = []
+	for r in highlight_rects:
+		var rr := (r as Rect2).grow(6.0)
+		holes.append(rr.intersection(Rect2(Vector2.ZERO, vs)))
+	var col := Color(DIM_COLOR, DIM_COLOR.a * dim.modulate.a)
+	if holes.is_empty():
+		cutout.draw_rect(Rect2(Vector2.ZERO, vs), col)
+		return
+	# Horizontal bands between hole edges keep the dim exact without a shader
+	var ys: Array = [0.0, vs.y]
+	for h in holes:
+		ys.append((h as Rect2).position.y)
+		ys.append((h as Rect2).end.y)
+	ys.sort()
+	for i in range(ys.size() - 1):
+		var y0: float = ys[i]
+		var y1: float = ys[i + 1]
+		if y1 - y0 <= 0.5:
+			continue
+		var xs: Array = []
+		for h in holes:
+			var hr := h as Rect2
+			if hr.position.y <= y0 + 0.1 and hr.end.y >= y1 - 0.1:
+				xs.append([hr.position.x, hr.end.x])
+		xs.sort_custom(func(a, b): return a[0] < b[0])
+		var x := 0.0
+		for seg in xs:
+			if seg[0] > x:
+				cutout.draw_rect(Rect2(x, y0, seg[0] - x, y1 - y0), col)
+			x = maxf(x, seg[1])
+		if x < vs.x:
+			cutout.draw_rect(Rect2(x, y0, vs.x - x, y1 - y0), col)
+	for h in holes:
+		var sb := StyleBoxFlat.new()
+		sb.draw_center = false
+		sb.set_border_width_all(2)
+		sb.border_color = Color(C_GOLD, 0.85 * dim.modulate.a)
+		sb.set_corner_radius_all(12)
+		cutout.draw_style_box(sb, h)
 
 
 func _enter_animation() -> void:
@@ -483,6 +583,7 @@ func _enter_animation() -> void:
 	panel.position.y = _panel_y + 8.0
 	_anim = create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_anim.tween_property(dim, "modulate:a", 1.0, 0.2)
+	_anim.tween_method(func(_v: float): cutout.queue_redraw(), 0.0, 1.0, 0.22)
 	_anim.tween_property(portrait, "scale", Vector2.ONE, 0.25)
 	_anim.tween_property(portrait, "position", final_pos, 0.25)
 	_anim.tween_property(portrait, "modulate:a", 1.0, 0.18)

@@ -1,7 +1,7 @@
 @tool
 class_name Sound
 ## Sound manager: synthesizes sound effects programmatically with AudioStreamWAV without external audio files.
-## Everything plays on the SFX bus (buttons, hints, mission complete); volume and mute live in MusicManager.
+## Everything plays on the UI bus (buttons, hints, mission complete); volume and mute live in MusicManager.
 
 static var _player: AudioStreamPlayer = null
 static var _streams: Dictionary = {}
@@ -13,7 +13,7 @@ static func play(name: String, caller: Node = null) -> void:
 	if _player == null or not is_instance_valid(_player):
 		_player = AudioStreamPlayer.new()
 		_player.name = "GlobalSoundPlayer"
-		_player.bus = "SFX"
+		_player.bus = "UI"
 		if caller != null and caller.get_tree() != null:
 			caller.get_tree().root.add_child(_player)
 		else:

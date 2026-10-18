@@ -1,6 +1,8 @@
 extends Node
 ## Global audio (autoload "MusicManager"): background music, the four audio buses and their saved volumes.
-## Buses: Master, BGM (music), Voice (secretary speech), SFX (buttons, hints, mission complete).
+## Buses: Master, Music (theme), Voice (secretary speech), UI (buttons, hints, mission complete).
+## Tension and Ambience (mission layers) belong to AudioManager and follow the UI / Music levels.
+## Settings saved by older builds under BGM / SFX are read into Music / UI.
 ## Music starts on the player's 「進入顧問培訓」 click (never on web page load), keeps playing through
 ## screen changes and returns to the cover, and dips while the secretary speaks.
 ## Secretary speech is browser / OS text-to-speech, which bypasses Godot's mixer, so the Voice bus
@@ -10,8 +12,10 @@ signal volumes_changed
 ## The current secretary line finished (or was stopped / cancelled)
 signal speech_ended
 
-const BUSES := ["Master", "BGM", "Voice", "SFX"]
-const DEFAULT_DB := {"Master": 0.0, "BGM": -16.0, "Voice": -3.0, "SFX": -8.0}
+const BUSES := ["Master", "Music", "Voice", "UI"]
+const DEFAULT_DB := {"Master": 0.0, "Music": -16.0, "Voice": -3.0, "UI": -8.0}
+## Bus names used by builds before the five mission buses
+const LEGACY := {"Music": "BGM", "UI": "SFX"}
 ## Sliders run 0..100 over MIN_DB..0 dB; 0 silences the bus
 const MIN_DB := -40.0
 ## While the secretary speaks the music dips to DUCK_DB in DUCK_IN s and recovers in DUCK_OUT s
@@ -28,7 +32,7 @@ var volume_db := DEFAULT_DB.duplicate()
 var muted := false
 var ducked := false
 var _player: AudioStreamPlayer
-var _bgm_db: float = DEFAULT_DB.BGM
+var _bgm_db: float = DEFAULT_DB.Music
 var _duck_tween: Tween
 var _fade_tween: Tween
 ## Id of the line currently speaking; end / cancel reports for older lines are ignored
@@ -43,7 +47,7 @@ func _ready() -> void:
 	load_settings()
 	_player = AudioStreamPlayer.new()
 	_player.name = "Theme"
-	_player.bus = "BGM"
+	_player.bus = "Music"
 	add_child(_player)
 	_speech_timer = _one_shot(func(): _end_speech(_utterance))
 	_save_timer = _one_shot(save_settings)
@@ -115,20 +119,20 @@ func set_slider(bus: String, value: float) -> void:
 	set_volume_db(bus, slider_to_db(value))
 
 
-## Current BGM bus level (follows the player's setting, lower while ducked)
+## Current Music bus level (follows the player's setting, lower while ducked)
 func bgm_bus_db() -> float:
 	return _bgm_db
 
 
 func _bgm_target() -> float:
-	var user := get_volume_db("BGM")
+	var user := get_volume_db("Music")
 	return minf(user, DUCK_DB) if ducked else user
 
 
 func _apply() -> void:
 	AudioServer.set_bus_mute(0, muted or get_volume_db("Master") <= MIN_DB)
 	AudioServer.set_bus_volume_db(0, get_volume_db("Master"))
-	for bus: String in ["Voice", "SFX"]:
+	for bus: String in ["Voice", "UI"]:
 		var i := AudioServer.get_bus_index(bus)
 		AudioServer.set_bus_volume_db(i, get_volume_db(bus))
 		AudioServer.set_bus_mute(i, get_volume_db(bus) <= MIN_DB)
@@ -140,9 +144,9 @@ func _apply() -> void:
 
 func _apply_bgm(db: float) -> void:
 	_bgm_db = db
-	var i := AudioServer.get_bus_index("BGM")
+	var i := AudioServer.get_bus_index("Music")
 	AudioServer.set_bus_volume_db(i, db)
-	AudioServer.set_bus_mute(i, get_volume_db("BGM") <= MIN_DB)
+	AudioServer.set_bus_mute(i, get_volume_db("Music") <= MIN_DB)
 
 
 func _ensure_buses() -> void:
@@ -158,7 +162,8 @@ func load_settings() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(SETTINGS_PATH) == OK:
 		for bus: String in BUSES:
-			volume_db[bus] = clampf(float(cfg.get_value("audio", bus, DEFAULT_DB[bus])), MIN_DB, 0.0)
+			var saved: Variant = cfg.get_value("audio", bus, cfg.get_value("audio", LEGACY.get(bus, bus), DEFAULT_DB[bus]))
+			volume_db[bus] = clampf(float(saved), MIN_DB, 0.0)
 		muted = bool(cfg.get_value("audio", "muted", false))
 	_apply()
 

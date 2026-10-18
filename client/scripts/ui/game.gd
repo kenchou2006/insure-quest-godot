@@ -99,6 +99,12 @@ const SessionPanel := preload("res://scripts/ui/session_panel.gd")
 const EventPanel := preload("res://scripts/ui/event_panel.gd")
 const CaseSetup := preload("res://scripts/ui/case_setup.gd")
 const UiLock := preload("res://scripts/ui_lock.gd")
+## The ten mission pages (own turn); spectators and ?classic=1 keep the panels above
+const QuestLayer := preload("res://scripts/quest/quest_layer.gd")
+const GameHeader := preload("res://scripts/quest/widgets/game_header.gd")
+## Pawn walk per station and the camera's arrival focus (seconds)
+const STEP_SECONDS := 0.22
+const FOCUS_SECONDS := 0.6
 
 var main: Node
 var _board: Control
@@ -174,6 +180,8 @@ var _task_where: Label
 var _task_img: TextureRect
 var _goals_box: VBoxContainer
 var _stats_box: GridContainer
+var _goals_progress: Label
+var _client_panel: Control
 var _timeline_box: VBoxContainer
 ## Stations this advisor has landed on, newest last (for the record timeline)
 var _history: Array = []
@@ -181,6 +189,9 @@ var _case_setup: Control
 var _client_box: VBoxContainer
 var _record_box: VBoxContainer
 var _hud_action: HBoxContainer
+var _quest: Control
+var _map_header: Control
+var _focus_fired := false
 
 
 class DiceControl extends Control:
@@ -243,6 +254,9 @@ class DiceControl extends Control:
 
 func _ready() -> void:
 	_build_ui()
+	if not Engine.is_editor_hint():
+		# Office / city room tone under the game screen (Ambience bus)
+		AudioManager.set_ambience(true)
 	if not Net.state.is_empty():
 		refresh(Net.state)
 
@@ -383,19 +397,13 @@ func _build_ui() -> void:
 	_dice_roll_info_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center.add_child(_dice_roll_info_lbl)
 
-	_roll_btn = UI.button("前往下一站", func():
-		_local_roll_in_flight = true
-		_roll_btn.disabled = true
-		Sound.play("dice", self)
-		Net.act({"type": "roll"})
-	, 18, C_GREEN)
+	# 擲骰前進: disabled the moment it is pressed (no double rolls), real hover / pressed / focus /
+	# disabled / loading states
+	_roll_btn = QuestUI.button("擲骰前進", _on_roll, "primary", "dice")
+	_roll_btn.name = "RollButton"
 	_roll_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL if UI.is_phone() else Control.SIZE_SHRINK_CENTER
 	_roll_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_roll_btn.custom_minimum_size = Vector2(176, 52)
-	for st: String in ["normal", "hover", "pressed", "disabled"]:
-		var rsb := UI.button_stylebox(C_GREEN, st, 14, 18)
-		rsb.shadow_size = 0
-		_roll_btn.add_theme_stylebox_override(st, rsb)
+	_roll_btn.custom_minimum_size = Vector2(196, 52)
 	_action_row.add_child(_roll_btn)
 	_center.add_child(_client_strip)
 
@@ -502,6 +510,9 @@ func _build_ui() -> void:
 	gv.add_child(UI.label("任務目標", 14, C_GOLD))
 	_goals_box = UI.vbox(6)
 	gv.add_child(_goals_box)
+	_goals_progress = UI.label("", 13, C_GOLD)
+	_goals_progress.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	gv.add_child(_goals_progress)
 	goals.add_child(gv)
 	task_v.add_child(goals)
 	_task_case = UI.label("", 13, C_GREEN, true)
@@ -510,17 +521,20 @@ func _build_ui() -> void:
 	task_v.add_child(_task_quest)
 	sv.add_child(_card(task_v))
 
-	# 2. Client status: four stat tiles, then the client being served
+	# 2. Client status: the client being served (portrait, 信任 / 需求 / 預算適配 / 合規)
 	var client_v := UI.vbox(10)
 	client_v.add_child(_panel_header("people", "客戶狀態"))
+	_client_panel = load("res://scripts/quest/widgets/client_status_panel.gd").new(true, false)
+	_client_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	client_v.add_child(_client_panel)
+	_client_box = UI.vbox(8)
+	client_v.add_child(_client_box)
+	sv.add_child(_card(client_v))
+	# Advisor numbers (prospects, clients, reputation, sales) in a drawer of their own
 	_stats_box = GridContainer.new()
 	_stats_box.columns = 2
 	_stats_box.add_theme_constant_override("h_separation", 8)
 	_stats_box.add_theme_constant_override("v_separation", 8)
-	client_v.add_child(_stats_box)
-	_client_box = UI.vbox(8)
-	client_v.add_child(_client_box)
-	sv.add_child(_card(client_v))
 
 	# 3. Advisor record: timeline of stations visited
 	var record_v := UI.vbox(10)
@@ -535,6 +549,7 @@ func _build_ui() -> void:
 
 	_record_box = UI.vbox(8)
 	drawers.add_child(_drawer("決策與 AI 提示", _record_box)[0])
+	drawers.add_child(_drawer("顧問數據", _stats_box)[0])
 
 	_quests_content = UI.vbox(6)
 	var qd: Array = _drawer("本季任務", _quests_content)
@@ -583,13 +598,54 @@ func _build_ui() -> void:
 			_tab_buttons.append(btn)
 			_tab_bar.add_child(btn)
 
+	# Map header: the cover logo, 第 N / M 站 and the client clock over the map (the board's own
+	# painted title is turned off), settings and sound on the right
+	if "show_title" in _board:
+		_board.show_title = false
+	_map_header = GameHeader.new(UI.is_phone())
+	_map_header.name = "MapHeader"
+	_map_header.position = Vector2(8, 8) if UI.is_phone() else Vector2(14, 12)
+	_map_header.connect("settings_requested", _open_quest_settings)
+	_left_stack.add_child(_map_header)
+	# Mission pages sit above everything in this screen
+	_quest = QuestLayer.new()
+	_quest.game = self
+	add_child(_quest)
+
 	if not Engine.is_editor_hint():
 		Portraits.add_player_avatar_callback(_on_player_avatar_loaded)
 		if Net != null and not Net.avatar_loaded.is_connected(_on_player_avatar_loaded):
 			Net.avatar_loaded.connect(_on_player_avatar_loaded)
 
 
+func _on_roll() -> void:
+	if _local_roll_in_flight or _roll_btn.disabled:
+		return
+	_local_roll_in_flight = true
+	_roll_btn.call("set_loading", true, "擲骰中")
+	Net.act({"type": "roll"})
+
+
+func _open_quest_settings() -> void:
+	if _quest != null:
+		_quest.open_settings()
+
+
+## True when the mission layer shows this state itself (own session or event)
+func _quest_owns(s: Dictionary = Net.state) -> bool:
+	return _quest != null and is_instance_valid(_quest) and _quest.owns(s)
+
+
+## Back on the map after a page: the camera eases out again
+func on_map_shown() -> void:
+	if _board != null and _board.has_method("reset_view"):
+		_board.reset_view()
+
+
 func _exit_tree() -> void:
+	if not Engine.is_editor_hint():
+		AudioManager.set_ambience(false)
+		AudioManager.stop_tension_layers()
 	if Net.training_save_changed.is_connected(_show_save_status):
 		Net.training_save_changed.disconnect(_show_save_status)
 	if not Engine.is_editor_hint():
@@ -633,6 +689,11 @@ func _sync_center_bounds() -> void:
 		return
 	# The HUD card sits in the board's reserved strip at the bottom of the map
 	var r: Rect2 = _board.get_inner_rect()
+	# Never under the map header (logo / 第 N 站 / clock): the main button stays in the open
+	if _map_header != null and is_instance_valid(_map_header):
+		var hr := Rect2(_map_header.position, _map_header.size).grow(6)
+		if hr.intersects(r):
+			r.position.y = hr.end.y + 6
 	_center.add_theme_constant_override("separation", 0)
 	# The map design docks only the main button; the dice animation still plays as a cutscene
 	_dice_ctl.visible = false
@@ -763,7 +824,7 @@ func _refresh_hud(s: Dictionary, mine: bool, cur_name: String, stage: String, ro
 		_hud_title.text = "目前位置｜%s" % str(tile.get("name", ""))
 		var owner: Variant = s.get("territory", {}).get(str(pos), null)
 		if mine and stage == "roll":
-			_hud_hint.text = "按「前往下一站」擲骰前進"
+			_hud_hint.text = "按「擲骰前進」前往下一站"
 		elif owner is Dictionary:
 			_hud_hint.text = "%s 的生活圈" % str(owner.get("clientName", "客戶"))
 		elif str(tile.get("type", "")) == "client" and Net.current_player().get("mainCase") is Dictionary and not bool(Net.current_player().get("mainCase").get("done", false)):
@@ -793,7 +854,7 @@ func _refresh_task(s: Dictionary, mine: bool, cur_name: String, stage: String, d
 		_task_title.text = str(ev.get("title", "處理事件"))
 		_task_body.text = "完成事件卡後繼續。" if str(ev.get("playerId", "")) == Net.player_id else "%s 正在處理事件。" % cur_name
 	elif mine and stage == "roll":
-		_task_title.text = "前往下一站"
+		_task_title.text = "擲骰前進"
 		_task_body.text = "擲骰沿著顧問行程前進，抵達的節點會觸發面談或事件。"
 	elif mine:
 		_task_title.text = "處理目前站點"
@@ -811,7 +872,7 @@ func _refresh_task(s: Dictionary, mine: bool, cur_name: String, stage: String, d
 		_task_where.text = "%02d %s" % [idx, str(tile.get("name", ""))]
 		_task_img.texture = _station_image(idx, kind)
 		if mine and stage == "roll" and not (sess is Dictionary) and not (ev is Dictionary):
-			_task_body.text = str(STATION_INFO.get(kind, ["", []])[0]) + "\n按地圖上的「前往下一站」擲骰前進。"
+			_task_body.text = str(STATION_INFO.get(kind, ["", []])[0]) + "\n按地圖上的「擲骰前進」前往下一站。"
 	_refresh_goals(kind)
 	var lines: Array = []
 	var mc = Net.me().get("mainCase")
@@ -915,6 +976,12 @@ func _refresh_goals(kind: String) -> void:
 		var reached: int = {"plan": 1, "objection": 2, "result": 3}.get(step, 0)
 		for k in range(3):
 			done_flags[k] = k < reached
+	var done_n := 0
+	for f in done_flags:
+		if f:
+			done_n += 1
+	if _goals_progress != null:
+		_goals_progress.text = "任務進度 %d / %d" % [done_n, goals.size()] if goals.size() > 0 else ""
 	for k in range(goals.size()):
 		var row := UI.hbox(8)
 		var ic := LineIcon.new("goal_done" if done_flags[k] else "goal", 18, C_GREEN if done_flags[k] else C_MUTED)
@@ -1034,6 +1101,14 @@ func _refresh_client(s: Dictionary) -> void:
 	if _client_box == null:
 		return
 	UI.clear(_client_box)
+	# A client in progress (own meeting or the primary case): portrait and the four bars
+	var has_client := (s.get("session") is Dictionary and str((s.get("session") as Dictionary).get("playerId", "")) == Net.player_id) \
+		or (Net.me().get("mainCase") is Dictionary and not bool((Net.me().get("mainCase") as Dictionary).get("done", false)))
+	if _client_panel != null and is_instance_valid(_client_panel):
+		_client_panel.visible = has_client
+		if has_client:
+			_client_panel.call("refresh")
+			return
 	var sess = s.get("session")
 	if sess is Dictionary:
 		var c: Dictionary = sess.get("client", {})
@@ -1128,6 +1203,11 @@ func _sync_tabs() -> void:
 	var ev = Net.state.get("event")
 	var is_sess: bool = sess is Dictionary and not _is_overlay_deferred
 	var is_ev: bool = ev is Dictionary and not is_sess and not _is_overlay_deferred
+	# Pages shown by the mission layer keep the map (and side panel) underneath, panels hidden
+	var hud_hidden: bool = is_sess or is_ev
+	if _quest_owns():
+		is_sess = false
+		is_ev = false
 	var overlay: bool = is_sess or is_ev
 
 	if not UI.is_portrait():
@@ -1145,7 +1225,7 @@ func _sync_tabs() -> void:
 			_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
 		_session.visible = is_sess
 		_event.visible = is_ev
-		_center.visible = not overlay
+		_center.visible = not overlay and not hud_hidden
 		return
 
 	for i: int in range(_tab_buttons.size()):
@@ -1181,6 +1261,11 @@ func _process(delta: float) -> void:
 	# Deferred panel countdown timer (waiting for dice roll and pawn movement to finish)
 	if _is_overlay_deferred:
 		_deferred_overlay_timer -= delta
+		# The pawn has arrived: ease the camera onto the station before the page opens
+		if not _focus_fired and _deferred_overlay_timer <= FOCUS_SECONDS and _quest != null and _quest.active():
+			_focus_fired = true
+			if _board.has_method("focus_station"):
+				_board.focus_station(int(Net.current_player().get("pos", 0)), FOCUS_SECONDS)
 		if _deferred_overlay_timer <= 0.0:
 			_is_overlay_deferred = false
 			_apply_deferred_overlay()
@@ -1260,9 +1345,20 @@ func refresh(s: Dictionary) -> void:
 	if trigger_cutscene:
 		_prev_last_roll = last_roll_val
 		_local_roll_in_flight = false
-		_play_dice_cutscene(cur_name, last_roll_val, mine)
-		# Defer interview/event panel display: dice roll animation (1.0s) + pawn 1/6s per tile + buffer (0.45s)
-		var total_anim_time: float = 1.0 + (float(last_roll_val) * (1.0 / 6.0)) + 0.45
+		_roll_btn.call("set_loading", false)
+		var total_anim_time: float
+		if _quest != null and _quest.active():
+			# Page 1: die tumbles and lands, the pawn walks station by station, the camera settles on
+			# the arrival, then the arrival brief (never earlier — the event is not hinted)
+			var land: float = _quest.play_dice(cur_name, last_roll_val, mine)
+			if _board.has_method("freeze_movement"):
+				_board.freeze_movement(land)
+			total_anim_time = land + float(last_roll_val) * STEP_SECONDS + FOCUS_SECONDS + 0.15
+			_focus_fired = false
+		else:
+			_play_dice_cutscene(cur_name, last_roll_val, mine)
+			# Defer interview/event panel display: dice roll animation (1.0s) + pawn 1/6s per tile + buffer (0.45s)
+			total_anim_time = 1.0 + (float(last_roll_val) * (1.0 / 6.0)) + 0.45
 		_is_overlay_deferred = true
 		_deferred_overlay_timer = total_anim_time
 
@@ -1289,7 +1385,9 @@ func refresh(s: Dictionary) -> void:
 		_screen_glow.add_theme_stylebox_override("panel", UI.box(Color(0, 0, 0, 0), 12, UI.GOLD, 3, false))
 		_center.modulate = Color(1.0, 0.98, 0.92)
 		_roll_btn.visible = stage == "roll"
-		_roll_btn.disabled = false
+		if not _local_roll_in_flight:
+			_roll_btn.call("set_loading", false)
+			_roll_btn.disabled = false
 	else:
 		_my_turn_banner.visible = false
 		_spectator_ribbon.visible = false
@@ -1338,6 +1436,7 @@ func refresh(s: Dictionary) -> void:
 	var ev = s.get("event")
 	var is_ev: bool = ev is Dictionary and not is_sess
 	var has_overlay: bool = is_sess or is_ev
+	var owned: bool = _quest_owns(s)
 
 	if _is_overlay_deferred:
 		# Deferred display: temporarily hide panel during dice roll and pawn movement to ensure animation and board visibility
@@ -1356,21 +1455,23 @@ func refresh(s: Dictionary) -> void:
 
 		if not UI.is_portrait():
 			if UI.is_phone_landscape():
-				_side_panel.visible = not has_overlay
-				_board.visible = not has_overlay
+				_side_panel.visible = not has_overlay or owned
+				_board.visible = not has_overlay or owned
 				_board.modulate = Color.WHITE
 			else:
 				_side_panel.visible = true
 				_board.visible = true
-				_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
-			_session.visible = is_sess
-			_event.visible = is_ev
+				_board.modulate = Color(1, 1, 1, 0.75) if is_sess and not owned else Color.WHITE
+			_session.visible = is_sess and not owned
+			_event.visible = is_ev and not owned
 			_center.visible = not has_overlay
 
-		if is_sess:
+		if is_sess and not owned:
 			_session.refresh(sess, cur_name)
-		if is_ev:
+		if is_ev and not owned:
 			_event.refresh(ev, cur_name)
+		if _quest != null:
+			_quest.route(s)
 
 	_sync_tabs()
 
@@ -1521,6 +1622,7 @@ func _apply_deferred_overlay() -> void:
 	var cur: Dictionary = Net.current_player()
 	var cur_name: String = str(cur.get("name", ""))
 	var mine: bool = Net.is_my_turn()
+	var owned: bool = _quest_owns(s)
 
 	if UI.is_portrait() and has_overlay and not _was_overlay and mine:
 		_current_tab = 0
@@ -1528,21 +1630,23 @@ func _apply_deferred_overlay() -> void:
 
 	if not UI.is_portrait():
 		if UI.is_phone_landscape():
-			_side_panel.visible = not has_overlay
-			_board.visible = not has_overlay
+			_side_panel.visible = not has_overlay or owned
+			_board.visible = not has_overlay or owned
 			_board.modulate = Color.WHITE
 		else:
 			_side_panel.visible = true
 			_board.visible = true
-			_board.modulate = Color(1, 1, 1, 0.75) if is_sess else Color.WHITE
-		_session.visible = is_sess
-		_event.visible = is_ev
+			_board.modulate = Color(1, 1, 1, 0.75) if is_sess and not owned else Color.WHITE
+		_session.visible = is_sess and not owned
+		_event.visible = is_ev and not owned
 		_center.visible = not has_overlay
 
-	if is_sess:
+	if is_sess and not owned:
 		_session.refresh(sess, cur_name)
-	if is_ev:
+	if is_ev and not owned:
 		_event.refresh(ev, cur_name)
+	if _quest != null:
+		_quest.route(s)
 
 	_sync_tabs()
 	_update_center_client_strip()
@@ -1725,13 +1829,16 @@ func _show_announcement(ann: Dictionary) -> void:
 
 	var portrait: bool = UI.is_portrait()
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.8)
+	dim.color = Color(QuestUI.INK, 0.72)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.z_index = 100
 	add_child(dim)
 	_announcement_modal = dim
+	AudioManager.play("event_major")
 
-	var p := UI.panel(UI.PANEL, 16, 16 if UI.is_phone_portrait() else 24)
+	# Same frame as the mission pages: deep-green card, gold edge, real buttons
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", QuestUI.card_box(0.98, Color(QuestUI.GOLD, 0.6), 16, 16 if UI.is_phone_portrait() else 24))
 	p.set_anchors_preset(Control.PRESET_FULL_RECT)
 	p.offset_left = 12 if UI.is_phone_portrait() else (24 if portrait else 140)
 	p.offset_right = -12 if UI.is_phone_portrait() else (-24 if portrait else -140)
@@ -1743,8 +1850,13 @@ func _show_announcement(ann: Dictionary) -> void:
 	var v := UI.vbox(12)
 	p.add_child(v)
 
-	v.add_child(UI.label("★ 全域市場重大事件 ★", 18 if UI.is_phone_portrait() else 22, UI.GOLD))
-	v.add_child(UI.label(str(ann.get("title", "市場公告")), 22 if UI.is_phone_portrait() else 28, UI.ACCENT_2, true))
+	var head := QuestUI.hbox(10)
+	head.add_child(QuestUI.icon("alert", 28.0, QuestUI.GOLD))
+	head.add_child(QuestUI.title("全域市場重大事件", 18 if UI.is_phone_portrait() else 22, QuestUI.GOLD))
+	v.add_child(head)
+	var at := QuestUI.title(str(ann.get("title", "市場公告")), 22 if UI.is_phone_portrait() else 28, QuestUI.TEXT)
+	at.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(at)
 
 	var body_v := UI.vbox(8)
 	body_v.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1761,16 +1873,16 @@ func _show_announcement(ann: Dictionary) -> void:
 			var tone: String = str(line.get("tone", "info"))
 			body_v.add_child(UI.label(txt, 14 if UI.is_phone_portrait() else 15, UI.tone_color(tone), true))
 
-	var close_btn := UI.button("知道了", func():
+	var close_btn: Button = QuestUI.button("知道了", func():
 		if _announcement_modal != null:
 			UI.pop_out(p, func():
 				if _announcement_modal != null:
 					_announcement_modal.queue_free()
 					_announcement_modal = null
 			, 0.18)
-	, 18)
+	, "primary", "check")
+	close_btn.name = "AnnouncementOk"
 	v.add_child(close_btn)
-	Sound.play("alarm", self)
 
 ## Volume sliders over the game (same panel as the menu settings); play continues underneath
 func _open_audio_settings() -> void:
