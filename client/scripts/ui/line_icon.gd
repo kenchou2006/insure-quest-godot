@@ -2,7 +2,8 @@
 extends Control
 ## 2px rounded line icons for the training hall (drawn, no image files).
 ## kind: user, users, chat_user, robot, doc, chart, chevron_r, chevron_l, chevron_d, speaker, speaker_off, question,
-## replay, door, search, briefcase, doc_check, lock, unlock, gear, book, check
+## replay, door, search, briefcase, doc_check, lock, unlock, gear, book, check, calculator,
+## shield, gauge, stamp, house, wallet
 
 var kind := "user"
 var color := Color("#F3F0E7")
@@ -179,3 +180,37 @@ func _draw() -> void:
 		"check":
 			_l(c + Vector2(-s * 0.26, 0), c + Vector2(-s * 0.06, s * 0.2))
 			_l(c + Vector2(-s * 0.06, s * 0.2), c + Vector2(s * 0.3, -s * 0.22))
+		"calculator":
+			_round_rect(Rect2(o + Vector2(s * 0.24, s * 0.1), Vector2(s * 0.52, s * 0.8)), s * 0.06)
+			_round_rect(Rect2(o + Vector2(s * 0.32, s * 0.18), Vector2(s * 0.36, s * 0.16)), s * 0.03)
+			for row in range(3):
+				for col in range(3):
+					draw_circle(o + Vector2(s * (0.36 + col * 0.14), s * (0.46 + row * 0.13)), width * 0.9, color)
+		"shield":
+			var sh := PackedVector2Array([c + Vector2(0, -s * 0.4), c + Vector2(s * 0.32, -s * 0.28), c + Vector2(s * 0.28, s * 0.1), c + Vector2(0, s * 0.4), c + Vector2(-s * 0.28, s * 0.1), c + Vector2(-s * 0.32, -s * 0.28), c + Vector2(0, -s * 0.4)])
+			draw_polyline(sh, color, width, true)
+			_l(c + Vector2(-s * 0.12, 0), c + Vector2(-s * 0.02, s * 0.1))
+			_l(c + Vector2(-s * 0.02, s * 0.1), c + Vector2(s * 0.14, -s * 0.1))
+		"gauge":
+			_arc(c + Vector2(0, s * 0.12), s * 0.38, PI, TAU)
+			_l(c + Vector2(-s * 0.38, s * 0.12), c + Vector2(s * 0.38, s * 0.12))
+			_l(c + Vector2(0, s * 0.12), c + Vector2(s * 0.2, -s * 0.12))
+			draw_circle(c + Vector2(0, s * 0.12), width * 1.2, color)
+		"stamp":
+			_round_rect(Rect2(o + Vector2(s * 0.2, s * 0.62), Vector2(s * 0.6, s * 0.14)), s * 0.03)
+			_l(c + Vector2(-s * 0.1, s * 0.12), c + Vector2(-s * 0.1, -s * 0.06))
+			_l(c + Vector2(s * 0.1, s * 0.12), c + Vector2(s * 0.1, -s * 0.06))
+			_arc(c + Vector2(0, -s * 0.2), s * 0.15, 0, TAU)
+			_l(c + Vector2(-s * 0.3, s * 0.42), c + Vector2(s * 0.3, s * 0.42))
+		"house":
+			var roof := PackedVector2Array([c + Vector2(-s * 0.4, -s * 0.02), c + Vector2(0, -s * 0.38), c + Vector2(s * 0.4, -s * 0.02)])
+			draw_polyline(roof, color, width, true)
+			_l(c + Vector2(-s * 0.3, -s * 0.1), c + Vector2(-s * 0.3, s * 0.36))
+			_l(c + Vector2(s * 0.3, -s * 0.1), c + Vector2(s * 0.3, s * 0.36))
+			_l(c + Vector2(-s * 0.3, s * 0.36), c + Vector2(s * 0.3, s * 0.36))
+			_round_rect(Rect2(c + Vector2(-s * 0.08, s * 0.1), Vector2(s * 0.16, s * 0.26)), s * 0.02)
+		"wallet":
+			_round_rect(Rect2(o + Vector2(s * 0.14, s * 0.28), Vector2(s * 0.72, s * 0.5)), s * 0.07)
+			_l(o + Vector2(s * 0.22, s * 0.28), o + Vector2(s * 0.62, s * 0.16))
+			_round_rect(Rect2(o + Vector2(s * 0.56, s * 0.44), Vector2(s * 0.3, s * 0.18)), s * 0.05)
+			draw_circle(o + Vector2(s * 0.66, s * 0.53), width, color)

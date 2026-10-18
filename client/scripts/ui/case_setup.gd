@@ -1,5 +1,6 @@
 extends Control
-## Pre-game training case, three steps on one overlay: ① 接受任務 → ② 看線索 → ③ 選工具.
+## Pre-game training case, three steps on one overlay: ① 接受任務 → ② 看線索 → ③ 選工具 (the
+## briefcase page relabels the steps 看線索 → 選工具 → 開始會談).
 ## The system assigns the client — a new advisor gets the tutorial client (1 unlocked); later runs
 ## take the least-practised unlocked case. Nothing is drawn at random and the player never picks
 ## the client: the same client is carried from the mission file to the clues page and the briefcase,
@@ -10,6 +11,8 @@ signal setup_sent(payload: Dictionary)
 
 const LineIcon := preload("res://scripts/ui/line_icon.gd")
 const MissionFile := preload("res://scripts/ui/mission_file.gd")
+const BriefcaseView := preload("res://scripts/ui/briefcase_view.gd")
+const BriefcaseData := preload("res://scripts/briefcase_data.gd")
 const BG := preload("res://assets/startup/loading.png")
 const BG_SHADER := preload("res://assets/startup/hall_backdrop.gdshader")
 const LOGO := preload("res://assets/startup/title.png")
@@ -25,6 +28,8 @@ const C_MUTED := Color("#AABCB5")
 const C_GOLD := Color("#C6A15B")
 const C_LINE := Color(1, 1, 1, 0.12)
 const GRADES := ["S", "A", "B", "C", "D"]
+const STEP_DEFS := [["1", "doc_check", "接受任務"], ["2", "search", "看線索"], ["3", "briefcase", "選工具"]]
+const BRIEFCASE_STEP_DEFS := [["1", "search", "看線索"], ["2", "briefcase", "選工具"], ["3", "chat_user", "開始會談"]]
 
 ## From unlock_info(): unlocked ids, total, served map, assigned client, first_time
 var info: Dictionary = {}
@@ -54,7 +59,9 @@ var _card_label: Label
 var _file: Control
 var _accept: AcceptButton
 var _codex_link: Button
-var _tool_cards := {}
+var _briefcase: Control
+## current_customer for the briefcase (data file merged with the server's case option)
+var _customer: Dictionary = {}
 var _confirm: Button
 var _status: Label
 var _mute_icon: Control
@@ -324,7 +331,7 @@ func _build_steps() -> void:
 	_steps_area = Control.new()
 	_steps_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_steps.add_child(_steps_area)
-	var defs := [["1", "doc_check", "接受任務"], ["2", "search", "看線索"], ["3", "briefcase", "選工具"]]
+	var defs := STEP_DEFS
 	for i in range(defs.size()):
 		var item := StepItem.new(defs[i][0], defs[i][1], defs[i][2])
 		_steps.add_child(item)
@@ -337,9 +344,14 @@ func _build_steps() -> void:
 
 
 func _sync_steps() -> void:
+	# Briefcase page: clues done, choosing tools now, the meeting next
+	var briefcase := _step >= 3
+	var defs: Array = BRIEFCASE_STEP_DEFS if briefcase else STEP_DEFS
 	for i in range(_step_items.size()):
-		var st := "active" if i + 1 == _step else ("done" if i + 1 < _step else "todo")
-		(_step_items[i] as StepItem).set_state(st)
+		var it: StepItem = _step_items[i]
+		it.set_def(defs[i][0], defs[i][1], defs[i][2])
+		var cur := 2 if briefcase else _step
+		it.set_state("active" if i + 1 == cur else ("done" if i + 1 < cur else "todo"))
 
 
 # --- Step 1: accept the assigned training file -------------------------------------------------
@@ -565,89 +577,48 @@ func _show_clues() -> void:
 # --- Step 3: briefcase for the same client -----------------------------------------------------
 
 func _show_tools() -> void:
-	var outer := UI.vbox(14)
-	outer.name = "Outer"
-	_page.add_child(outer)
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	outer.add_child(scroll)
-	var body := UI.vbox(14)
-	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(body)
-	var head := UI.vbox(4)
-	var h := _label("顧問公事包｜為「%s」選 %d 樣工具" % [str(client.get("name", "")), _size], 20, C_TEXT)
-	h.add_theme_font_override("font", BOLD)
-	head.add_child(h)
-	head.add_child(UI.label("工具有限，選對工具能提前掌握資料；少了合規檢核表，對話中的說法風險會更高。", 14, C_MUTED, true))
-	body.add_child(head)
-	var tgrid := GridContainer.new()
-	_tool_grid = tgrid
-	tgrid.columns = 1 if UI.is_phone_portrait() else (2 if UI.is_portrait() or UI.is_phone() else 3)
-	tgrid.add_theme_constant_override("h_separation", 12)
-	tgrid.add_theme_constant_override("v_separation", 12)
-	body.add_child(tgrid)
-	_tool_cards.clear()
-	for t: Dictionary in Net.state.get("tools", []):
-		tgrid.add_child(_tool_card(t))
-	# Centred footer: the bottom corners stay clear for the secretary
-	var foot := UI.vbox(6)
-	foot.alignment = BoxContainer.ALIGNMENT_CENTER
-	_status = UI.label("", 14, C_MUTED)
-	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	foot.add_child(_status)
-	_confirm = UI.button("帶著公事包出發", _on_confirm, 18, C_GREEN)
-	_confirm.custom_minimum_size = Vector2(260, 52)
-	_confirm.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	foot.add_child(_confirm)
-	outer.add_child(foot)
+	_customer = BriefcaseData.customer(client)
+	_briefcase = BriefcaseView.new()
+	_page.add_child(_briefcase)
+	_tool_grid = _briefcase.briefcase_area
+	_confirm = _briefcase.start_button
+	_status = _briefcase.status_label
+	_briefcase.set_customer(_customer)
+	_briefcase.set_tools(_tool_list(), _size)
+	_briefcase.toggle_requested.connect(_on_toggle_tool)
+	_briefcase.start_requested.connect(_on_confirm)
 	_sync_tools()
 
 
-func _tool_card(t: Dictionary) -> Button:
-	var id := str(t.get("id", ""))
-	var v := UI.vbox(4)
-	v.add_child(UI.label(str(t.get("name", "")), 16, C_TEXT, true))
-	v.add_child(UI.label(str(t.get("effect", "")), 13, C_MUTED, true))
-	var b := Button.new()
-	b.focus_mode = Control.FOCUS_NONE
-	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.pressed.connect(func():
-		if _tools.has(id):
-			_tools.erase(id)
-		elif _tools.size() < _size:
-			_tools.append(id)
-		_sync_tools()
-	)
-	var box := MarginContainer.new()
-	box.set_anchors_preset(Control.PRESET_FULL_RECT)
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for side: String in ["left", "right", "top", "bottom"]:
-		box.add_theme_constant_override("margin_" + side, 14)
-	_ignore_mouse(v)
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(v)
-	b.add_child(box)
-	box.resized.connect(func(): b.custom_minimum_size.y = box.get_combined_minimum_size().y)
-	box.minimum_size_changed.connect(func(): b.custom_minimum_size.y = box.get_combined_minimum_size().y)
-	_tool_cards[id] = b
-	return b
+## The six tools from data, with status from this player's progress and the server's tool list
+func _tool_list() -> Array:
+	var progress := {"served": (info.get("served", {}) as Dictionary).size()}
+	return BriefcaseData.tools(progress, Net.state.get("tools", []), _tools)
+
+
+func _on_toggle_tool(id: String) -> void:
+	if _sent:
+		return
+	if _tools.has(id):
+		_tools.erase(id)
+	elif _tools.size() < _size:
+		_tools.append(id)
+	else:
+		return
+	Sound.play("click", self)
+	_sync_tools()
 
 
 func _sync_tools() -> void:
-	for id: String in _tool_cards:
-		var b: Button = _tool_cards[id]
-		for st: String in ["normal", "hover", "pressed", "focus"]:
-			b.add_theme_stylebox_override(st, _card_style(_tools.has(id)))
 	var ready_to_go := not client.is_empty() and _tools.size() == _size and not _sent
+	if _briefcase and is_instance_valid(_briefcase):
+		_briefcase.set_sending(_sent)
+		_briefcase.set_selected(Array(_tools))
 	_confirm.disabled = not ready_to_go
+	if _confirm.has_method("refresh_state"):
+		_confirm.refresh_state()
 	if ready_to_go:
 		_say(["meeting_ready"])
-	if _sent:
-		_status.text = "準備中……"
-	else:
-		_status.text = "公事包 %d / %d" % [_tools.size(), _size]
 
 
 func _on_confirm() -> void:
@@ -838,6 +809,14 @@ func _layout() -> void:
 	if _step == 1 and _strip and is_instance_valid(_strip):
 		_layout_mission(margin, portrait)
 	else:
+		if _step >= 3:
+			margin = (28.0 if not portrait else 12.0) * k
+		if _briefcase and is_instance_valid(_briefcase):
+			# Bottom bar stays clear of the secretary's round corner portrait
+			var g := _secretary()
+			var on: bool = g != null and bool(g.get("enabled"))
+			_briefcase.reserve_right = ((58.0 if not portrait else 70.0) * k) if on else 0.0
+			_briefcase.set_k(k)
 		for n: Node in _page.get_children():
 			if n is Control:
 				(n as Control).position = Vector2(margin, 0)
@@ -905,19 +884,6 @@ func _panel_style(bg: Color, pad := 16) -> StyleBoxFlat:
 	return sb
 
 
-func _card_style(selected: bool) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = C_CARD if not selected else C_CARD.lightened(0.06)
-	sb.set_corner_radius_all(14)
-	sb.set_border_width_all(2 if selected else 1)
-	sb.border_color = C_GREEN if selected else C_LINE
-	sb.content_margin_left = 16
-	sb.content_margin_right = 16
-	sb.content_margin_top = 14
-	sb.content_margin_bottom = 14
-	return sb
-
-
 func _link_button(text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.flat = true
@@ -965,13 +931,6 @@ func _fit_to_row(b: Button, row: Control, pad: Vector2) -> void:
 	fit.call_deferred()
 
 
-func _ignore_mouse(n: Node) -> void:
-	for ch in n.get_children():
-		if ch is Control:
-			(ch as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_ignore_mouse(ch)
-
-
 ## Step indicator: number circle (gold when active, check when done), line icon and label
 class StepItem extends Control:
 	var num := ""
@@ -993,6 +952,13 @@ class StepItem extends Control:
 		_label.text = t
 		_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(_label)
+
+	func set_def(n: String, ic: String, t: String) -> void:
+		num = n
+		icon_kind = ic
+		text = t
+		_icon.set("kind", ic)
+		_label.text = t
 
 	func set_state(s: String) -> void:
 		state = s

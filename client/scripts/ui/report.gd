@@ -2,6 +2,8 @@
 extends Control
 ## Settlement report: ranking, individual five competencies, AI coach feedback, key decision review. Supports portrait vertical split.
 
+const BriefcaseData := preload("res://scripts/briefcase_data.gd")
+
 var main: Node
 var _v: VBoxContainer
 var _scroll: ScrollContainer
@@ -264,6 +266,11 @@ func refresh(s: Dictionary) -> void:
 	body.add_child(coach)
 	_v.add_child(body)
 
+	# Briefcase review: what each packed tool connected to, by the same rules as the case screen
+	var bc := _briefcase_review(s, portrait)
+	if bc:
+		_v.add_child(bc)
+
 	# Letter from ten years later (up to 3 letters, navigable left/right)
 	var is_ai_player: bool = Net.ai_enabled and not bool(mine.get("isBot", false)) and Net.is_logged_in()
 	var letters_pending: bool = is_ai_player and (bool(mine.get("lettersPending", false)) or bool(s.get("aiPending", false)))
@@ -420,6 +427,36 @@ func refresh(s: Dictionary) -> void:
 		_v.add_child(dp)
 
 	UI.pass_wheel(_v)
+
+
+## 公事包工具分析: the packed tools against all of this client's clues (the case is over, so the
+## interview clues count too). Descriptive only — no right / wrong.
+func _briefcase_review(s: Dictionary, portrait: bool) -> Control:
+	var me: Dictionary = Net.me()
+	var ids: Array = me.get("briefcase", []) if me.get("briefcase") is Array else []
+	var mc: Dictionary = me.get("mainCase", {}) if me.get("mainCase") is Dictionary else {}
+	var cid := str(mc.get("clientId", ""))
+	if ids.is_empty() or cid == "":
+		return null
+	var opt: Dictionary = {"id": cid, "name": str(mc.get("clientName", "")), "job": str(mc.get("job", ""))}
+	for c: Variant in s.get("caseOptions", []):
+		if c is Dictionary and str(c.get("id", "")) == cid:
+			opt = c
+	var cust: Dictionary = BriefcaseData.customer(opt)
+	var a: Dictionary = BriefcaseData.analyze(cust, ids)
+	var p := UI.panel()
+	var v := UI.vbox(8)
+	v.add_child(UI.label("公事包工具分析｜%s" % str(cust.get("customer_name", "")), 17 if portrait else 18, UI.ACCENT_2))
+	v.add_child(UI.label("依客戶的線索整理這次攜帶的工具各自對應到哪些需求，作為下次準備會談的參考。", 13, UI.MUTED, true))
+	for t: Dictionary in a.get("per_tool", []):
+		var m: Array = t.get("matched", [])
+		var line := "%s：對應「%s」" % [str(t.get("name", "")), "」「".join(m)] if not m.is_empty() 			else "%s：這位客戶的線索中沒有直接對應的項目，效果仍在會談中生效" % str(t.get("name", ""))
+		v.add_child(UI.label("・" + line, 14 if portrait else 15, UI.TEXT, true))
+	var uncovered: Array = a.get("uncovered", [])
+	if not uncovered.is_empty():
+		v.add_child(UI.label("沒有工具直接對應的重點線索：%s" % "、".join(uncovered), 14 if portrait else 15, UI.GOLD, true))
+	p.add_child(v)
+	return p
 
 
 func _build_certificate_card(mine: Dictionary, s: Dictionary, for_export: bool = false) -> Control:

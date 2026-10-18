@@ -1,0 +1,70 @@
+{
+  "_about": "公事包畫面的客戶資料。姓名、年齡、職業與難度由遊戲伺服器的 caseOptions 提供；這裡是結構化的需求與線索。clues 依重要性排序（priority 越小越重要），reveal=dossier 代表案件檔案已知，reveal=interview 代表要在會談中觀察才會取得。tags 用來和 tools.json 的 matched_tags 做規則比對。",
+  "yuqing": {
+    "age_group": "青年創業期",
+    "family_structure": "單身、與室友合租，沒有扶養對象",
+    "primary_needs": ["收入中斷時的生活保障", "兩年內累積工作室資金"],
+    "financial_constraints": ["旺季淡季收入落差大", "資金多放在波動型投資"],
+    "budget_range": "目標資金 NT$ 600,000",
+    "compliance_risk": "偏好投資報酬，容易被引導成「保證收益」的說法",
+    "clues": [
+      {"id": "income", "title": "收入不穩", "detail": "月收入 3–8 萬不等，旺季淡季落差大", "icon": "chart", "tags": ["income_volatile", "budget_limited"], "priority": 1, "reveal": "dossier"},
+      {"id": "goal", "title": "工作室資金目標", "detail": "兩年內成立個人工作室", "icon": "briefcase", "tags": ["goal_saving"], "priority": 2, "reveal": "dossier"},
+      {"id": "wrist", "title": "收入綁定手腕", "detail": "高強度繪圖造成手腕疼痛，作品量直接決定收入", "icon": "user", "tags": ["single_point", "protection_gap"], "priority": 3, "reveal": "interview"},
+      {"id": "invest", "title": "資產集中波動投資", "detail": "工作室資金多數放在波動型投資，短期現金偏少", "icon": "gauge", "tags": ["risk_awareness"], "priority": 4, "reveal": "interview"}
+    ]
+  },
+  "boting": {
+    "age_group": "已婚育兒期",
+    "family_structure": "已婚，孩子 8 個月大，配偶育嬰留停中，另需孝親費",
+    "primary_needs": ["家庭收入中斷保障", "兼顧房貸與孩子教育準備"],
+    "financial_constraints": ["獎金占比高", "房貸與育兒固定支出偏高"],
+    "budget_range": "需求資金 NT$ 1,200,000",
+    "compliance_risk": "容易用家人安全施壓或貶低團保，造成不當招攬",
+    "clues": [
+      {"id": "family", "title": "家庭責任", "detail": "孩子剛出生，配偶育嬰留停，另需孝親費", "icon": "users", "tags": ["family_duty", "dependents"], "priority": 1, "reveal": "dossier"},
+      {"id": "mortgage", "title": "房貸壓力", "detail": "要兼顧房貸與孩子教育準備", "icon": "house", "tags": ["mortgage", "budget_limited"], "priority": 2, "reveal": "dossier"},
+      {"id": "company", "title": "收入資產集中單一公司", "detail": "薪水與可投資資產都來自同一家公司", "icon": "chart", "tags": ["single_point", "risk_awareness"], "priority": 3, "reveal": "interview"},
+      {"id": "sole", "title": "全家依靠一份收入", "detail": "配偶育嬰留停中，家中暫時只有他一份收入", "icon": "shield", "tags": ["protection_gap", "dependents"], "priority": 4, "reveal": "interview"}
+    ]
+  },
+  "wanting": {
+    "age_group": "單親創業期",
+    "family_structure": "單親，獨自扶養高一的孩子",
+    "primary_needs": ["維持店面營運", "孩子三年後的升學費用"],
+    "financial_constraints": ["個人與店面現金流混在一起", "每筆錢都要留在店裡周轉"],
+    "budget_range": "需求資金 NT$ 800,000",
+    "compliance_risk": "現金流吃緊時，容易被推薦超出負擔的方案",
+    "clues": [
+      {"id": "single_parent", "title": "獨自扶養孩子", "detail": "孩子高一，三年後有明確的升學支出", "icon": "users", "tags": ["family_duty", "dependents"], "priority": 1, "reveal": "dossier"},
+      {"id": "cashflow", "title": "現金流吃緊", "detail": "個人生活費與店面周轉金混在一起", "icon": "wallet", "tags": ["budget_limited", "income_volatile"], "priority": 2, "reveal": "dossier"},
+      {"id": "machine", "title": "營運依賴單一設備", "detail": "主力咖啡機老化，大修需停機十天", "icon": "gauge", "tags": ["single_point", "protection_gap"], "priority": 3, "reveal": "interview"}
+    ]
+  },
+  "ziyuan": {
+    "age_group": "求學起步期",
+    "family_structure": "獨居租屋，沒有扶養對象，家裡無法提供經濟支援",
+    "primary_needs": ["順利完成學位", "建立攝影工作室"],
+    "financial_constraints": ["接案收入季節性明顯", "學費分期加房租接近收入下緣"],
+    "budget_range": "需求資金 NT$ 300,000",
+    "compliance_risk": "預算有限，容易被「趁年輕一定要買」的話術施壓",
+    "clues": [
+      {"id": "budget", "title": "預算有限", "detail": "固定支出接近每月收入下緣", "icon": "wallet", "tags": ["budget_limited"], "priority": 1, "reveal": "dossier"},
+      {"id": "season", "title": "收入季節性", "detail": "案量集中在畢業季與活動旺季", "icon": "chart", "tags": ["income_volatile"], "priority": 2, "reveal": "dossier"},
+      {"id": "camera", "title": "收入依賴單一相機", "detail": "相機壞了就無法接案，也沒有備用機", "icon": "briefcase", "tags": ["single_point", "protection_gap"], "priority": 3, "reveal": "interview"}
+    ]
+  },
+  "zhiming": {
+    "age_group": "準退休期",
+    "family_structure": "與配偶同住，照顧 84 歲母親；子女已成年",
+    "primary_needs": ["五年內退休", "維持照顧母親的責任"],
+    "financial_constraints": ["無法工作就沒有收入", "退休金多放在不易動用的資產"],
+    "budget_range": "需求資金 NT$ 1,500,000",
+    "compliance_risk": "年長客戶，需避免誤導商品特性與過度承諾",
+    "clues": [
+      {"id": "care", "title": "照顧年邁母親", "detail": "每週載母親回診，照顧與交通是固定支出", "icon": "users", "tags": ["family_duty", "dependents"], "priority": 1, "reveal": "dossier"},
+      {"id": "body", "title": "收入依賴體力", "detail": "跑車月收約 5–6 萬，無法工作就沒有收入", "icon": "user", "tags": ["single_point", "protection_gap"], "priority": 2, "reveal": "dossier"},
+      {"id": "liquidity", "title": "退休金流動性不足", "detail": "退休金多放在定存與難以立即動用的資產", "icon": "gauge", "tags": ["liquidity", "risk_awareness"], "priority": 3, "reveal": "interview"}
+    ]
+  }
+}
