@@ -1,14 +1,19 @@
 @tool
 extends Control
 ## Training hall (新人顧問培訓大廳), shown after the secretary choice: pick 單人實戰 or 多人演練.
-## Keeps every menu function: advisor name, guest / demo code / test / Google login, solo vs. AI
-## advisors (level and count), create / join multiplayer rooms, resume seat, records, guide, settings
-## (volumes, secretary, account deletion). Supports landscape/portrait adaptation and PWA update check.
+## Keeps every menu function: guest / demo code / test / Google login, create / join multiplayer
+## rooms, resume seat, records, guide, settings (volumes, secretary, account deletion). The player's
+## advisor (新人顧問報到) shows in the top-right pill; 單人實戰 opens 本局對練配置 (1–3 named
+## sparring advisors) and starts only on 確認配置. 返回選擇秘書 goes back one screen.
+## Supports landscape/portrait adaptation and PWA update check.
 
 const AutomationBridge := preload("res://scripts/automation.gd")
 const ModeCard := preload("res://scripts/ui/mode_card.gd")
 const HallSecretary := preload("res://scripts/ui/hall_secretary.gd")
 const LineIcon := preload("res://scripts/ui/line_icon.gd")
+const BackButton := preload("res://scripts/ui/back_button.gd")
+## 本局對練配置 (shown under the cards once 單人實戰 is chosen)
+const SparringSetup := preload("res://scripts/ui/sparring_setup.gd")
 const HALL_BG := preload("res://assets/startup/loading.png")
 const HALL_SHADER := preload("res://assets/startup/hall_backdrop.gdshader")
 const BOLD := preload("res://assets/fonts/bold.tres")
@@ -21,8 +26,6 @@ var main: Node
 var _name: LineEdit
 var _code: LineEdit
 var _server: LineEdit
-var _opponents := 2
-var _level := "pro"
 var _howto: Control
 var _pwa_btn: Button
 var _resume_container: VBoxContainer
@@ -53,8 +56,6 @@ var _subtitle: Label
 var _solo_card: ModeCard
 var _multi_card: ModeCard
 var _solo_opts: PanelContainer
-var _level_opt: OptionButton
-var _count_opt: OptionButton
 var _footer: Label
 var _secretary: HallSecretary
 var _id_catcher: Control
@@ -63,6 +64,7 @@ var _scroll: ScrollContainer
 var _stack: VBoxContainer
 var _stack_spacer: Control
 var _auth_card_container: VBoxContainer
+var _back: Button
 var _last_account_id: String = ""
 var _avatar_loading: bool = false
 
@@ -131,6 +133,8 @@ func _build_ui() -> void:
 	add_child(bg)
 
 	_build_topbar()
+	_back = BackButton.new("返回選擇秘書")
+	_back.pressed.connect(_on_back)
 
 	_title_row = HBoxContainer.new()
 	_title_row.add_theme_constant_override("separation", 0)
@@ -156,7 +160,8 @@ func _build_ui() -> void:
 	_solo_card.button_text = "進入單人實戰"
 	_solo_card.primary = true
 	_solo_card.picked.connect(func(): _pick_mode("solo"))
-	_solo_card.activated.connect(_start_solo)
+	# 進入單人實戰 opens 本局對練配置; the game starts on 確認配置
+	_solo_card.activated.connect(func(): _pick_mode("solo", true))
 
 	_multi_card = ModeCard.new()
 	_multi_card.title = "多人演練"
@@ -187,6 +192,8 @@ func _build_ui() -> void:
 		var top_gap := Control.new()
 		top_gap.custom_minimum_size = Vector2(0, 10)
 		title_wrap.add_child(top_gap)
+		_back.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		title_wrap.add_child(_back)
 		title_wrap.add_child(_title_row)
 		title_wrap.add_child(_ornament)
 		title_wrap.add_child(_subtitle)
@@ -197,7 +204,7 @@ func _build_ui() -> void:
 		_stack_spacer = Control.new()
 		_stack.add_child(_stack_spacer)
 	else:
-		for n: Control in [_title_row, _ornament, _subtitle, _solo_card, _multi_card, _solo_opts, _footer]:
+		for n: Control in [_back, _title_row, _ornament, _subtitle, _solo_card, _multi_card, _solo_opts, _footer]:
 			add_child(n)
 	_solo_opts.visible = false
 
@@ -291,7 +298,12 @@ func _build_topbar() -> void:
 	_id_pill.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	_id_pill.pressed.connect(func(): _toggle_identity())
 	_top.add_child(_id_pill)
-	_id_icon = LineIcon.new("user", UI.TEXT, 1.8)
+	# The player's own portrait (新人顧問報到); the line icon only before a profile exists
+	if PlayerProfile.player_profile_created and PlayerProfile.portrait() != null:
+		_id_icon = UI.RoundTex.new(PlayerProfile.portrait(), Vector2(28, 28), -1.0, PlayerProfile.token_color(), 2.0)
+	else:
+		_id_icon = LineIcon.new("user", UI.TEXT, 1.8)
+	_id_icon.name = "PlayerAvatar"
 	_id_pill.add_child(_id_icon)
 	_id_label = _hall_label("", 15, UI.TEXT)
 	_id_pill.add_child(_id_label)
@@ -325,62 +337,15 @@ func _build_topbar() -> void:
 	_howto_btn.mouse_exited.connect(func(): _howto_label.add_theme_color_override("font_color", UI.TEXT))
 
 
-## Solo options: AI sparring advisor level and how many of them (shown after 單人實戰 is picked)
+## 本局對練配置 (shown after 單人實戰 is picked): the player plus 1–3 named sparring advisors
 func _build_solo_options() -> void:
-	_solo_opts = PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(UI.PANEL, 0.9)
-	sb.set_corner_radius_all(14)
-	sb.set_border_width_all(1)
-	sb.border_color = Color(1, 1, 1, 0.12)
-	sb.content_margin_left = 20
-	sb.content_margin_right = 14
-	sb.content_margin_top = 8
-	sb.content_margin_bottom = 8
-	sb.anti_aliasing = true
-	_solo_opts.add_theme_stylebox_override("panel", sb)
-	var box: BoxContainer = UI.vbox(8) if _portrait_mode else UI.hbox(14)
-	_solo_opts.add_child(box)
-
-	var lvl_row := UI.hbox(10)
-	lvl_row.add_child(_hall_label("AI 對練顧問", 16, UI.TEXT))
-	_level_opt = OptionButton.new()
-	for t: String in ["資深顧問（示範正確做法）", "新人顧問（常見錯誤）", "混合"]:
-		_level_opt.add_item(t)
-	_level_opt.select(["pro", "novice", "mix"].find(_level))
-	_level_opt.item_selected.connect(func(i: int): _level = ["pro", "novice", "mix"][i])
-	_level_opt.custom_minimum_size = Vector2(170, 38)
-	_level_opt.clip_text = true
-	_level_opt.fit_to_longest_item = false
-	_level_opt.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_level_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	lvl_row.add_child(_level_opt)
-	lvl_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_child(lvl_row)
-
-	if not _portrait_mode:
-		var rule := ColorRect.new()
-		rule.color = Color(1, 1, 1, 0.14)
-		rule.custom_minimum_size = Vector2(1, 30)
-		rule.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		box.add_child(rule)
-
-	var cnt_row := UI.hbox(10)
-	cnt_row.add_child(_hall_label("對練人數", 16, UI.TEXT))
-	_count_opt = OptionButton.new()
-	for t: String in ["1 位", "2 位", "3 位", "不安排（自主練習）"]:
-		_count_opt.add_item(t)
-	_count_opt.select(3 if _opponents == 0 else _opponents - 1)
-	_count_opt.item_selected.connect(func(i: int): _opponents = 0 if i == 3 else i + 1)
-	_count_opt.custom_minimum_size = Vector2(118, 38)
-	_count_opt.clip_text = true
-	_count_opt.fit_to_longest_item = false
-	_count_opt.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_count_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL if _portrait_mode else Control.SIZE_FILL
-	cnt_row.add_child(_count_opt)
-	if _portrait_mode:
-		cnt_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_child(cnt_row)
+	_solo_opts = SparringSetup.new(_portrait_mode, _phone)
+	_solo_opts.connect("confirmed", _start_solo)
+	# Its height is known only after its wrapped hint is laid out: place the page again then
+	_solo_opts.minimum_size_changed.connect(func():
+		if _solo_opts.visible and not _portrait_mode:
+			_layout()
+	, CONNECT_DEFERRED)
 
 
 ## 「訪客｜顧問」 dropdown: advisor name, login options, records and settings
@@ -403,20 +368,23 @@ func _build_identity_popup() -> void:
 	_id_pop.add_child(v)
 
 	v.add_child(UI.label("身分設定", 17, UI.GOLD))
-	v.add_child(UI.label("顧問姓名", 13, UI.MUTED))
-	_name = LineEdit.new()
-	var default_name: String = Net.player_name
-	if Net.is_logged_in():
-		var acc_name: String = str(Net.get_user().get("name", "")).strip_edges()
-		if acc_name != "" and (default_name == "顧問" or default_name == ""):
-			default_name = acc_name
-	_name.text = default_name
-	_name.max_length = 12
-	_name.placeholder_text = "輸入你的名字"
-	_name.custom_minimum_size = Vector2(0, 40)
-	_name.text_changed.connect(func(_t: String): _refresh_auth_ui())
-	_name.text_submitted.connect(func(_t: String): _save(); _toggle_identity(false))
-	v.add_child(_name)
+	# The advisor from 新人顧問報到: portrait, name, real level; edited on its own page
+	var who := UI.hbox(10)
+	if PlayerProfile.portrait() != null:
+		who.add_child(UI.RoundTex.new(PlayerProfile.portrait(), Vector2(52, 52), -1.0, PlayerProfile.token_color(), 2.0))
+	var who_v := UI.vbox(2)
+	who_v.add_child(UI.label(PlayerProfile.player_name if PlayerProfile.player_name != "" else Net.player_name, 17, UI.TEXT))
+	who_v.add_child(UI.label(PlayerProfile.level_text(), 13, UI.GOLD))
+	who.add_child(who_v)
+	v.add_child(who)
+	var edit := UI.button("修改顧問檔案（形象・名稱・棋子）", func():
+		_toggle_identity(false)
+		if main and main.has_method("show_onboarding"):
+			main.show_onboarding("edit")
+	, 14, UI.PANEL_2)
+	edit.name = "EditProfile"
+	v.add_child(edit)
+	_name = null
 
 	# PWA update button (kept hidden; updates install silently)
 	_pwa_btn = UI.button("★ 有新版本，點此更新", _on_pwa_btn_pressed, 14, UI.GOLD)
@@ -479,24 +447,41 @@ func _toggle_identity(force: Variant = null) -> void:
 func _refresh_auth_ui() -> void:
 	if _id_label == null or not is_instance_valid(_id_label):
 		return
-	var who := "訪客"
+	# Player name and real level: the account level when logged in, else this device's training level
+	var level := PlayerProfile.advisor_level
 	if Net.is_logged_in():
 		var lv: Dictionary = Net.get_level()
-		who = "Lv.%d" % int(lv.get("level", 1)) if not lv.is_empty() else "已登入"
-	var n: String = _name.text.strip_edges() if _name else ""
-	_id_label.text = "%s ｜ %s" % [who, n if n != "" else "顧問"]
+		if not lv.is_empty():
+			level = int(lv.get("level", level))
+	var n: String = PlayerProfile.player_name if PlayerProfile.player_profile_created else ""
+	if n == "":
+		n = _name.text.strip_edges() if _name else Net.player_name
+	_id_label.text = "%s　Lv.%d" % [n if n != "" else "顧問", level]
 	if _multi_card:
 		var open := Net.is_logged_in()
 		_multi_card.set_tag("已開放" if open else "登入後開放", open)
 	_layout()
 
 
-func _pick_mode(mode: String) -> void:
+func _pick_mode(mode: String, reveal := false) -> void:
 	if _selected_mode == mode:
+		if reveal and _portrait_mode and _scroll and _solo_opts.visible:
+			_scroll.ensure_control_visible(_solo_opts)
 		return
 	_selected_mode = mode
 	_solo_card.set_selected(mode == "solo")
 	_multi_card.set_selected(mode == "multi")
+	# Chosen card: 「已選擇」 and its frame lit; the other card dims
+	_solo_card.set_tag("已選擇" if mode == "solo" else "初次建議", true)
+	if mode != "multi":
+		_multi_card.set_tag("已開放" if Net.is_logged_in() else "登入後開放", Net.is_logged_in())
+	for pair in [[_solo_card, mode == "multi"], [_multi_card, mode == "solo"]]:
+		var card: Control = pair[0]
+		var target := Color(0.62, 0.62, 0.62) if pair[1] else Color(1, 1, 1)
+		if UI.is_animation_disabled():
+			card.modulate = target
+		else:
+			create_tween().tween_property(card, "modulate", target, 0.2)
 	var show := mode == "solo"
 	if show == _solo_opts.visible:
 		return
@@ -508,9 +493,14 @@ func _pick_mode(mode: String) -> void:
 		if not _portrait_mode:
 			_solo_opts.position.y = y - 8
 		var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		tw.tween_property(_solo_opts, "modulate:a", 1.0, 0.2)
+		tw.tween_property(_solo_opts, "modulate:a", 1.0, 0.25)
 		if not _portrait_mode:
-			tw.tween_property(_solo_opts, "position:y", y, 0.2)
+			_solo_opts.position.y = y + 24
+			tw.tween_property(_solo_opts, "position:y", y, 0.28)
+			tw.finished.connect(_layout)
+	if show and _portrait_mode and _scroll:
+		await get_tree().process_frame
+		_scroll.ensure_control_visible(_solo_opts)
 
 
 func _on_multi_pressed() -> void:
@@ -628,29 +618,58 @@ func _layout() -> void:
 
 	# Landscape: title, two cards, solo options; the block centers vertically when the screen is tall
 	var oy := maxf(0.0, (view.y - 720.0 * k) * 0.5)
+	# 本局對練配置 open: the cards get shorter and the line-up panel takes the lower part
+	var cfg := _solo_opts.visible
+	if cfg:
+		oy = 0.0
+	_back.reset_size()
+	_back.position = Vector2(side, top_h + 12 * k)
 	_title_row.reset_size()
-	_title_row.position = Vector2((view.x - _title_row.size.x) * 0.5, top_h + 14 * k + oy)
+	_title_row.position = Vector2((view.x - _title_row.size.x) * 0.5, top_h + (8.0 if cfg else 14.0) * k + oy)
 	_ornament.size = Vector2(160 * k, 12 * k)
 	_ornament.position = Vector2((view.x - _ornament.size.x) * 0.5, _title_row.position.y + _title_row.size.y + 2 * k)
 	_subtitle.reset_size()
 	_subtitle.position = Vector2((view.x - _subtitle.size.x) * 0.5, _ornament.position.y + _ornament.size.y + 6 * k)
 
-	var cw := 406.0 * k
-	var ch := 292.0 * k
+	var cw := (372.0 if cfg else 406.0) * k
+	var ch := (214.0 if cfg else 292.0) * k
 	var gap := 22.0 * k
 	var x0 := (view.x - (cw * 2 + gap)) * 0.5
-	var cy := _subtitle.position.y + _subtitle.size.y + 22 * k
+	var cy := _subtitle.position.y + _subtitle.size.y + (12.0 if cfg else 22.0) * k
+	var sec_rect := _secretary.occupied_rect()
+	var sec_left := sec_rect.position.x
+	var px := 24.0 * k
+	var right := view.x - 24 * k
+	# Low screens: the line-up panel must fit whole — the subtitle steps aside, then the cards get shorter
+	var tight := false
+	if cfg:
+		var sec_right := minf(right, sec_left - 14 * k) if sec_rect.size.x > 0 and sec_rect.position.y < view.y - 4 else right
+		_solo_opts.size = Vector2(maxf(200.0, sec_right - px), 0)
+		var need: float = _solo_opts.call("min_height")
+		var bottom := view.y - 6 * k - need - 12 * k
+		if cy + ch > bottom:
+			tight = true
+			cy = _ornament.position.y + 4 * k
+			ch = clampf(bottom - cy, 84.0 * k, ch)
+	_ornament.visible = not tight
+	_subtitle.visible = not tight
 	_solo_card.size = Vector2(cw, ch)
 	_solo_card.position = Vector2(x0, cy)
 	_multi_card.size = Vector2(cw, ch)
 	_multi_card.position = Vector2(x0 + cw + gap, cy)
 
-	# Solo options sit under the cards, left of the secretary corner
-	var sec_left := _secretary.occupied_rect().position.x
-	var ow := minf(cw * 1.45, sec_left - 24 * k - x0)
+	# Line-up panel under the cards, left of the secretary corner
+	var top_y := cy + ch + 12 * k
+	if sec_rect.size.x > 0 and sec_rect.position.y < view.y - 4 and sec_rect.end.y > top_y:
+		right = minf(right, sec_left - 14 * k)
+	_solo_opts.size = Vector2(maxf(200.0, right - px), 0)
+	if cfg:
+		_solo_opts.call("fit_height", view.y - top_y - 6 * k)
 	_solo_opts.reset_size()
-	_solo_opts.size = Vector2(ow, 54 * k)
-	_solo_opts.position = Vector2(x0, cy + ch + 18 * k)
+	var oh := maxf(_solo_opts.get_combined_minimum_size().y, view.y - top_y - 10 * k)
+	_solo_opts.size = Vector2(maxf(200.0, right - px), minf(oh, view.y - top_y - 6 * k))
+	_solo_opts.position = Vector2(px, top_y)
+	_footer.visible = not cfg
 	_footer.custom_minimum_size = Vector2(minf(sec_left - 48 * k, 820 * k), 0)
 	_footer.reset_size()
 	_footer.position = Vector2(24 * k, view.y - _footer.size.y - 12 * k)
@@ -980,19 +999,24 @@ func _open_demo_dialog() -> void:
 
 
 func _save() -> void:
-	var n: String = _name.text.strip_edges() if _name else ""
+	var n: String = PlayerProfile.player_name if PlayerProfile.player_profile_created else (_name.text.strip_edges() if _name else Net.player_name)
 	Net.player_name = n if n != "" else "顧問"
 	if _server:
 		Net.base_url = _server.text.strip_edges().trim_suffix("/")
 	Net.save_prefs()
 
 
+## 確認配置: one server bot per chosen sparring advisor, in order (their names show on every screen)
 func _start_solo() -> void:
 	_save()
-	var bots: Array = []
-	for i: int in range(_opponents):
-		bots.append(_level if _level != "mix" else (["pro", "novice"][i % 2]))
+	var bots: Array = PlayerProfile.sparring_levels()
 	main.create_and_join(bots, true)
+
+
+func _on_back() -> void:
+	_save()
+	if main and main.has_method("open_secretary_settings"):
+		main.open_secretary_settings()
 
 
 func _create_multi() -> void:

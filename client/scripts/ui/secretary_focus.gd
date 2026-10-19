@@ -66,6 +66,10 @@ var voice_button: Button
 var _typing := false
 var _voice_done := true
 var _gen := 0
+## 頁面導覽：持續取得要照亮／要避開的位置（按鈕在導覽開啟後移動時，照亮框跟著走）
+var _highlight_provider: Callable
+var _avoid_provider: Callable
+var _track := 0.0
 var _type_tween: Tween
 var _anim: Tween
 var _k := 1.0
@@ -218,6 +222,9 @@ func begin_secretary_focus(pid: String, lines: Array, gender: String, portrait_t
 		return false
 	highlight_rects = opts.get("highlights", [])
 	avoid_rects = opts.get("avoid", [])
+	_highlight_provider = opts.get("highlight_provider", Callable())
+	_avoid_provider = opts.get("avoid_provider", Callable())
+	_track = 0.0
 	page_id = pid
 	dialogues = lines.duplicate()
 	secretary_gender = gender
@@ -369,6 +376,8 @@ func _sync_voice_button() -> void:
 func end_secretary_focus(reason: String) -> void:
 	var was_active := guide_active
 	_gen += 1
+	_highlight_provider = Callable()
+	_avoid_provider = Callable()
 	_stop_voice()
 	if _type_tween:
 		_type_tween.kill()
@@ -423,9 +432,27 @@ func _on_panel_input(event: InputEvent) -> void:
 
 
 ## A guide that is not active never keeps its dim: released on the next frame whatever happened
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not guide_active and (dim.visible or dim.mouse_filter != Control.MOUSE_FILTER_IGNORE or visible):
 		end_secretary_focus("watchdog")
+	if guide_active and _highlight_provider.is_valid():
+		_track += delta
+		if _track >= 0.1:
+			_track = 0.0
+			_follow_targets()
+
+
+## 被解說的元件移動了（卡片進場、文字換行）：照亮框與對話框位置跟著更新
+func _follow_targets() -> void:
+	var hl: Variant = _highlight_provider.call()
+	var av: Variant = _avoid_provider.call() if _avoid_provider.is_valid() else avoid_rects
+	if not (hl is Array) or not (av is Array):
+		return
+	if hl == highlight_rects and av == avoid_rects:
+		return
+	highlight_rects = hl
+	avoid_rects = av
+	_layout()
 
 
 # --- Layout & animation ------------------------------------------------------------------------

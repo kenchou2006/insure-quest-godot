@@ -281,17 +281,23 @@ func _row(i: int, line: Dictionary) -> Control:
 	nb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(nb)
 	var is_client := str(line.get("who", "")) == "客戶"
+	var own := bool(line.get("own", false))
 	if is_client:
 		var pt := QuestUI.portrait(GameState.client_portrait_id(), Vector2(48, 48))
 		pt.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(pt)
+	elif own and PlayerProfile.portrait() != null:
+		# What the player said themself: their own advisor portrait
+		var mine := UI.RoundTex.new(PlayerProfile.portrait(), Vector2(48, 48), -1.0, PlayerProfile.token_color(), 2.0)
+		mine.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(mine)
 	else:
 		var ic := QuestUI.icon("user", 40.0, QuestUI.BG)
 		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(ic)
 	var who := QuestUI.vbox(0)
 	who.custom_minimum_size.x = 44
-	who.add_child(QuestUI.label(str(line.get("who", "")), 14, QuestUI.INK, false, true))
+	who.add_child(QuestUI.label(PlayerProfile.player_name if own and PlayerProfile.player_name != "" else str(line.get("who", "")), 14, QuestUI.INK, false, true))
 	who.add_child(QuestUI.label(str(line.get("time", "")), 12, Color(QuestUI.INK, 0.6)))
 	who.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(who)

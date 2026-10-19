@@ -1,17 +1,21 @@
 extends "res://scripts/quest/pages/modal_base.gd"
-## MissionResultModal (page 9) — 任務結果與節點解鎖.
+## MissionResultModal（任務結算）— 任務結果與下一站解鎖。
 ## For a meeting that pauses between visits (stage result) and for the finished case (final result).
 ## Items appear one by one, 0.4 s apart: 需求洞察 → 預算適配 → 溝通品質 → 合規表現 → 客戶信任變化 →
 ## 經驗值 → 解鎖. Never only a score: the key decisions, the client's reaction, why it went well,
 ## what to improve, and what a different choice would have changed. A strong result gets a few
 ## quiet gold sparks; a slip gets one red scan line — nothing loops.
-## 返回地圖 continues the turn; on the last station it reads 生成培訓報告.
+## 前往下一站：關閉結算卡，回到地圖播放解鎖動畫並推進路線（最後一站改為生成培訓報告）；
+## 查看決策回顧：本局每個選擇與原因；返回主頁：先跳出確認視窗。
+## 分數由規則引擎計算；回饋文字只讀後端給的內容，這裡不改分數。
+
+const DecisionReview := preload("res://scripts/quest/widgets/decision_review.gd")
 
 const STEP_GAP := 0.4
 
 var _final := false
 var _ev: Dictionary = {}
-var _items: VBoxContainer
+var _items: Container
 var _cta: Button
 var _sending := false
 var _xp := 0
@@ -44,15 +48,30 @@ func build() -> void:
 	hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL if narrow() else Control.SIZE_SHRINK_CENTER
 	var ttl := ""
 	if _final:
-		ttl = "任務完成" if bool(result.get("signed", false)) else "本次會談結束"
+		ttl = "任務完成" if bool(result.get("signed", false)) else "需要加強"
 	else:
 		ttl = str(_ev.get("title", "會談告一段落")).split("｜")[0]
-	hv.add_child(QuestUI.title(ttl, 40 if not phone() else 26, QuestUI.GOLD))
+	var heading := QuestUI.title(ttl, 40 if not phone() else 26, QuestUI.GOLD)
+	heading.name = "ResultHeading"
+	hv.add_child(heading)
+	var verdict := QuestUI.chip("任務完成" if _good else "需要加強", QuestUI.GREEN if _good else QuestUI.GOLD)
+	verdict.name = "ResultVerdict"
+	verdict.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	hv.add_child(verdict)
 	var sub := str(result.get("summary", "")) if _final else str(_ev.get("body", ""))
 	if sub == "":
 		sub = "你已完成本次客戶會談。"
 	hv.add_child(QuestUI.label(sub, 14, QuestUI.MUTED, true))
 	head.add_child(hv)
+	if PlayerProfile.player_profile_created:
+		var me := QuestUI.hbox(8)
+		me.add_child(UI.RoundTex.new(PlayerProfile.portrait(), Vector2(40, 40), -1.0, PlayerProfile.token_color(), 2.0))
+		var mv := QuestUI.vbox(0)
+		mv.add_child(QuestUI.label("顧問　" + PlayerProfile.player_name, 14, QuestUI.TEXT, false, true))
+		mv.add_child(QuestUI.label(PlayerProfile.level_text(), 12, QuestUI.GOLD))
+		me.add_child(mv)
+		me.name = "AdvisorChip"
+		head.add_child(me)
 	body.add_child(head)
 	var split: BoxContainer = QuestUI.hbox(16) if not narrow() else QuestUI.vbox(12)
 	body.add_child(split)
@@ -73,8 +92,18 @@ func build() -> void:
 		ccv.add_child(gr)
 	split.add_child(cc)
 	# Items revealed in order
-	_items = QuestUI.vbox(8)
+	# 寬畫面兩欄排列，九項一眼看完（精簡結算卡）
+	if narrow():
+		_items = QuestUI.vbox(8)
+	else:
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 8)
+		grid.add_theme_constant_override("v_separation", 8)
+		_items = grid
+	_items.name = "ResultItems"
 	_items.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_items.size_flags_stretch_ratio = 1.6
 	split.add_child(_items)
 	_build_rows(sess, result)
 	# Why / improve / alternative
@@ -87,10 +116,16 @@ func build() -> void:
 	var foot := QuestUI.hbox(12)
 	foot.alignment = BoxContainer.ALIGNMENT_CENTER
 	var last := GameState.current_stage() >= GameState.total_stages() and _final
-	_cta = QuestUI.button("生成培訓報告" if last else "返回地圖", _on_continue, "primary", "report" if last else "map")
+	_cta = QuestUI.button("生成培訓報告" if last else "前往下一站", _on_continue, "primary", "report" if last else "next")
 	_cta.name = "ResultContinue"
-	_cta.custom_minimum_size.x = 260
+	_cta.custom_minimum_size.x = 240
 	foot.add_child(_cta)
+	var review: Button = QuestUI.button("查看決策回顧", _open_decisions, "secondary", "doc")
+	review.name = "ReviewDecisions"
+	foot.add_child(review)
+	var home: Button = QuestUI.button("返回主頁", _go_home, "quiet", "house")
+	home.name = "ResultHome"
+	foot.add_child(home)
 	card_footer.add_child(foot)
 	_award_xp(sess, result)
 
@@ -152,6 +187,7 @@ func _row(icon_kind: String, cap: String, value: String, note: String, col := Qu
 	h.add_child(v)
 	if sound != "":
 		p.set_meta("sound", sound)
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_items.add_child(p)
 	_rows.append(p)
 	return p
@@ -192,9 +228,39 @@ func _build_rows(sess: Dictionary, result: Dictionary) -> void:
 	if scan.has("score"):
 		comp_note += " 合規檢核得分 %d（漏選 %d、誤判 %d）。" % [int(scan.score), int(scan.get("missed", 0)), int(scan.get("wrong", 0))]
 	_row("shield", "合規表現", str(int(comp)), comp_note, QuestUI.metric_color(comp), "compliance_risk" if comp < 70 else "")
+	var over := GameState.overtime()
+	var left := GameState.remaining_time()
+	var time_note := "在會談時間內完成，節奏掌握得宜。" if over <= 0.0 else "超出會談時間，下次可以把問題聚焦在關鍵需求。"
+	_row("clock", "時間管理", ("超時 " + QuestUI.mmss(over)) if over > 0.0 else ("剩 " + QuestUI.mmss(left)), time_note, QuestUI.GREEN if over <= 0.0 else QuestUI.RED)
 	var trust := float(m.get("trust", 50))
 	_row("handshake", "客戶信任變化", _signed(trust - 50.0), "從初次見面的 50 到現在的 %d。" % int(trust), QuestUI.GREEN if trust >= 50 else QuestUI.RED, "trust_up" if trust >= 50 else "trust_down")
-	_row("gift", "顧問經驗", "+%d" % _xp_amount(sess, result), "累積經驗 %d・Lv.%d" % [GameState.advisor_xp() + _xp_amount(sess, result), 1 + (GameState.advisor_xp() + _xp_amount(sess, result)) / GameState.XP_PER_LEVEL], QuestUI.GOLD, "xp_gain")
+	var gain := _xp_amount(sess, result)
+	# 這一站的經驗發放過後 advisor_xp() 已含它；等級進度條以加總後的經驗計算
+	var total := GameState.advisor_xp() + (0 if _awarded() else gain)
+	var lv := PlayerProfile.level_for(total)
+	var xp_row := _row("gift", "獲得經驗值", "+%d" % gain, "累積經驗 %d・Lv.%d %s，距離下一級 %d" % [total, lv, PlayerProfile.level_title(lv), GameState.XP_PER_LEVEL - total % GameState.XP_PER_LEVEL], QuestUI.GOLD, "xp_gain")
+	var bar := ProgressBar.new()
+	bar.name = "LevelProgress"
+	bar.min_value = 0
+	bar.max_value = GameState.XP_PER_LEVEL
+	bar.value = total % GameState.XP_PER_LEVEL
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 6)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var back := StyleBoxFlat.new()
+	back.bg_color = Color(1, 1, 1, 0.1)
+	back.set_corner_radius_all(3)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = QuestUI.GOLD
+	fill.set_corner_radius_all(3)
+	bar.add_theme_stylebox_override("background", back)
+	bar.add_theme_stylebox_override("fill", fill)
+	((xp_row.get_child(0) as Control).get_child(1) as Control).add_child(bar)
+	var contacts_now: Array = Net.me().get("contacts", [])
+	var known: Array = GameState.flag("contacts_seen", []) if GameState.flag("contacts_seen", []) is Array else []
+	var fresh: Array = contacts_now.filter(func(n): return not known.has(n))
+	GameState.set_flag("contacts_seen", contacts_now.duplicate())
+	_row("people", "新增人脈", "+%d" % fresh.size(), ("、".join(fresh) + " 願意介紹或再聯絡。") if not fresh.is_empty() else "這一站沒有新增人脈；完成案件、讓客戶滿意會帶來轉介紹。", QuestUI.GREEN if not fresh.is_empty() else QuestUI.MUTED)
 	var unlock := ""
 	var contacts: Array = Net.me().get("contacts", [])
 	if _final and bool(GameState.main_case().get("done", false)):
@@ -254,6 +320,13 @@ func _build_reasons(wv: VBoxContainer, sess: Dictionary, result: Dictionary) -> 
 	var caps: Array = result.get("caps", []) if result.get("caps") is Array else []
 	for c in caps:
 		wv.add_child(_reason_row("flag", QuestUI.RED, "評級上限", str(c)))
+	# 個人化回饋：後端依這次會談產生的評語（AI 開啟時由 AI 撰寫，分數不受影響）
+	var fb := _feedback(result)
+	if fb != "":
+		var fbl := QuestUI.label("「%s」" % fb, 14, QuestUI.TEXT, true)
+		fbl.name = "PersonalFeedback"
+		wv.add_child(QuestUI.header("spark", "個人化回饋"))
+		wv.add_child(fbl)
 
 
 func _reason_row(icon_kind: String, col: Color, title_text: String, detail: String) -> Control:
@@ -298,8 +371,17 @@ func _xp_amount(sess: Dictionary, result: Dictionary) -> int:
 	return 30 + good_lines * 15
 
 
+func _xp_key() -> String:
+	return ("final:" if _final else "stage:") + str(_ev.get("title", "")) + ":" + str(GameState.current_stage())
+
+
+func _awarded() -> bool:
+	var awarded: Variant = GameState.flag("xp_awarded", {})
+	return awarded is Dictionary and (awarded as Dictionary).has(_xp_key())
+
+
 func _award_xp(sess: Dictionary, result: Dictionary) -> void:
-	var key := ("final:" if _final else "stage:") + str(_ev.get("title", "")) + ":" + str(GameState.current_stage())
+	var key := _xp_key()
 	var awarded: Dictionary = GameState.flag("xp_awarded", {}) if GameState.flag("xp_awarded", {}) is Dictionary else {}
 	if awarded.has(key):
 		return
@@ -310,11 +392,47 @@ func _award_xp(sess: Dictionary, result: Dictionary) -> void:
 
 
 func _on_continue() -> void:
-	if _sending:
+	if _sending or not QuestFlow.claim():
 		return
 	_sending = true
 	_cta.call("set_loading", true, "整理中")
+	# 回到地圖時先播放下一站解鎖（最後一站直接進培訓報告）
+	QuestFlow.unlock_pending = _cta.text != "生成培訓報告"
 	send({"type": "continue"})
+	# 連線中斷時後端不會回應：8 秒後按鈕復原並提示，不讓結算卡停在送出中
+	get_tree().create_timer(8.0).timeout.connect(func():
+		if is_instance_valid(self) and _sending:
+			_sending = false
+			QuestFlow.unlock_pending = false
+			_cta.call("set_loading", false)
+			push_warning("任務結算：前往下一站 8 秒沒有收到後端回應")
+			if layer:
+				layer.call("show_toast", "沒有收到回應，請確認連線後再按一次", "error")
+	)
+
+
+func _open_decisions() -> void:
+	if find_child("DecisionReview", false, false) != null:
+		return
+	add_child(DecisionReview.new())
+
+
+## 返回主頁：先確認（繼續培訓／儲存並返回主畫面／放棄本次培訓），避免誤觸
+func _go_home() -> void:
+	if layer:
+		layer.call("_leave")
+
+
+func _feedback(result: Dictionary) -> String:
+	if _final:
+		var letter: Variant = result.get("letter")
+		if letter is Dictionary and str(letter.get("content", "")) != "":
+			return str(letter.content).strip_edges().substr(0, 90)
+		return str(result.get("summary", ""))
+	for l in _ev.get("lines", []):
+		if str((l as Dictionary).get("tone", "")) in ["good", "info"]:
+			return str(l.get("text", ""))
+	return str(_ev.get("body", ""))
 
 
 ## A few quiet gold sparks rising behind the heading (about 1 s, once)

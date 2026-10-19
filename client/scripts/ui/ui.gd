@@ -310,6 +310,7 @@ static func rich(bbcode: String, size := 17) -> RichTextLabel:
 static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> Button:
 	var b := Button.new()
 	b.text = glue(text)
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	b.add_theme_font_size_override("font_size", fs(size))
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		b.add_theme_stylebox_override(state, button_stylebox(color, state, 10, 12))

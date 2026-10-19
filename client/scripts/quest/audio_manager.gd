@@ -16,6 +16,7 @@ const FADE := 1.2
 const SLOTS := {
 	"ui_hover": ["UI", -16.0, 0.09],
 	"ui_click": ["UI", -9.0, 0.05],
+	"ui_back": ["UI", -10.0, 0.05],
 	"dice_roll": ["UI", -7.0, 0.4],
 	"dice_land": ["UI", -6.0, 0.25],
 	"piece_step": ["UI", -13.0, 0.08],
@@ -275,6 +276,7 @@ func _synth(slot: String) -> AudioStreamWAV:
 	match slot:
 		"ui_hover": return _tone([1320.0], 0.035, 0.12, 0.004)
 		"ui_click": return _tone([880.0, 1320.0], 0.05, 0.22, 0.003)
+		"ui_back": return _arp([880.0, 659.25], 0.06, 0.16)
 		"dice_roll": return _rattle(0.9)
 		"dice_land": return _thud(0.22, 140.0, 0.5)
 		"piece_step": return _tone([660.0], 0.06, 0.16, 0.004)

@@ -1,9 +1,9 @@
 extends "res://scripts/quest/pages/modal_base.gd"
-## ArrivalBriefModal (page 2) — 抵達新站點. One look tells: where, who, what now.
-## Station, client portrait and name, current situation, this meeting's training goals, time left
-## and the metrics that can move. 開始會談 starts the meeting, 查看已有線索 opens what is already
-## known, 查看地圖 folds the brief so the map can be checked (a pill brings it back).
-## Nothing here hints at an answer: goals are neutral circles, no colours or links per option.
+## ArrivalBriefModal（任務簡報）— 抵達站點後的任務卡。地圖在背後變暗約 45%，仍看得出抵達的
+## 站點。卡片上的資料全部來自後端這次抽出的客戶：站點、任務類型、客戶姓名與頭像、身分職業、
+## 本次目標、可用會談時間、可負擔預算、初步風險線索、難度與可得經驗。
+## 開始任務 → 客戶訪談；返回地圖 → 收起卡片看地圖（客戶不變，「回到任務簡報」再叫回）；
+## 查看客戶線索 → 就地展開精簡線索。不提示答案：目標以中性圓點呈現。
 
 const GOALS := {
 	"discover": ["了解客戶背景", "找出真正的需求", "全程維持合規"],
@@ -11,16 +11,23 @@ const GOALS := {
 	"objection": ["理解客戶的疑慮", "釐清真正的擔心", "提出合規的下一步"],
 }
 const TITLES := {"discover": "需求探索", "plan": "方案設計", "objection": "疑慮回應"}
+## 本次目標（一句話，放在目標橫條）
+const OBJECTIVES := {
+	"discover": "找出客戶真正的需求與合規風險",
+	"plan": "依需求與預算設計合適的方案",
+	"objection": "回應疑慮並提出合規的下一步",
+}
 
 var _clues_box: VBoxContainer
 var _start: Button
+var _known: Button
 var _peek_pill: Button
 var _portrait: Control
 var _goal_rows: Array = []
 
 
 func guide_lines() -> Array:
-	return ["這是到站簡報：先看清楚地點、客戶和這次會談要完成的事。", "準備好就按「開始會談」，會談計時從那一刻開始。"]
+	return ["這是任務簡報：先看清楚站點、客戶和這次要完成的目標。", "準備好就按「開始任務」，會談計時從那一刻開始。"]
 
 
 func key_rects() -> Array:
@@ -33,48 +40,62 @@ func highlight_rects() -> Array:
 
 func build() -> void:
 	timed = false
+	dim_alpha = 0.45
 	var sess := GameState.my_session()
 	var c: Dictionary = sess.get("client", {})
 	var step := str(sess.get("step", "discover"))
 	var body := add_card()
-	# Title with the gold ornaments
+	# 標題：抵達站點｜站名　　第 N / M 站
 	var head := QuestUI.hbox(10)
-	head.alignment = BoxContainer.ALIGNMENT_CENTER
-	head.add_child(_ornament())
-	var t := QuestUI.title("抵達新站點", 30 if not phone() else 22, QuestUI.TEXT)
-	head.add_child(t)
-	head.add_child(_ornament())
+	head.add_child(QuestUI.icon("target", 26.0 if not phone() else 20.0, QuestUI.GOLD))
+	var where := _station_name(sess)
+	var ttl := QuestUI.title("抵達站點｜%s" % where, 28 if not phone() else 20, QuestUI.TEXT)
+	ttl.name = "BriefTitle"
+	ttl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ttl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	head.add_child(ttl)
+	var counter := QuestUI.label("%02d / %02d" % [GameState.current_stage(), GameState.total_stages()], 16, QuestUI.MUTED)
+	counter.name = "StageCounter"
+	counter.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	head.add_child(counter)
 	body.add_child(head)
-	# Visit type chip
+	# 任務類型與拜訪次數
 	var visit := int(GameState.main_case().get("visits", 1))
 	var kind := "轉介紹客戶" if bool(sess.get("referral", false)) else ("客戶初訪" if step == "discover" else ("第 %d 次會談" % maxi(visit, 2)))
-	var chip_row := QuestUI.hbox(8)
-	chip_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	chip_row.add_child(QuestUI.chip(kind, QuestUI.GOLD))
-	body.add_child(chip_row)
-	var where := _station_name(sess)
-	var ttl := QuestUI.title("%s｜%s" % [where, TITLES.get(step, "會談")], 26 if not phone() else 19, QuestUI.TEXT)
-	ttl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	ttl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.add_child(ttl)
-	# Client: portrait + who + situation
+	var chips := QuestUI.hbox(8)
+	var type_chip := QuestUI.chip("任務類型：" + str(TITLES.get(step, "會談")), QuestUI.GREEN)
+	type_chip.name = "MissionType"
+	chips.add_child(type_chip)
+	chips.add_child(QuestUI.chip(kind, QuestUI.GOLD))
+	body.add_child(chips)
+	var situation := str(c.get("intro", c.get("goal", "")))
+	if situation != "":
+		body.add_child(_boxed(QuestUI.label(situation, 15, QuestUI.TEXT, true)))
+	# 客戶：頭像、姓名、身分職業、一句話
 	var who := QuestUI.hbox(16)
-	_portrait = QuestUI.portrait(GameState.client_portrait_id(), Vector2(96, 120) if not phone() else Vector2(68, 86))
+	_portrait = QuestUI.portrait(GameState.client_portrait_id(), Vector2(110, 130) if not phone() else Vector2(68, 86))
 	who.add_child(_portrait)
 	var info := QuestUI.vbox(6)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	who.add_child(info)
-	info.add_child(QuestUI.title(str(c.get("name", "客戶")), 22 if not phone() else 18))
-	var bits: Array = []
-	if int(c.get("age", 0)) > 0:
-		bits.append("%d 歲" % int(c.age))
-	for k in ["job", "family"]:
-		if str(c.get(k, "")) != "":
-			bits.append(str(c[k]))
-	info.add_child(QuestUI.label("・".join(bits), 14, QuestUI.MUTED, true))
-	var situation := str(c.get("intro", c.get("goal", "")))
-	if situation != "":
-		info.add_child(QuestUI.label("當前情境：" + situation, 15, QuestUI.TEXT, true))
+	var name_row := QuestUI.hbox(10)
+	var cname := QuestUI.title(str(c.get("name", "客戶")), 24 if not phone() else 18)
+	cname.name = "ClientName"
+	name_row.add_child(cname)
+	if str(c.get("job", "")) != "":
+		var job := QuestUI.label(str(c.job), 15, QuestUI.MUTED)
+		job.name = "ClientJob"
+		job.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		name_row.add_child(job)
+	info.add_child(name_row)
+	var quote := str(c.get("quote", ""))
+	if quote != "":
+		var q := QuestUI.hbox(8)
+		q.add_child(QuestUI.label("「", 22, QuestUI.GOLD))
+		var ql := QuestUI.label(quote.trim_prefix("「").trim_suffix("」"), 15, QuestUI.TEXT, true)
+		ql.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		q.add_child(ql)
+		info.add_child(q)
 	var tw: Variant = sess.get("twist")
 	if tw is Dictionary and str(tw.get("title", "")) != "":
 		var row := QuestUI.hbox(6)
@@ -85,50 +106,140 @@ func build() -> void:
 	if note is String and note != "":
 		info.add_child(QuestUI.label("你的紀錄：" + str(note), 13, QuestUI.MUTED, true))
 	body.add_child(who)
-	# This meeting's goals (neutral circles, appear one by one) — in a row on wide screens
-	var goals_card := QuestUI.card(null, 0.6)
-	var gv := QuestUI.vbox(8)
-	goals_card.add_child(gv)
-	gv.add_child(QuestUI.header("target", "本站訓練目標"))
+	# 本次目標
+	var goal_bar := HBoxContainer.new()
+	goal_bar.add_theme_constant_override("separation", 10)
+	goal_bar.add_child(QuestUI.icon("target", 20.0, QuestUI.GOLD))
+	var goal := QuestUI.label("本次目標：" + str(OBJECTIVES.get(step, OBJECTIVES.discover)), 17 if not phone() else 15, QuestUI.TEXT, true)
+	goal.name = "MissionGoal"
+	goal.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	goal_bar.add_child(goal)
+	body.add_child(_boxed(goal_bar))
+	# 時間、難度、經驗
+	var stats := QuestUI.hbox(18 if not phone() else 10)
+	stats.add_child(_stat("clock", "可用會談時間", QuestUI.mmss(GameState.remaining_time()), "StatTime"))
+	var diff := str(c.get("difficulty", ""))
+	stats.add_child(_stat("chart", "任務難度", diff if diff != "" else "標準", "StatDifficulty"))
+	stats.add_child(_stat("star", "可獲得經驗", "最高 +%d" % (80 if step == "discover" else 60), "StatXp"))
+	body.add_child(stats)
+	# 三格資訊：客戶背景／可用預算／風險線索
+	var facts: BoxContainer = QuestUI.hbox(12) if not narrow() else QuestUI.vbox(8)
+	facts.add_child(_fact("people", "客戶背景", _background(c), QuestUI.TEXT, "FactBackground"))
+	facts.add_child(_fact("wallet", "可用預算", _budget(c), QuestUI.TEXT, "FactBudget"))
+	facts.add_child(_fact("alert", "風險線索", _risk(c, sess), QuestUI.RED.lightened(0.15), "FactRisk"))
+	body.add_child(facts)
+	# 本站訓練目標（中性圓點，一個個出現）
 	var grow: BoxContainer = QuestUI.hbox(18) if not narrow() else QuestUI.vbox(6)
-	gv.add_child(grow)
 	for g in GOALS.get(step, GOALS.discover):
 		var r := QuestUI.hbox(8)
-		r.add_child(QuestUI.icon("circle", 18.0, QuestUI.MUTED))
-		r.add_child(QuestUI.label(str(g), 16))
+		r.add_child(QuestUI.icon("circle", 16.0, QuestUI.MUTED))
+		r.add_child(QuestUI.label(str(g), 15))
 		grow.add_child(r)
 		_goal_rows.append(r)
-	body.add_child(goals_card)
-	# Clock and the metrics that can move
-	var stats := QuestUI.hbox(18 if not phone() else 10)
-	stats.add_child(_stat("clock", "剩餘時間", QuestUI.mmss(GameState.remaining_time())))
-	stats.add_child(_stat("star", "可得經驗", "最高 +%d" % (80 if step == "discover" else 60)))
-	stats.add_child(_stat("chart", "可能影響", "信任・需求・合規"))
-	body.add_child(stats)
-	# Known so far (folded)
+	body.add_child(grow)
+	# 精簡線索（就地展開）
 	_clues_box = QuestUI.vbox(6)
+	_clues_box.name = "ClientClues"
 	_clues_box.visible = false
 	body.add_child(_clues_box)
-	# Actions
+	# 按鈕
 	var actions := QuestUI.hbox(12)
-	_start = QuestUI.button("開始會談", _on_start, "primary", "next")
+	_start = QuestUI.button("開始任務", _on_start, "primary", "next")
 	_start.name = "StartMeeting"
 	_start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_start.size_flags_stretch_ratio = 1.4
-	var known: Button = QuestUI.button("查看已有線索", _toggle_clues, "secondary", "search")
-	known.name = "KnownClues"
-	known.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	actions.add_child(_start)
-	actions.add_child(known)
-	card_footer.add_child(actions)
-	var map_btn: Button = QuestUI.button("查看地圖", _peek, "quiet", "map")
+	var map_btn: Button = QuestUI.button("返回地圖", _peek, "secondary", "map")
 	map_btn.name = "PeekMap"
-	map_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	card_footer.add_child(map_btn)
+	map_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	actions.add_child(_start)
+	actions.add_child(map_btn)
+	card_footer.add_child(actions)
+	_known = QuestUI.button("查看客戶線索", _toggle_clues, "quiet", "search")
+	_known.name = "KnownClues"
+	_known.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	card_footer.add_child(_known)
 	_peek_pill = QuestUI.button("回到任務簡報", _unpeek, "primary", "back")
 	_peek_pill.name = "BackToBrief"
 	_peek_pill.visible = false
 	add_child(_peek_pill)
+
+
+func _boxed(child: Control) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(QuestUI.INK, 0.35)
+	sb.set_corner_radius_all(12)
+	sb.set_border_width_all(1)
+	sb.border_color = Color(1, 1, 1, 0.12)
+	sb.set_content_margin_all(12)
+	p.add_theme_stylebox_override("panel", sb)
+	p.add_child(child)
+	return p
+
+
+func _fact(icon_kind: String, cap: String, text: String, head_color: Color, node_name: String) -> Control:
+	var v := QuestUI.vbox(6)
+	var h := QuestUI.hbox(6)
+	h.add_child(QuestUI.icon(icon_kind, 18.0, head_color if head_color != QuestUI.TEXT else QuestUI.GOLD))
+	h.add_child(QuestUI.label(cap, 15, head_color))
+	v.add_child(h)
+	var l := QuestUI.label(text, 14, QuestUI.MUTED, true)
+	l.name = node_name
+	v.add_child(l)
+	var box := _boxed(v)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return box
+
+
+func _background(c: Dictionary) -> String:
+	var lines: Array = []
+	var bits: Array = []
+	if int(c.get("age", 0)) > 0:
+		bits.append("%d 歲" % int(c.age))
+	if str(c.get("family", "")) != "":
+		bits.append(str(c.family))
+	if not bits.is_empty():
+		lines.append("・".join(bits))
+	if str(c.get("job", "")) != "":
+		lines.append(str(c.job))
+	if str(c.get("goal", "")) != "":
+		lines.append("目標：" + str(c.goal))
+	return "\n".join(lines) if not lines.is_empty() else "會談中再了解"
+
+
+## 可負擔預算：有收支資料時算每月可支配，否則用收入說明與目標金額
+func _budget(c: Dictionary) -> String:
+	var lines: Array = []
+	var f: Variant = c.get("finance")
+	if f is Dictionary and int(f.get("income", 0)) > 0:
+		var spare := int(f.get("income", 0)) - int(f.get("expense", 0))
+		lines.append("每月可支配約 %s" % _money(spare))
+		if int(f.get("savings", 0)) > 0:
+			lines.append("存款約 %s" % _money(int(f.savings)))
+	elif str(c.get("incomeInfo", "")) != "":
+		lines.append(str(c.incomeInfo))
+	if str(c.get("amount", "")) != "":
+		lines.append("目標金額 " + str(c.amount))
+	return "\n".join(lines) if not lines.is_empty() else "會談中再確認"
+
+
+## 初步風險線索：這次的近況變化，否則客戶類型；細節要在會談中確認
+func _risk(c: Dictionary, sess: Dictionary) -> String:
+	var lines: Array = []
+	var tw: Variant = sess.get("twist")
+	if tw is Dictionary and str(tw.get("title", "")) != "":
+		lines.append(str(tw.title))
+	if str(c.get("tag", "")) != "":
+		lines.append("客戶類型：" + str(c.tag))
+	lines.append("細節需在會談中確認")
+	return "\n".join(lines)
+
+
+static func _money(v: int) -> String:
+	if absi(v) >= 10000:
+		var wan := v / 10000.0
+		return ("%d 萬" % int(wan)) if is_equal_approx(wan, roundf(wan)) else ("%.1f 萬" % wan)
+	return "%d 元" % v
 
 
 func on_open() -> void:
@@ -157,12 +268,15 @@ func _ornament() -> Control:
 	return c
 
 
-func _stat(icon_kind: String, cap: String, val: String) -> Control:
+func _stat(icon_kind: String, cap: String, val: String, node_name := "") -> Control:
 	var h := QuestUI.hbox(8)
 	h.add_child(QuestUI.icon(icon_kind, 20.0, QuestUI.GOLD))
 	var v := QuestUI.vbox(0)
 	v.add_child(QuestUI.label(cap, 12, QuestUI.MUTED))
-	v.add_child(QuestUI.label(val, 16, QuestUI.TEXT, false, true))
+	var l := QuestUI.label(val, 16, QuestUI.TEXT, false, true)
+	if node_name != "":
+		l.name = node_name
+	v.add_child(l)
 	h.add_child(v)
 	return h
 
@@ -177,6 +291,7 @@ func _station_name(sess: Dictionary) -> String:
 
 func _toggle_clues() -> void:
 	_clues_box.visible = not _clues_box.visible
+	_known.text = "收起客戶線索" if _clues_box.visible else "查看客戶線索"
 	if _clues_box.visible:
 		UI.clear(_clues_box)
 		var sess := GameState.my_session()
@@ -195,7 +310,9 @@ func _toggle_clues() -> void:
 	relayout()
 
 
+## 返回地圖：卡片收起、地圖恢復亮度，這次抽出的客戶與會談保留，「回到任務簡報」再叫回
 func _peek() -> void:
+	QuestFlow.go(QuestFlow.MAP_IDLE, "返回地圖（客戶保留）")
 	card.visible = false
 	dim.visible = false
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -206,6 +323,7 @@ func _peek() -> void:
 
 
 func _unpeek() -> void:
+	QuestFlow.go(QuestFlow.MISSION_BRIEFING, "回到任務簡報")
 	_peek_pill.visible = false
 	card.visible = true
 	dim.visible = true
@@ -214,6 +332,8 @@ func _unpeek() -> void:
 
 
 func _on_start() -> void:
+	if not QuestFlow.claim():
+		return
 	_start.call("set_loading", true, "準備會談")
 	AudioManager.play("confirm_soft")
 	go.emit("start_meeting", {})

@@ -86,12 +86,13 @@ func reset_seen() -> void:
 
 
 ## First visit only: plays the page's guide and remembers it
-func first_time(page_id: String, lines: Array, highlights: Array = [], avoid: Array = []) -> bool:
+## providers（可省略）：{"highlights": Callable, "avoid": Callable}，導覽開著時持續取得最新位置
+func first_time(page_id: String, lines: Array, highlights: Array = [], avoid: Array = [], providers := {}) -> bool:
 	if seen(page_id) or not secretary_on():
 		return false
 	if Tutorial.is_automation_mode():
 		return false
-	var ok := explain(page_id, lines, highlights, avoid)
+	var ok := explain(page_id, lines, highlights, avoid, providers)
 	if ok:
 		_seen[page_id] = true
 		_save()
@@ -99,7 +100,7 @@ func first_time(page_id: String, lines: Array, highlights: Array = [], avoid: Ar
 
 
 ## Plays lines now (secretary button, idle nudge, crisis); false when no secretary or one is open
-func explain(page_id: String, lines: Array, highlights: Array = [], avoid: Array = []) -> bool:
+func explain(page_id: String, lines: Array, highlights: Array = [], avoid: Array = [], providers := {}) -> bool:
 	var g := _guide()
 	var f := _focus()
 	if g == null or f == null or not secretary_on() or lines.is_empty():
@@ -119,7 +120,12 @@ func explain(page_id: String, lines: Array, highlights: Array = [], avoid: Array
 		_connected_focus = f
 		f.connect("finished", _on_focus_finished)
 	_idle = 0.0
-	return bool(f.call("begin_secretary_focus", "quest_" + page_id, lines, str(g.call("selected_secretary")), tex, who, bool(g.get("voice_on")), {"highlights": highlights, "avoid": avoid}))
+	var opts := {"highlights": highlights, "avoid": avoid}
+	if providers.has("highlights"):
+		opts["highlight_provider"] = providers.highlights
+	if providers.has("avoid"):
+		opts["avoid_provider"] = providers.avoid
+	return bool(f.call("begin_secretary_focus", "quest_" + page_id, lines, str(g.call("selected_secretary")), tex, who, bool(g.get("voice_on")), opts))
 
 
 func close() -> void:

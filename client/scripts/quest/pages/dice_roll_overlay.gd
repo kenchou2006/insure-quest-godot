@@ -1,14 +1,19 @@
 extends Control
-## DiceRollOverlay (page 1): the die tumbles for 1.0 s on a tray at the bottom of the map
-## (roll + land sounds), shows the result, then fades while the pawn walks the route step by step.
-## Shows only the number — never the station's event or outcome. Ignores the mouse throughout.
+## DiceRollOverlay（擲骰與地圖前進）：骰子在地圖下方的骰盤滾動 1.0 秒（擲骰與落定音效），
+## 落定後顯示「移動中…　骰出 N，前進 N 站」，骰盤一直留到棋子到站才淡出。
+## 只顯示點數，不透露站點事件。整個圖層不攔截滑鼠，只有「跳過動畫」按鈕可按：
+## 跳過時棋子直接到站、縮短等待（點數與站點仍由後端決定）。
 
 const ROLL_TIME := 1.0
 const SHOW_TIME := 0.55
 
+signal skip_requested
+
 var _tray: PanelContainer
 var _die: Die
 var _caption: Label
+var _title: Label
+var _skip: Button
 var _seq: Tween
 var _tick := 0.0
 var _rolling := false
@@ -34,15 +39,25 @@ func _init() -> void:
 	_tray.add_theme_stylebox_override("panel", s)
 	_tray.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_tray)
-	var v := QuestUI.vbox(10)
-	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	_tray.add_child(v)
-	_die = Die.new()
-	_die.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	v.add_child(_die)
+	var h := QuestUI.hbox(18)
+	h.alignment = BoxContainer.ALIGNMENT_CENTER
+	_tray.add_child(h)
+	var tv := QuestUI.vbox(4)
+	tv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_title = QuestUI.title("擲骰中…", 24 if not UI.is_phone() else 18, QuestUI.TEXT)
+	_title.name = "DiceTitle"
+	tv.add_child(_title)
 	_caption = QuestUI.label("正在安排下一段行程", 15, QuestUI.TEXT, false, true)
-	_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(_caption)
+	_caption.name = "DiceCaption"
+	tv.add_child(_caption)
+	h.add_child(tv)
+	_die = Die.new()
+	_die.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(_die)
+	_skip = QuestUI.button("跳過動畫", _on_skip, "quiet", "next")
+	_skip.name = "SkipAnimation"
+	_skip.size_flags_vertical = Control.SIZE_SHRINK_END
+	h.add_child(_skip)
 
 
 ## Plays the roll; returns seconds until the die has landed and its number shown
@@ -51,6 +66,9 @@ func play(roller: String, value: int, mine: bool) -> float:
 		_seq.kill()
 	visible = true
 	modulate.a = 1.0
+	_skip.visible = true
+	_skip.disabled = false
+	_title.text = "擲骰中…"
 	_caption.text = "正在安排下一段行程" if mine else "%s 擲骰中" % roller
 	_caption.add_theme_color_override("font_color", QuestUI.TEXT)
 	_tray.reset_size()
@@ -67,7 +85,8 @@ func play(roller: String, value: int, mine: bool) -> float:
 		_die.value = value
 		_die.rotation = 0.0
 		AudioManager.play("dice_land")
-		_caption.text = "擲出 %d 點，前進 %d 站" % [value, value]
+		_title.text = "移動中…"
+		_caption.text = "骰出 %d，前進 %d 站" % [value, value]
 		_caption.add_theme_color_override("font_color", QuestUI.GOLD)
 		if not quick:
 			_die.pivot_offset = _die.size * 0.5
@@ -75,10 +94,38 @@ func play(roller: String, value: int, mine: bool) -> float:
 			var b := _die.create_tween()
 			b.tween_property(_die, "scale", Vector2.ONE, 0.24).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	)
-	_seq.tween_interval(SHOW_TIME)
+	# 骰盤留到棋子到站（QuestFlow 離開擲骰／移動狀態）才淡出
+	return roll_t + 0.15
+
+
+func _ready() -> void:
+	if not Engine.is_editor_hint():
+		QuestFlow.state_changed.connect(_on_flow)
+
+
+func _on_flow(_from: String, to: String) -> void:
+	if to in [QuestFlow.DICE_ROLLING, QuestFlow.PLAYER_MOVING] or not visible:
+		return
+	hide_tray()
+
+
+func hide_tray() -> void:
+	if _seq and _seq.is_valid():
+		_seq.kill()
+	_rolling = false
+	if QuestUI.motion_off():
+		visible = false
+		return
+	_seq = create_tween()
 	_seq.tween_property(self, "modulate:a", 0.0, 0.3)
 	_seq.tween_callback(func(): visible = false)
-	return roll_t + 0.15
+
+
+## 跳過動畫：骰子立即落定，棋子直接到站
+func _on_skip() -> void:
+	_skip.disabled = true
+	AudioManager.play("ui_click")
+	skip_requested.emit()
 
 
 func _process(delta: float) -> void:

@@ -85,6 +85,12 @@ func _run() -> void:
 	var prefs: String = GuideScript.PREFS
 	var had := FileAccess.file_exists(prefs)
 	var backup := FileAccess.get_file_as_string(prefs) if had else ""
+	# The advisor profile (sparring line-up) is saved too: keep the player's file as well
+	var pp: Node = root.get_node("PlayerProfile")
+	var profile_path: String = pp.PATH
+	var had_profile := FileAccess.file_exists(profile_path)
+	var profile_backup := FileAccess.get_file_as_string(profile_path) if had_profile else ""
+	pp.reset_for_tests()
 	# Female secretary: Aly from the cover's left portrait; the greeting is a 強制聚焦導覽
 	var r := await _hall("female")
 	var m: Control = r[0]
@@ -115,10 +121,15 @@ func _run() -> void:
 	await _wait(0.3)
 	check(g.is_open() and g._modal, "round portrait replays the greeting")
 	g._close_modal(true)
-	# 進入單人實戰 starts solo with the existing defaults (2 senior AI advisors)
+	# 單人實戰 only opens 本局對練配置; 確認配置 starts solo with the line-up (沈知妍 pro, 顧承宇 novice)
 	var stub: MainStub = r[1]
+	stub.calls.clear()
 	m._solo_card.activated.emit()
-	check(stub.calls.has(["create", ["pro", "pro"], true]), "solo starts create_and_join (%s)" % str(stub.calls))
+	await _wait(0.1)
+	check(m._solo_opts.visible, "單人實戰 opens the sparring setup")
+	check(not stub.calls.any(func(c: Array) -> bool: return c[0] == "create"), "picking solo does not start the game (%s)" % str(stub.calls))
+	m._solo_opts.confirm_button.pressed.emit()
+	check(stub.calls.has(["create", ["pro", "novice"], true]), "確認配置 starts create_and_join (%s)" % str(stub.calls))
 	# 建立多人房間 as a guest opens the identity panel instead of failing
 	stub.calls.clear()
 	m._on_multi_pressed()
@@ -196,6 +207,12 @@ func _run() -> void:
 		f.close()
 	elif FileAccess.file_exists(prefs):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(prefs))
+	if had_profile:
+		var pf := FileAccess.open(profile_path, FileAccess.WRITE)
+		pf.store_string(profile_backup)
+		pf.close()
+	elif FileAccess.file_exists(profile_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(profile_path))
 
 	print("hall_smoke: ", "OK" if failures == 0 else "%d failure(s)" % failures)
 	quit(1 if failures else 0)

@@ -295,7 +295,12 @@ func _option(text: String, group: ButtonGroup) -> Button:
 func _bubble(text: String, client: bool) -> Label:
 	var wrap := QuestUI.vbox(4)
 	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	wrap.add_child(QuestUI.label("客戶" if client else "你的回應", 12, QuestUI.MUTED))
+	var who_row := QuestUI.hbox(6)
+	if not client and PlayerProfile.portrait() != null:
+		who_row.add_child(UI.RoundTex.new(PlayerProfile.portrait(), Vector2(22, 22), -1.0, PlayerProfile.token_color(), 1.5))
+	var who_name := GameState.client_name() if client else ("你的回應｜" + PlayerProfile.player_name if PlayerProfile.player_name != "" else "你的回應")
+	who_row.add_child(QuestUI.label(who_name if who_name != "" else "客戶", 12, QuestUI.MUTED))
+	wrap.add_child(who_row)
 	var p := PanelContainer.new()
 	var s := StyleBoxFlat.new()
 	s.set_corner_radius_all(14)

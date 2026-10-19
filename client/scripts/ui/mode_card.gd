@@ -145,35 +145,43 @@ func _restyle() -> void:
 
 
 func _layout() -> void:
-	if _visual == null:
+	if _visual == null or size.x <= 1.0 or size.y <= 1.0:
 		return
 	var k := size.x / 406.0
+	# A shorter card (本局對練配置 open below) keeps its proportions: vertical metrics follow the
+	# height; on a low screen the feature rows step aside (the card body still selects the mode)
+	var rows_on := size.y >= maxf(200.0 * k, 160.0)
+	var kv := minf(k, size.y / (292.0 if rows_on else 186.0))
 	var pad := 22.0 * k
 	_visual.size = size
-	_tag_label.add_theme_font_size_override("font_size", maxi(12, roundi(14 * k)))
+	_tag_label.add_theme_font_size_override("font_size", maxi(12, roundi(14 * kv)))
 	_tag_chip.reset_size()
-	_tag_chip.position = Vector2(pad, pad * 0.8)
-	var ic := 50.0 * k
+	_tag_chip.position = Vector2(pad, pad * 0.8 * kv / k)
+	var ic := 50.0 * kv
 	_icon.size = Vector2(ic, ic)
-	_icon.position = Vector2(pad + 6 * k, pad * 0.8 + 40 * k)
-	_title.add_theme_font_size_override("font_size", roundi(34 * k))
+	_icon.position = Vector2(pad + 6 * k, _tag_chip.position.y + 40 * kv)
+	_title.add_theme_font_size_override("font_size", roundi(34 * kv))
 	_title.reset_size()
 	_title.position = Vector2(_icon.position.x + ic + 22 * k, _icon.position.y + (ic - _title.size.y) * 0.5)
-	var y := _icon.position.y + ic + 14 * k
+	var y := _icon.position.y + ic + 14 * kv
 	for pair: Array in _row_nodes:
 		var ri: Control = pair[0]
 		var rl: Label = pair[1]
-		var rs := 20.0 * k
+		ri.visible = rows_on
+		rl.visible = rows_on
+		if not rows_on:
+			continue
+		var rs := 20.0 * kv
 		ri.size = Vector2(rs, rs)
-		ri.position = Vector2(pad + 22 * k, y + 4 * k)
-		rl.add_theme_font_size_override("font_size", roundi(17 * k))
+		ri.position = Vector2(pad + 22 * k, y + 4 * kv)
+		rl.add_theme_font_size_override("font_size", maxi(12, roundi(17 * kv)))
 		rl.reset_size()
-		rl.position = Vector2(ri.position.x + rs + 14 * k, y + (28 * k - rl.size.y) * 0.5)
-		y += 28 * k
-	var bh := 48.0 * k
-	button.set_font_size(roundi(20 * k))
+		rl.position = Vector2(ri.position.x + rs + 14 * k, y + (28 * kv - rl.size.y) * 0.5)
+		y += 28 * kv
+	var bh := 48.0 * kv
+	button.set_font_size(roundi(20 * kv))
 	button.size = Vector2(size.x - pad * 2, bh)
-	button.position = Vector2(pad, size.y - pad - bh)
+	button.position = Vector2(pad, size.y - pad * kv / k - bh)
 	if _link:
 		_link.add_theme_font_size_override("font_size", maxi(12, roundi(14 * k)))
 		_link.reset_size()

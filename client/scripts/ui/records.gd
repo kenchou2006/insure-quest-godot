@@ -141,6 +141,15 @@ func _build_ui() -> void:
 		, 13 if UI.is_phone_portrait() else 14, UI.PANEL_2))
 
 	head.add_child(UI.spacer())
+	# Own records: the advisor from 新人顧問報到 (portrait, name, level)
+	if target_user_id == "" and PlayerProfile.player_profile_created:
+		var me := UI.hbox(8)
+		me.name = "AdvisorChip"
+		if PlayerProfile.portrait() != null:
+			me.add_child(UI.RoundTex.new(PlayerProfile.portrait(), Vector2(32, 32), -1.0, PlayerProfile.token_color(), 2.0))
+		if not UI.is_phone_portrait():
+			me.add_child(UI.label("%s｜%s" % [PlayerProfile.player_name, PlayerProfile.level_text()], 14, UI.TEXT))
+		head.add_child(me)
 	head.add_child(UI.button("回主選單", func(): main.show_menu(), 13 if UI.is_phone_portrait() else 15))
 	_outer_v.add_child(head)
 

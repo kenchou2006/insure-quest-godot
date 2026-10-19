@@ -10,6 +10,8 @@ extends Control
 ##   meeting paused (info)     → MissionResultModal (stage result)
 ##   any other event           → LifeEventModal
 ## Page switches go through SceneTransitionManager; modals over the map use their own entrance.
+## 每次換頁後同步流程狀態（QuestFlow）：簡報／事件 → 任務簡報，五個計時頁 → 客戶訪談，
+## 結算 → 任務結算，沒有頁面 → 地圖待機（剛按「前往下一站」則先播下一站解鎖）。
 ## Only the visible page takes the mouse; with no page up this layer ignores the mouse entirely.
 
 const UiLock := preload("res://scripts/ui_lock.gd")
@@ -57,6 +59,10 @@ func _ready() -> void:
 	_pages_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_pages_root)
 	dice = DiceRollOverlay.new()
+	dice.connect("skip_requested", func():
+		if game and game.has_method("skip_move_animation"):
+			game.skip_move_animation()
+	)
 	add_child(dice)
 	focus = FocusOverlay.new()
 	add_child(focus)
@@ -168,12 +174,39 @@ func _switch(want: String, s: Dictionary) -> void:
 	_after_switch(s)
 
 
+## 目前頁面對應的流程狀態
+func _sync_flow(want: String) -> void:
+	if Engine.is_editor_hint():
+		return
+	var to := ""
+	if want == "arrival" or want == "event":
+		to = QuestFlow.MISSION_BRIEFING
+	elif want == "result":
+		to = QuestFlow.MISSION_RESULT
+	elif want in TIMED:
+		to = QuestFlow.CLIENT_INTERVIEW
+	elif want == "":
+		# 骰子與棋子還在動：由 game.gd 在到站後再交給任務層
+		if QuestFlow.state in [QuestFlow.DICE_ROLLING, QuestFlow.PLAYER_MOVING] and game and bool(game.get("_is_overlay_deferred")):
+			return
+		if QuestFlow.state == QuestFlow.NEXT_STAGE_UNLOCKED:
+			return
+		if QuestFlow.unlock_pending:
+			QuestFlow.unlock_pending = false
+			to = QuestFlow.NEXT_STAGE_UNLOCKED
+		else:
+			to = QuestFlow.MAP_IDLE
+	if to != "":
+		QuestFlow.go(to, "頁面：" + (want if want != "" else "地圖"))
+
+
 func _is_modal(id: String) -> bool:
 	return id in ["arrival", "event", "result"]
 
 
 func _after_switch(s: Dictionary) -> void:
 	_sync_flags()
+	_sync_flow(current)
 	if not _pending_state.is_empty():
 		var p := _pending_state
 		_pending_state = {}
@@ -212,6 +245,8 @@ func _swap(want: String, s: Dictionary) -> void:
 	TensionManager.set_active(want in TIMED or want == "event")
 	AudioManager.set_music_state("meeting" if want in TIMED else ("map" if want == "event" else AudioManager.music_state()))
 	TutorialManager.set_page(want, p.call("idle_lines"), Callable(p, "key_rects"))
+	# 頁面一建好就切換流程狀態（不等轉場淡出）
+	_sync_flow(want)
 	p.call("on_open")
 	_first_guide.call_deferred(p)
 
@@ -225,9 +260,21 @@ func _first_guide(p: Control) -> void:
 		await get_tree().process_frame
 	if p != page or not is_instance_valid(p) or not p.visible:
 		return
+	# 版面穩定後才取要照亮的位置：卡片進場、文字換行後按鈕還會移動，太早取會照亮錯的地方，
+	# 秘書對話框也會因此蓋住真正的主要按鈕
+	var last: Array = p.call("highlight_rects")
+	for k in range(40):
+		await get_tree().process_frame
+		if p != page or not is_instance_valid(p):
+			return
+		var now: Array = p.call("highlight_rects")
+		if now == last:
+			break
+		last = now
 	var lines: Array = p.call("guide_lines")
 	if not lines.is_empty():
-		TutorialManager.first_time(str(p.get("page_id")), lines, p.call("highlight_rects"), p.call("key_rects"))
+		TutorialManager.first_time(str(p.get("page_id")), lines, p.call("highlight_rects"), p.call("key_rects"),
+			{"highlights": Callable(p, "highlight_rects"), "avoid": Callable(p, "key_rects")})
 
 
 ## The secretary's small corner icon belongs to the other screens: on a mission page it would sit
@@ -321,10 +368,10 @@ func show_toast(text: String, kind := "info") -> void:
 	toast.call("show_message", text, kind)
 
 
+## 離開培訓 from the settings: 繼續培訓 / 儲存並返回主畫面 / 放棄本次培訓
 func _leave() -> void:
-	_close_page()
-	if game and game.get("main") and game.main.has_method("leave_to_menu"):
-		game.main.leave_to_menu()
+	if game and game.has_method("_confirm_leave"):
+		game.call("_confirm_leave")
 
 
 ## The roll animation for this turn (DiceRollOverlay); returns its duration

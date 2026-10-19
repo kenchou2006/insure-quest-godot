@@ -1,15 +1,20 @@
 extends "res://scripts/quest/pages/page_base.gd"
-## ClientDialogueView (page 3) — 互動式客戶會談.
-## Left: the client's portrait with a small, changing state (放鬆 / 思考中 / 猶豫 / 防備).
-## Centre: the conversation, then 2–4 reply options in a fresh random order each round (every
-## option is a reasonable advisor line; they differ in listening, need, compliance, timing), and a
-## free line through the AI client. Nothing shows a score or a lean before the choice.
-## After a choice: the client's words type out first, then the trust / need change and a short
-## reason — never just right / wrong. A question that uncovers nothing costs meeting time.
-## Right: client status, clues known so far, the 秘書提示 (once per meeting) and 整理需求線索.
+## ClientDialogueView（客戶訪談）— 銀行諮詢空間裡的互動會談。
+## 左側場景：客戶立繪與資料（姓名、年齡、職業、家庭、每月預算、目前風險）、對話框、四項數值
+## （信任／需求掌握／預算壓力／合規風險），以及三張顧問回應卡（每輪重新打亂，最好的一句不固定
+## 在第一個）和用自己的話說（AI 客戶回應）。選擇前不顯示分數或傾向。
+## 選擇後：客戶先打字回應，表情與姿勢跟著變，數值補間並浮出 +／−，再顯示「為什麼有效」或
+## 「問題出在哪裡」與對真實顧問工作的影響；每一筆都寫進本局決策紀錄，供 AI 培訓報告使用。
+## 右側：目前任務與已收集線索、秘書提示、公事包，下一步／上一步／返回主頁固定在下方。
 
+const StatMeter := preload("res://scripts/quest/widgets/stat_meter.gd")
+const BriefcaseDrawer := preload("res://scripts/quest/widgets/briefcase_drawer.gd")
 const NO_KEY_COST := 20.0
 const HINT_COST := 30.0
+## 每輪顯示的回應數
+const OPTION_COUNT := 3
+const OPTION_ICONS := {"income": "wallet", "goal": "target", "coverage": "shield", "risk": "chart", "premium": "coins"}
+const NEED_TARGET := 3
 
 var _portrait: TextureRect
 var _mood: PanelContainer
@@ -17,17 +22,21 @@ var _mood_label: Label
 var _log: VBoxContainer
 var _log_scroll: ScrollContainer
 var _task: Label
-var _options: VBoxContainer
+var _options: BoxContainer
 var _reaction: PanelContainer
 var _input: LineEdit
 var _send: Button
 var _input_row: Control
 var _talk_note: Label
-var _status: Control
 var _known: VBoxContainer
+var _clue_row: HBoxContainer
+var _clue_count: Label
+var _meters: Dictionary = {}
+var _scene_scroll: ScrollContainer
 var _next: Button
 var _hint_btn: Button
 var _hint_box: Label
+var _bag_btn: Button
 var _shown_asked := 0
 var _pending := false
 var _before: Dictionary = {}
@@ -40,7 +49,7 @@ var _last_hint := ""
 
 
 func guide_lines() -> Array:
-	return ["這是客戶會談。每一輪挑一句最合適的話，先聽懂客戶，再談方案。", "選項順序每次都不同，也不會先告訴你哪一個比較好；選完才會看到客戶的反應與原因。"]
+	return ["這是客戶訪談。每一輪挑一句最合適的回應，先聽懂客戶，再談方案。", "回應順序每次都不同，也不會先告訴你哪一個比較好；選完才會看到客戶的反應與原因。"]
 
 
 func help_lines() -> Array:
@@ -62,50 +71,90 @@ func highlight_rects() -> Array:
 func build() -> void:
 	add_background()
 	var v := add_frame()
-	# Left: who is talking
-	var left := QuestUI.card(null, 0.92)
-	var lv := QuestUI.vbox(10)
-	left.add_child(lv)
+	var c := GameState.current_client()
+	# 左：諮詢場景（立繪｜客戶資料＋對話；數值；回饋；三張回應卡；用自己的話說）
+	var scene := QuestUI.card(null, 0.9)
+	scene.name = "InterviewScene"
+	var sv := QuestUI.vbox(8)
+	scene.add_child(sv)
+	var stage: BoxContainer = QuestUI.hbox(14) if not narrow() else QuestUI.vbox(8)
 	_portrait = TextureRect.new()
+	_portrait.name = "ClientPortrait"
 	_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	_portrait.custom_minimum_size = Vector2(0, 150 if narrow() else (130 if compact() else 300))
-	_portrait.size_flags_vertical = Control.SIZE_EXPAND_FILL if not narrow() else Control.SIZE_FILL
+	_portrait.custom_minimum_size = Vector2(150, 196) if not (narrow() or compact()) else Vector2(100, 124)
 	_portrait.material = UI.get_rounded_material(0.06)
 	_portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_portrait.texture = GameState.client_portrait()
-	lv.add_child(_portrait)
-	var c := GameState.current_client()
-	lv.add_child(QuestUI.title(str(c.get("name", "客戶")), 20))
-	lv.add_child(QuestUI.label("%s%s" % ["%d 歲・" % int(c.get("age", 0)) if int(c.get("age", 0)) > 0 else "", str(c.get("job", ""))], 13, QuestUI.MUTED, true))
+	_portrait.texture = _portrait_texture()
+	stage.add_child(_portrait)
+	var talk := QuestUI.vbox(6)
+	talk.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# 客戶資料列：{client_name}｜{client_age}・{client_job}・{family_status}，每月預算、目前風險、狀態
+	var info := QuestUI.hbox(10)
+	var cname := QuestUI.title(str(c.get("name", "客戶")), 22 if not phone() else 18)
+	cname.name = "ClientName"
+	info.add_child(cname)
+	var who := QuestUI.label(_who_line(c), 13, QuestUI.MUTED, true)
+	who.name = "ClientInfo"
+	who.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	who.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	info.add_child(who)
 	_mood = PanelContainer.new()
-	_mood_label = QuestUI.label("", 14, QuestUI.TEXT)
+	_mood.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_mood_label = QuestUI.label("", 13, QuestUI.TEXT)
 	_mood.add_child(_mood_label)
-	lv.add_child(_mood)
-	_set_mood("calm")
-	var tw: Variant = GameState.my_session().get("twist")
-	if tw is Dictionary and str(tw.get("title", "")) != "":
-		lv.add_child(QuestUI.label("近況：" + str(tw.title), 13, QuestUI.GOLD, true))
-	# Centre: conversation and choices
-	var center := QuestUI.card(null, 0.94)
-	var cv := QuestUI.vbox(10)
-	center.add_child(cv)
-	cv.add_child(QuestUI.header("chat", "客戶會談", "", QuestUI.MUTED))
-	_log = QuestUI.vbox(10)
+	info.add_child(_mood)
+	talk.add_child(info)
+	var facts := QuestUI.hbox(8)
+	var budget := QuestUI.chip("每月預算：" + _monthly_budget(c), QuestUI.MUTED)
+	budget.name = "ClientBudget"
+	facts.add_child(budget)
+	var risk := QuestUI.chip("目前風險：" + _current_risk(c), QuestUI.RED.lightened(0.1))
+	risk.name = "ClientRisk"
+	facts.add_child(risk)
+	talk.add_child(facts)
+	_log = QuestUI.vbox(8)
+	_log.name = "Dialogue"
 	_log_scroll = QuestUI.scroll(_log)
-	_log_scroll.custom_minimum_size = Vector2(0, 130 if not compact() else 80)
-	cv.add_child(_log_scroll)
-	_task = QuestUI.label("", 15, QuestUI.GOLD, true)
-	cv.add_child(_task)
-	_options = QuestUI.vbox(8)
-	cv.add_child(_options)
+	_log_scroll.custom_minimum_size = Vector2(0, 110 if not compact() else 80)
+	_log_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	talk.add_child(_log_scroll)
+	stage.add_child(talk)
+	sv.add_child(stage)
+	# 四項數值
+	var meters: Container
+	if narrow() or compact():
+		var g := GridContainer.new()
+		g.columns = 2
+		g.add_theme_constant_override("h_separation", 8)
+		g.add_theme_constant_override("v_separation", 8)
+		meters = g
+	else:
+		meters = QuestUI.hbox(8)
+	meters.name = "Meters"
+	for spec in [["trust", "信任", "heart", QuestUI.GREEN, false], ["insight", "需求掌握", "bulb", QuestUI.GOLD, false], ["budget", "預算壓力", "wallet", Color("#8FB3C4"), true], ["risk", "合規風險", "shield", Color("#C8D2CE"), true]]:
+		var m: Control = StatMeter.new(spec[0], spec[1], spec[2], spec[3], spec[4])
+		m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		meters.add_child(m)
+		_meters[spec[0]] = m
+	sv.add_child(meters)
+	# 選擇後的回饋：放在數值正下方，第一眼就看得到
 	_reaction = PanelContainer.new()
-	_reaction.add_theme_stylebox_override("panel", QuestUI.card_box(0.6, Color(1, 1, 1, 0.1), 12, 12))
+	_reaction.name = "Reaction"
+	_reaction.add_theme_stylebox_override("panel", QuestUI.card_box(0.6, Color(1, 1, 1, 0.12), 14, 12))
 	_reaction.visible = false
-	cv.add_child(_reaction)
+	sv.add_child(_reaction)
+	_task = QuestUI.label("", 15, QuestUI.GOLD, true)
+	_task.name = "TaskLine"
+	sv.add_child(_task)
+	# 三張回應卡
+	_options = QuestUI.hbox(10) if not (narrow() or compact()) else QuestUI.vbox(8)
+	_options.name = "Options"
+	sv.add_child(_options)
 	_input_row = QuestUI.vbox(4)
 	var ir := QuestUI.hbox(8)
 	_input = LineEdit.new()
+	_input.name = "FreeTalk"
 	_input.placeholder_text = "用自己的話說（AI 客戶會回應）"
 	_input.max_length = 150
 	_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -119,26 +168,126 @@ func build() -> void:
 	_input_row.add_child(ir)
 	_talk_note = QuestUI.label("", 12, QuestUI.MUTED, true)
 	_input_row.add_child(_talk_note)
-	cv.add_child(_input_row)
-	# Right: status, known clues; 下一步 / 返回 pinned under them
-	_status = ClientStatusPanel.new(compact() or narrow())
-	var known_card := QuestUI.card(null, 0.92)
-	var kv := QuestUI.vbox(6)
-	known_card.add_child(kv)
-	kv.add_child(QuestUI.header("search", "已知線索"))
+	sv.add_child(_input_row)
+	# 右：目前任務、已收集線索、秘書提示、公事包
+	var task_card := QuestUI.card(null, 0.92)
+	var tv := QuestUI.vbox(8)
+	task_card.add_child(tv)
+	tv.add_child(QuestUI.header("target", "目前任務｜找出 %d 個核心需求" % NEED_TARGET))
+	tv.add_child(QuestUI.label("透過對話收集關鍵線索，確認客戶真正在意的需求。", 13, QuestUI.MUTED, true))
+	var ch := QuestUI.hbox(8)
+	ch.add_child(QuestUI.label("已收集的線索", 14, QuestUI.TEXT))
+	_clue_count = QuestUI.label("", 14, QuestUI.GOLD)
+	_clue_count.name = "ClueCount"
+	ch.add_child(_clue_count)
+	tv.add_child(ch)
+	_clue_row = QuestUI.hbox(10)
+	_clue_row.name = "ClueSlots"
+	tv.add_child(_clue_row)
 	_known = QuestUI.vbox(4)
-	kv.add_child(_known)
+	tv.add_child(_known)
 	_hint_btn = QuestUI.button("請秘書給一次提示（−0:30）", _ask_hint, "quiet", "bulb")
 	_hint_btn.name = "HintButton"
 	_hint_box = QuestUI.label("", 14, QuestUI.TEXT, true)
 	_hint_box.visible = false
+	_bag_btn = QuestUI.button("公事包（%d）" % BriefcaseDrawer.packed().size(), _open_briefcase, "secondary", "briefcase")
+	_bag_btn.name = "BriefcaseButton"
 	_next = QuestUI.button("下一步：整理需求線索", func(): go.emit("clues", {}), "primary", "next")
 	_next.name = "NextStep"
-	var back: Button = QuestUI.button("返回任務簡報", _back_to_brief, "quiet", "back")
+	var back: Button = QuestUI.button("上一步：任務簡報", _back_to_brief, "quiet", "back")
 	back.name = "BackButton"
-	var right := side([_status, known_card, _hint_btn, _hint_box], [secretary_button(), _next, back])
-	v.add_child(columns([QuestUI.scroll(left) if compact() and not narrow() else left, QuestUI.scroll(center) if not narrow() else center, right], [0.9, 1.7, 1.0]))
+	var home: Button = QuestUI.button("返回主頁", _go_home, "quiet", "house")
+	home.name = "HomeButton"
+	var nav := QuestUI.hbox(8)
+	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	home.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nav.add_child(back)
+	nav.add_child(home)
+	var right := side([task_card, _hint_btn, _hint_box, _bag_btn], [secretary_button(), _next, nav])
+	# 桌機約 70% / 30%；矮螢幕右欄放寬，讓下一步按鈕放得下
+	_scene_scroll = null if narrow() else QuestUI.scroll(scene)
+	v.add_child(columns([scene if narrow() else _scene_scroll, right], [2.3, 1.0] if not compact() else [1.6, 1.0]))
+	_set_mood("calm")
+	_sync_meters(false)
 	Net.stream_text.connect(_on_stream)
+
+
+## 立繪：客戶頭像，載入失敗時用預設圖
+func _portrait_texture() -> Texture2D:
+	var t := GameState.client_portrait()
+	if t != null:
+		return t
+	# 依性別與年齡取通用頭像，再不行用中性預設圖
+	var c := GameState.current_client()
+	var gender := str(c.get("gender", ""))
+	var g := "f" if gender in ["女", "f", "female"] else ("m" if gender in ["男", "m", "male"] else "")
+	var key := "pool_%s_%ds" % [g, clampi(int(c.get("age", 30)) / 10 * 10, 20, 60)] if g != "" else "pool_x"
+	push_warning("客戶訪談：找不到「%s」的立繪，改用預設圖 %s" % [GameState.client_name(), key])
+	t = Portraits.get_texture(key)
+	return t if t != null else Portraits.get_texture("pool_x")
+
+
+func _who_line(c: Dictionary) -> String:
+	var bits: Array = []
+	if int(c.get("age", 0)) > 0:
+		bits.append("%d 歲" % int(c.age))
+	for k in ["job", "family"]:
+		if str(c.get(k, "")) != "":
+			bits.append(str(c[k]))
+	return "・".join(bits)
+
+
+func _monthly_budget(c: Dictionary) -> String:
+	var f: Variant = c.get("finance")
+	if f is Dictionary and int(f.get("income", 0)) > 0:
+		var spare := int(f.get("income", 0)) - int(f.get("expense", 0))
+		return "約 %s" % (("%d 萬" % (spare / 10000)) if spare % 10000 == 0 else ("%.1f 萬" % (spare / 10000.0)))
+	var info := str(c.get("incomeInfo", ""))
+	return info if info != "" else "會談中確認"
+
+
+func _current_risk(c: Dictionary) -> String:
+	var tw: Variant = GameState.my_session().get("twist")
+	if tw is Dictionary and str(tw.get("title", "")) != "":
+		return str(tw.title)
+	var tag := str(c.get("tag", ""))
+	return tag if tag != "" else "待確認"
+
+
+## 後端指標 → 四項數值（預算壓力在方案設計前顯示待評估）
+func _sync_meters(animate: bool) -> void:
+	if _meters.is_empty():
+		return
+	var m := GameState.metrics()
+	(_meters.trust as Control).call("set_value", int(m.get("trust", 50)), animate)
+	(_meters.insight as Control).call("set_value", int(m.get("insight", 0)), animate)
+	var fit := int(m.get("fit", 0))
+	(_meters.budget as Control).call("set_value", (100 - fit) if fit > 0 else -1, animate)
+	(_meters.risk as Control).call("set_value", 100 - int(m.get("compliance", 100)), animate)
+
+
+func _open_briefcase() -> void:
+	if find_child("BriefcaseDrawer", false, false) != null:
+		return
+	if not QuestFlow.claim(0.3):
+		return
+	var d: Control = BriefcaseDrawer.new()
+	d.connect("free_question_requested", _focus_free)
+	add_child(d)
+
+
+## 家庭責任圖：多出來的自由提問，用自己的話問客戶
+func _focus_free() -> void:
+	_input_row.visible = true
+	_input.grab_focus()
+	if layer:
+		layer.call("show_toast", "家庭責任圖：多 1 次自由提問，用自己的話問客戶的家庭責任", "info")
+
+
+## 返回主頁：先確認（繼續培訓／儲存並返回主畫面／放棄本次培訓）
+func _go_home() -> void:
+	if layer:
+		layer.call("_leave")
 
 
 func _back_to_brief() -> void:
@@ -188,7 +337,7 @@ func refresh(s: Dictionary) -> void:
 		_pending = false
 	elif not bool(sess.get("aiBusy", false)) and _pending and _stream_label == null:
 		pass
-	_status.call("refresh")
+	_sync_meters(true)
 	_refresh_side(sess)
 	if not _pending and _typing_label == null:
 		_build_options(sess)
@@ -239,6 +388,12 @@ func _bubble(text: String, client: bool) -> Label:
 	else:
 		row.add_child(pad)
 		row.add_child(panel)
+		# The player's own advisor portrait beside what they said
+		if PlayerProfile.portrait() != null:
+			var me := UI.RoundTex.new(PlayerProfile.portrait(), Vector2(30, 30), -1.0, PlayerProfile.token_color(), 2.0)
+			me.size_flags_vertical = Control.SIZE_SHRINK_END
+			me.tooltip_text = PlayerProfile.player_name
+			row.add_child(me)
 	_log.add_child(row)
 	_scroll_down()
 	return l
@@ -330,22 +485,25 @@ func _build_options(sess: Dictionary) -> void:
 			var qd := q as Dictionary
 			if not covered.has(str(qd.get("id", ""))):
 				remaining.append(qd)
-		# 2–4 choices, fresh order every round (the best one is never fixed in place)
+		# 三張回應卡，每輪重新打亂（最好的一句不會固定在第一個）
 		remaining = QuestUI.shuffled(remaining)
-		var shown := remaining.slice(0, mini(4, remaining.size()))
-		for qd in shown:
-			var b: Button = _option_button(str(qd.get("text", "")))
-			b.name = "Option_" + str(qd.get("id", ""))
+		var shown := remaining.slice(0, mini(OPTION_COUNT, remaining.size()))
+		for k in range(shown.size()):
+			var qd: Dictionary = shown[k]
 			var qid := str(qd.get("id", ""))
+			var b: Button = OptionCard.new(k + 1, str(OPTION_ICONS.get(qid, "chat")), str(qd.get("text", "")), narrow() or compact())
+			b.name = "Option_" + qid
 			b.pressed.connect(func(): _ask(qid))
 			b.disabled = busy
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			_options.add_child(b)
 	# Follow-up on the life change, when the advisor chose to clarify it
 	var tw: Variant = sess.get("twist")
 	if bool(GameState.flag("twist_clarify", false)) and not bool(GameState.flag("twist_clarified", false)) and tw is Dictionary and int(sess.get("talkLeft", 0)) > 0:
 		var line := "關於「%s」，最近對您的生活影響大嗎？" % str(tw.get("title", "最近的變化"))
-		var tb: Button = _option_button(line)
+		var tb: Button = OptionCard.new(_options.get_child_count() + 1, "info", line, narrow() or compact())
 		tb.name = "Option_twist"
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		tb.pressed.connect(func():
 			GameState.set_flag("twist_clarified", true)
 			_talk(line)
@@ -362,46 +520,6 @@ func _build_options(sess: Dictionary) -> void:
 	if not QuestUI.motion_off():
 		for i in range(_options.get_child_count()):
 			QuestUI.fade_in(_options.get_child(i), i * 0.05, 0.2, 0.0)
-
-
-func _option_button(text: String) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	b.custom_minimum_size = Vector2(0, 48)
-	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	b.add_theme_font_size_override("font_size", QuestUI.fs(16))
-	for st in ["normal", "hover", "pressed", "focus", "disabled"]:
-		var s := StyleBoxFlat.new()
-		s.set_corner_radius_all(12)
-		s.set_border_width_all(1)
-		s.content_margin_left = 16
-		s.content_margin_right = 16
-		s.content_margin_top = 10
-		s.content_margin_bottom = 10
-		# One neutral look for every option: the hover is the same gold frame for all
-		s.bg_color = Color(QuestUI.CARD.lightened(0.04), 0.95)
-		s.border_color = Color(1, 1, 1, 0.14)
-		if st == "hover":
-			s.border_color = QuestUI.GOLD
-			s.bg_color = Color(QuestUI.CARD.lightened(0.1), 0.98)
-		elif st == "pressed":
-			s.bg_color = Color(QuestUI.CARD.darkened(0.1), 0.98)
-		elif st == "focus":
-			s.bg_color = Color(0, 0, 0, 0)
-			s.border_color = Color(QuestUI.GOLD, 0.8)
-		elif st == "disabled":
-			s.bg_color = Color(QuestUI.CARD, 0.5)
-		b.add_theme_stylebox_override(st, s)
-	b.add_theme_color_override("font_color", QuestUI.TEXT)
-	b.add_theme_color_override("font_disabled_color", Color(QuestUI.TEXT, 0.4))
-	b.mouse_entered.connect(func():
-		if not b.disabled:
-			AudioManager.play("ui_hover")
-	)
-	b.pressed.connect(func(): AudioManager.play("ui_click"))
-	return b
 
 
 func _ask(qid: String) -> void:
@@ -495,17 +613,35 @@ func _react(a: Dictionary, before: Dictionary, after: Dictionary) -> void:
 	UI.clear(_reaction)
 	var rv := QuestUI.vbox(6)
 	_reaction.add_child(rv)
+	# 為什麼有效／問題出在哪裡，以及對真實顧問工作的影響
+	var good := quality == "good"
+	var heading := QuestUI.hbox(8)
+	heading.add_child(QuestUI.icon("circle_check" if good else ("alert" if quality == "bad" else "info"), 18.0, QuestUI.GREEN if good else (QuestUI.RED if quality == "bad" else QuestUI.GOLD)))
+	var hl := QuestUI.label("為什麼有效" if good else ("問題出在哪裡" if quality == "bad" else "這一句的效果"), 16, QuestUI.GREEN if good else (QuestUI.RED.lightened(0.2) if quality == "bad" else QuestUI.GOLD), false, true)
+	hl.name = "ReactionHeading"
+	heading.add_child(hl)
+	rv.add_child(heading)
+	_sync_meters(true)
 	var nums := QuestUI.hbox(10)
 	nums.add_child(QuestUI.chip("信任 %s%d" % ["+" if dt >= 0 else "", dt], QuestUI.GREEN if dt > 0 else (QuestUI.RED if dt < 0 else QuestUI.MUTED)))
 	nums.add_child(QuestUI.chip("需求 %s%d" % ["+" if di >= 0 else "", di], QuestUI.GREEN if di > 0 else QuestUI.MUTED))
 	if dc != 0:
 		nums.add_child(QuestUI.chip("合規 %d" % dc, QuestUI.RED))
 	rv.add_child(nums)
-	rv.add_child(QuestUI.label(reason, 14, QuestUI.TEXT, true))
+	var rl := QuestUI.label(reason, 14, QuestUI.TEXT, true)
+	rl.name = "ReactionReason"
+	rv.add_child(rl)
+	var impact := QuestUI.label(_impact(quality, comp, key != null and str(key) != ""), 13, QuestUI.MUTED, true)
+	impact.name = "ReactionImpact"
+	rv.add_child(impact)
 	_reaction.visible = true
 	QuestUI.fade_in(_reaction, 0.0, 0.25, 0.0)
-	GameState.add_decision("需求訪談", str(a.get("question", "")), reason, quality, {"trust": dt, "insight": di})
-	_status.call("refresh")
+	# 回饋一定要看得到：捲到回饋的位置
+	if _scene_scroll != null:
+		await get_tree().process_frame
+		if is_instance_valid(_scene_scroll) and is_instance_valid(_reaction):
+			_scene_scroll.ensure_control_visible(_reaction)
+	GameState.add_decision("需求訪談", str(a.get("question", "")), reason, quality, {"trust": dt, "insight": di, "compliance": dc})
 
 
 func _set_mood(kind: String) -> void:
@@ -529,12 +665,30 @@ func _set_mood(kind: String) -> void:
 		_mood_tween.kill()
 	_mood_tween = create_tween()
 	var tone := Color(1, 1, 1) if kind in ["calm", "relaxed"] else (Color(0.92, 0.9, 0.86) if kind in ["thinking", "hesitant"] else Color(0.85, 0.82, 0.8))
+	# 姿勢：放鬆時微微前傾放大，防備時後退縮小，猶豫時稍微側身
+	var lean: float = {"relaxed": 1.03, "guarded": 0.97}.get(kind, 1.0)
+	var tilt: float = {"hesitant": -1.5, "thinking": 0.8}.get(kind, 0.0)
+	_portrait.pivot_offset = _portrait.size * Vector2(0.5, 1.0)
+	_mood_tween.set_parallel(true)
 	_mood_tween.tween_property(_portrait, "self_modulate", tone, 0.4)
+	_mood_tween.tween_property(_portrait, "scale", Vector2.ONE * lean, 0.4).set_trans(Tween.TRANS_CUBIC)
+	_mood_tween.tween_property(_portrait, "rotation_degrees", tilt, 0.4).set_trans(Tween.TRANS_CUBIC)
 
 
 func _refresh_side(sess: Dictionary) -> void:
 	UI.clear(_known)
 	var needs := GameState.client_needs()
+	_clue_count.text = "%d/%d" % [mini(needs.size(), NEED_TARGET), NEED_TARGET]
+	UI.clear(_clue_row)
+	for k in range(NEED_TARGET):
+		var got := k < needs.size()
+		var slot := QuestUI.vbox(2)
+		slot.add_child(QuestUI.icon("circle_check" if got else "question", 34.0, QuestUI.GOLD if got else QuestUI.MUTED))
+		var cap := QuestUI.label(str(needs[k]) if got else "待發現", 12, QuestUI.TEXT if got else QuestUI.MUTED, true)
+		cap.custom_minimum_size = Vector2(70, 0)
+		cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		slot.add_child(cap)
+		_clue_row.add_child(slot)
 	if needs.is_empty():
 		_known.add_child(QuestUI.label("還沒有取得線索。", 13, QuestUI.MUTED, true))
 	for n in needs:
@@ -562,3 +716,111 @@ func _show_hint(text: String) -> void:
 	if not TutorialManager.explain("hint", [text]):
 		_hint_box.text = "秘書提示：" + text
 		_hint_box.visible = true
+
+
+## 這個選擇對真實顧問工作的影響
+func _impact(quality: String, comp: String, found_key: bool) -> String:
+	if comp == "violation":
+		return "真實會談中，保證獲利或施壓的說法可能違反金融消費者保護的規範，客戶也會失去信任。"
+	if quality == "good" or found_key:
+		return "真實會談中，先問到客戶最在意的事，後面的方案才有依據，客戶也更願意說出細節。"
+	if quality == "bad":
+		return "真實會談中，問不出需求的問題會讓客戶覺得被推銷，之後更難談到真正的風險。"
+	return "真實會談中，每一個問題都要能幫你更了解客戶；問到線索才會讓方案更貼近需求。"
+
+
+## 顧問回應卡：編號、圖示、回應內容、「選擇此回應」。整張卡是一個按鈕；滑過時亮度提高、
+## 上移 2px，按下縮放 0.96；不顯示分數或好壞傾向。
+class OptionCard extends Button:
+	var visual: PanelContainer
+	var _sb: StyleBoxFlat
+	var _tw: Tween
+
+	func _init(no: int, icon_kind: String, line: String, small: bool) -> void:
+		text = ""
+		focus_mode = Control.FOCUS_ALL
+		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		tooltip_text = line
+		custom_minimum_size = Vector2(0, 122 if not small else 84)
+		for st in ["normal", "hover", "pressed", "disabled"]:
+			add_theme_stylebox_override(st, StyleBoxEmpty.new())
+		var focus := StyleBoxFlat.new()
+		focus.draw_center = false
+		focus.set_border_width_all(2)
+		focus.border_color = Color(QuestUI.GOLD, 0.8)
+		focus.set_corner_radius_all(14)
+		add_theme_stylebox_override("focus", focus)
+		visual = PanelContainer.new()
+		visual.name = "Visual"
+		visual.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_sb = StyleBoxFlat.new()
+		_sb.bg_color = Color("#0D4038", 0.96)
+		_sb.set_corner_radius_all(14)
+		_sb.set_border_width_all(1)
+		_sb.border_color = Color(1, 1, 1, 0.14)
+		_sb.set_content_margin_all(12)
+		visual.add_theme_stylebox_override("panel", _sb)
+		add_child(visual)
+		# 內文換行後卡片變高：通知外層重新排版，不讓下一列蓋住「選擇此回應」
+		visual.minimum_size_changed.connect(update_minimum_size)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 6)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		visual.add_child(v)
+		var top := HBoxContainer.new()
+		top.add_theme_constant_override("separation", 8)
+		top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var n := QuestUI.label("%02d" % no, 14, QuestUI.GOLD)
+		top.add_child(n)
+		top.add_child(QuestUI.icon(icon_kind, 22.0, QuestUI.GOLD))
+		v.add_child(top)
+		var l := QuestUI.label(line, 15 if not small else 14, QuestUI.TEXT, true)
+		l.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		v.add_child(l)
+		var pick := PanelContainer.new()
+		pick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var ps := StyleBoxFlat.new()
+		ps.bg_color = Color(QuestUI.GOLD, 0.85)
+		ps.set_corner_radius_all(10)
+		ps.content_margin_top = 4
+		ps.content_margin_bottom = 4
+		pick.add_theme_stylebox_override("panel", ps)
+		var pl := QuestUI.label("選擇此回應　→", 13, QuestUI.INK, false, true)
+		pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		pick.add_child(pl)
+		v.add_child(pick)
+		mouse_entered.connect(_hover.bind(true))
+		mouse_exited.connect(_hover.bind(false))
+		button_down.connect(func(): _scale(0.96))
+		button_up.connect(func(): _scale(1.0))
+		pressed.connect(func(): AudioManager.play("ui_click"))
+
+	func _get_minimum_size() -> Vector2:
+		return visual.get_combined_minimum_size() if visual else Vector2.ZERO
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED and visual:
+			visual.size = size
+			visual.pivot_offset = size * 0.5
+		elif what == NOTIFICATION_DISABLED or what == NOTIFICATION_ENABLED:
+			modulate.a = 0.45 if disabled else 1.0
+
+	func _hover(on: bool) -> void:
+		if disabled and on:
+			return
+		_sb.border_color = QuestUI.GOLD if on else Color(1, 1, 1, 0.14)
+		_sb.bg_color = Color("#0D4038", 0.96).lightened(0.08 if on else 0.0)
+		if on:
+			AudioManager.play("ui_hover")
+		if QuestUI.motion_off():
+			return
+		if _tw and _tw.is_valid():
+			_tw.kill()
+		_tw = create_tween()
+		_tw.tween_property(visual, "position:y", -2.0 if on else 0.0, 0.15)
+
+	func _scale(to: float) -> void:
+		if QuestUI.motion_off():
+			return
+		var tw := create_tween()
+		tw.tween_property(visual, "scale", Vector2.ONE * to, 0.07 if to < 1.0 else 0.12)

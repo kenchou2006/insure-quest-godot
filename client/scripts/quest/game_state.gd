@@ -18,6 +18,7 @@ const PROFILE_PATH := "user://quest_profile.cfg"
 ## Meeting budget by difficulty (seconds): 入門 8, 進階 10, 挑戰 12 minutes
 const BUDGET := {"入門": 480.0, "進階": 600.0, "挑戰": 720.0}
 const DEFAULT_BUDGET := 600.0
+## Advisor level and XP live in PlayerProfile (the player's own advisor); kept here for callers
 const XP_PER_LEVEL := 200
 const SETTINGS_PATH := "user://quest_settings.cfg"
 ## Text display speed: 0 = instant, 0.6 slow, 1 normal, 1.8 fast
@@ -38,7 +39,6 @@ var _save_timer := 0.0
 var _marks_fired: Dictionary = {}
 var _visited: Array = []
 var _last_pos := -1
-var profile_xp := 0
 var text_speed := 1.0
 var subtitles := true
 
@@ -48,9 +48,6 @@ func _ready() -> void:
 	if OS.has_feature("web") and not Engine.is_editor_hint():
 		var q = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('classic') || ''", true)
 		classic_ui = str(q) == "1"
-	var prof := ConfigFile.new()
-	if prof.load(PROFILE_PATH) == OK:
-		profile_xp = int(prof.get_value("advisor", "xp", 0))
 	var st := ConfigFile.new()
 	if st.load(SETTINGS_PATH) == OK:
 		text_speed = float(st.get_value("text", "speed", 1.0))
@@ -264,11 +261,11 @@ func selected_dialogue() -> Dictionary:
 
 
 func advisor_xp() -> int:
-	return profile_xp
+	return PlayerProfile.advisor_xp
 
 
 func advisor_level() -> int:
-	return 1 + profile_xp / XP_PER_LEVEL
+	return PlayerProfile.advisor_level
 
 
 func secretary() -> Node:
@@ -389,7 +386,7 @@ func add_decision(stage: String, title: String, detail: String, quality := "ok",
 		return
 	var entry := {"stage": stage, "title": title, "detail": detail, "quality": quality,
 		"effects": effects, "round": current_stage(), "client": client_name(),
-		"clock": remaining_time()}
+		"clock": remaining_time(), "ts": Time.get_unix_time_from_system()}
 	(record["decisions"] as Array).append(entry)
 	decision_added.emit(entry)
 	changed.emit()
@@ -440,11 +437,7 @@ func add_xp(amount: int, reason: String) -> void:
 	if amount <= 0:
 		return
 	record["xp"] = int(record.get("xp", 0)) + amount
-	profile_xp += amount
-	var prof := ConfigFile.new()
-	prof.load(PROFILE_PATH)
-	prof.set_value("advisor", "xp", profile_xp)
-	prof.save(PROFILE_PATH)
+	PlayerProfile.add_xp(amount)
 	add_decision("經驗值", "顧問經驗 +%d" % amount, reason, "good")
 
 

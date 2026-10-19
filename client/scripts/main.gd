@@ -12,6 +12,8 @@ const TrainingReport := preload("res://scripts/quest/pages/training_report_view.
 const RecordsScreen := preload("res://scripts/ui/records.gd")
 const SecretaryGuide := preload("res://scripts/ui/training_secretary.gd")
 const SecretarySetup := preload("res://scripts/ui/secretary_setup.gd")
+## 新人顧問報到: between the cover and the secretary choice (first visit, or edited from the hall)
+const PlayerOnboarding := preload("res://scenes/player_onboarding.tscn")
 const AutomationBridge := preload("res://scripts/automation.gd")
 const UiLock := preload("res://scripts/ui_lock.gd")
 
@@ -38,6 +40,8 @@ var _hall_greeting := false
 
 
 var _was_quota_exhausted := false
+## Secretary card highlighted but not confirmed yet (kept when the player steps back)
+var _secretary_draft := ""
 
 
 func _ready() -> void:
@@ -49,6 +53,9 @@ func _ready() -> void:
 		return
 	UI.load_preferences()
 	theme = UI.make_theme()
+	# The advisor created on 新人顧問報到 is the name every room receives
+	if PlayerProfile.player_profile_created and PlayerProfile.player_name != "":
+		Net.player_name = PlayerProfile.player_name
 	var bg := ColorRect.new()
 	bg.color = UI.BG
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -314,6 +321,10 @@ func show_startup() -> void:
 
 
 func show_menu() -> void:
+	# No advisor profile yet: 報到 comes first (recordings with ?automation=1 go straight on)
+	if not PlayerProfile.player_profile_created and not AutomationBridge.is_active():
+		show_onboarding("flow")
+		return
 	if _screen_kind == "menu" and _screen != null and is_instance_valid(_screen) and not _screen.is_queued_for_deletion():
 		Net.fetch_me()
 		return
@@ -398,6 +409,32 @@ func join_room(code: String) -> void:
 	set_busy("連線中……")
 
 
+## 離開培訓: keep=true leaves the room without abandoning it (the seat stays, a server room can be
+## resumed from the hall; the training record is saved either way); keep=false gives this training up
+func leave_training(keep: bool) -> void:
+	if keep:
+		_expect_room = false
+		Net.leave(false)
+		_solo_bots = []
+		_solo = false
+		Net.is_solo = false
+		show_startup()
+	else:
+		leave_to_menu()
+
+
+## From the client brief (before any meeting) back to the training-mode page, choices kept
+func back_to_training_mode() -> void:
+	if Net.is_solo and not Net.is_local():
+		Net.send({"t": "abandon"})
+	_expect_room = false
+	Net.leave()
+	_solo_bots = []
+	_solo = false
+	Net.is_solo = false
+	show_menu()
+
+
 func leave_to_menu() -> void:
 	if Net.is_solo and not Net.is_local():
 		Net.send({"t": "abandon"})
@@ -475,10 +512,28 @@ func _on_state(state: Dictionary) -> void:
 func get_screen_kind() -> String:
 	return _screen_kind
 
-## Cover button always leads to the secretary choice (screen 2); the last choice is preselected
+## Cover button: 新人顧問報到 the first time, afterwards straight to the secretary choice (the last
+## advisor profile is used; the hall's player pill edits it)
 func _enter_training() -> void:
 	_guide.unlock_speech()
-	open_secretary_settings()
+	if PlayerProfile.player_profile_created:
+		open_secretary_settings()
+	else:
+		show_onboarding("flow")
+
+
+## mode "flow": back → cover, done → secretary choice; mode "edit": back / done → training-mode page
+func show_onboarding(mode := "flow") -> void:
+	var page: Control = PlayerOnboarding.instantiate()
+	page.set("main", self)
+	page.set("mode", mode)
+	if mode == "edit":
+		page.connect("done", show_menu)
+		page.connect("back", show_menu)
+	else:
+		page.connect("done", open_secretary_settings)
+		page.connect("back", show_startup)
+	_set_screen("onboarding", page)
 
 ## True once after a secretary was chosen (Aly or Kevin): the hall opens its tutorial without a tap
 func take_hall_greeting() -> bool:
@@ -494,10 +549,18 @@ func open_secretary_settings() -> void:
 	var setup := SecretarySetup.new()
 	if _guide.configured:
 		setup.initial_key = _guide.role if _guide.enabled else "solo"
+	if _secretary_draft != "":
+		setup.initial_key = _secretary_draft
 	setup.selected.connect(func(use_guide: bool, role: String):
+		_secretary_draft = ""
 		_guide.choose(use_guide, role)
 		_hall_greeting = use_guide
 		show_menu()
+	)
+	# 返回 → 新人顧問報到; the highlighted (unconfirmed) secretary is kept for next time
+	setup.back_requested.connect(func(current_key: String):
+		_secretary_draft = current_key
+		show_onboarding("flow")
 	)
 	_set_screen("secretary_setup", setup)
 

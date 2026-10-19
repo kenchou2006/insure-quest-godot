@@ -14,7 +14,7 @@ var host: Control
 var layer: Control
 var net: Node
 var gs: Node
-const FILES := ["user://quest_state.cfg", "user://quest_guides.cfg", "user://quest_profile.cfg", "user://quest_settings.cfg"]
+const FILES := ["user://quest_state.cfg", "user://quest_guides.cfg", "user://quest_profile.cfg", "user://quest_settings.cfg", "user://player_profile.cfg", "user://prefs.json"]
 var saved := {}
 var _restored := false
 
@@ -80,6 +80,16 @@ func _click(pos: Vector2) -> void:
 		e.global_position = w
 		root.push_input(e)
 		await process_frame
+
+
+func _all_text(n: Node) -> String:
+	var out := ""
+	for c in n.find_children("*", "", true, false):
+		if c is Label:
+			out += (c as Label).text + " "
+		elif c is Button:
+			out += (c as Button).text + " "
+	return out
 
 
 func page() -> Control:
@@ -217,6 +227,10 @@ func _run() -> void:
 	_watchdog()
 	gs.call("reset_for_tests")
 	gs.set("classic_ui", false)
+	# The advisor from 新人顧問報到 (its portrait, name and level show on the pages)
+	var pp: Node = root.get_node("PlayerProfile")
+	pp.reset_for_tests()
+	check(pp.create("林小安", "player_04", "blue"), "test advisor profile created")
 	net.set("player_id", "p1")
 	net.set("room_code", "QTEST1")
 	net.set("static_data", _static())
@@ -236,6 +250,9 @@ func _run() -> void:
 	await press("StartMeeting")
 	await _settle()
 	check(layer.get("current") == "dialogue", "開始會談 → dialogue page")
+	var chip: Node = layer.find_child("PlayerChip", true, false)
+	check(chip != null and (chip as Control).is_visible_in_tree(), "header shows the player advisor")
+	check(chip != null and _all_text(chip).contains("林小安") and _all_text(chip).contains("Lv.1 新人顧問"), "header: advisor name and real level (%s)" % (_all_text(chip) if chip else ""))
 	check(not stm.get("active") and not (stm.call("veil") as ColorRect).visible, "transition veil gone after the switch")
 	_capture()
 
@@ -442,18 +459,40 @@ func _run() -> void:
 	await press("ToResult")
 	await _settle()
 	check(layer.get("current") == "result", "→ mission result")
+	var adv_chip: Node = page().find_child("AdvisorChip", true, false)
+	check(adv_chip != null and _all_text(adv_chip).contains("林小安"), "result shows the player advisor (%s)" % (_all_text(adv_chip) if adv_chip else ""))
 	_capture()
-	await _wait(3.4)
+	await _wait(4.4)
 	var rows: Array = page().get("_rows")
-	check(rows.size() == 7, "seven result items (got %d)" % rows.size())
+	check(rows.size() == 9, "nine result items (got %d)" % rows.size())
 	var all_shown := true
 	for r in rows:
 		if (r as Control).modulate.a < 0.99:
 			all_shown = false
 	check(all_shown, "items revealed one by one")
 	check(gs.call("game_xp") > 0, "experience awarded")
+	var verdict: Node = page().find_child("ResultVerdict", true, false)
+	check(verdict != null and (_all_text(verdict).contains("任務完成") or _all_text(verdict).contains("需要加強")), "任務完成／需要加強 shown")
+	check(page().find_child("LevelProgress", true, false) is ProgressBar, "advisor level progress bar")
+	var result_text := _all_text(page())
+	for item in ["時間管理", "新增人脈", "獲得經驗值", "合規表現", "客戶信任變化"]:
+		check(result_text.contains(item), "result item " + item)
+	# 查看決策回顧 opens the review and closes again
+	await press("ReviewDecisions")
+	await _frames(3)
+	var review: Node = page().find_child("DecisionReview", false, false)
+	check(review != null and (review.find_child("DecisionList", true, false) as Node).get_child_count() > 0, "decision review lists this game's choices")
+	if review:
+		await _click((review.find_child("ReviewDone", true, false) as Control).get_global_rect().get_center())
+		await _frames(2)
+	check(page().find_child("DecisionReview", false, false) == null, "decision review closes")
+	check(btn("ResultHome") != null, "返回主頁 on the result card")
+	var flow: Node = root.get_node("QuestFlow")
+	check((btn("ResultContinue") as Button).text == "前往下一站", "前往下一站 on a mid-game result")
 	await press("ResultContinue")
-	check(str(last_action().get("type", "")) == "continue", "返回地圖 sends continue")
+	check(str(last_action().get("type", "")) == "continue", "前往下一站 sends continue")
+	check(bool(flow.get("unlock_pending")), "前往下一站 asks for the unlock animation on the map")
+	flow.set("unlock_pending", false)
 
 	# 8. Life event of the primary client: responses change state
 	s.session = null

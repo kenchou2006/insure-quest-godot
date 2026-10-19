@@ -9,6 +9,8 @@ var card_body: VBoxContainer
 var card_footer: VBoxContainer
 var _scroll: ScrollContainer
 var max_card_width := 860.0
+## 地圖背後的變暗程度（任務簡報約 45%，仍看得出抵達的站點）
+var dim_alpha := 0.5
 
 
 func _init() -> void:
@@ -93,14 +95,14 @@ func enter() -> void:
 	await get_tree().process_frame
 	_place_card()
 	if QuestUI.motion_off():
-		dim.color.a = 0.5
+		dim.color.a = dim_alpha
 		card.modulate.a = 1.0
 		return
 	var final_y := card.position.y
 	card.position.y = final_y + 24.0
 	card.modulate.a = 0.0
 	var tw := create_tween().set_parallel(true).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(dim, "color:a", 0.5, 0.3)
+	tw.tween_property(dim, "color:a", dim_alpha, 0.3)
 	tw.tween_property(card, "modulate:a", 1.0, 0.3).set_delay(0.06)
 	tw.tween_property(card, "position:y", final_y, 0.34).set_delay(0.06)
 

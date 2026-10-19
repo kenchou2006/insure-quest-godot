@@ -53,6 +53,7 @@ func _ready() -> void:
 	_body = QuestUI.vbox(14)
 	outer.add_child(QuestUI.scroll(_body))
 	_settings = SettingsModal.new()
+	_settings.set("home_label", "返回主畫面")
 	_settings.connect("leave_requested", func(): main.leave_to_menu())
 	add_child(_settings)
 	Net.stream_chunk.connect(_on_stream)
@@ -125,6 +126,7 @@ func _build(pending: bool) -> void:
 	tv.add_child(th)
 	tv.add_child(QuestUI.label("完成本次客戶諮詢，以下為你的表現分析與個人化建議。", 15, QuestUI.MUTED, true))
 	top.add_child(tv)
+	top.add_child(_advisor_card())
 	top.add_child(_client_card())
 	_body.add_child(top)
 	_progress = QuestUI.card(null, 0.95, Color(QuestUI.GOLD, 0.5))
@@ -188,6 +190,23 @@ func _reveal() -> void:
 		tw.tween_interval(0.12 * i)
 		tw.tween_property(s, "modulate:a", 1.0, 0.3)
 	AudioManager.play("mission_success")
+
+
+## The player's own advisor: portrait, name, level after this game
+func _advisor_card() -> Control:
+	var c := QuestUI.card(null, 0.92, Color(QuestUI.GOLD, 0.45))
+	c.name = "AdvisorCard"
+	var h := QuestUI.hbox(12)
+	c.add_child(h)
+	if PlayerProfile.portrait() != null:
+		h.add_child(UI.RoundTex.new(PlayerProfile.portrait(), Vector2(72, 72), -1.0, PlayerProfile.token_color(), 3.0))
+	var v := QuestUI.vbox(2)
+	v.add_child(QuestUI.label("受訓顧問", 12, QuestUI.MUTED))
+	var nm := PlayerProfile.player_name if PlayerProfile.player_name != "" else str(_mine.get("name", "顧問"))
+	v.add_child(QuestUI.title(nm, 20))
+	v.add_child(QuestUI.label(PlayerProfile.level_text(), 13, QuestUI.GOLD))
+	h.add_child(v)
+	return c
 
 
 func _client_card() -> Control:

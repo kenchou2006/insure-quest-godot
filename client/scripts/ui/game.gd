@@ -6,6 +6,7 @@ extends Control
 ## Taipei 101 Advisor HQ, 3D isometric board (board_hq.gd is the earlier painted-map version;
 ## the 3D city board in board.gd stays available to the preview studio)
 const Board := preload("res://scripts/ui/board_aerial.gd")
+const RouteProgress := preload("res://scripts/quest/widgets/route_progress.gd")
 
 # HQ interface palette
 const C_BG := Color("#062F2A")
@@ -102,6 +103,8 @@ const UiLock := preload("res://scripts/ui_lock.gd")
 ## The ten mission pages (own turn); spectators and ?classic=1 keep the panels above
 const QuestLayer := preload("res://scripts/quest/quest_layer.gd")
 const GameHeader := preload("res://scripts/quest/widgets/game_header.gd")
+const LeaveDialog := preload("res://scripts/quest/widgets/leave_dialog.gd")
+const BackButton := preload("res://scripts/ui/back_button.gd")
 ## Pawn walk per station and the camera's arrival focus (seconds)
 const STEP_SECONDS := 0.22
 const FOCUS_SECONDS := 0.6
@@ -183,6 +186,9 @@ var _stats_box: GridContainer
 var _goals_progress: Label
 var _client_panel: Control
 var _timeline_box: VBoxContainer
+## 目前任務裡的主線路線進度，與最近決策（最新 3 筆）
+var _route: Control
+var _recent_box: VBoxContainer
 ## Stations this advisor has landed on, newest last (for the record timeline)
 var _history: Array = []
 var _case_setup: Control
@@ -192,6 +198,8 @@ var _hud_action: HBoxContainer
 var _quest: Control
 var _map_header: Control
 var _focus_fired := false
+## 返回培訓方式 on the client brief (case setup step 1), placed inside the case setup
+var _brief_back: Button
 
 
 class DiceControl extends Control:
@@ -257,6 +265,14 @@ func _ready() -> void:
 	if not Engine.is_editor_hint():
 		# Office / city room tone under the game screen (Ambience bus)
 		AudioManager.set_ambience(true)
+		# 流程狀態機：新的一局從地圖待機開始；下一站解鎖由這裡播放動畫
+		QuestFlow.reset()
+		if not QuestFlow.state_changed.is_connected(_on_flow_state):
+			QuestFlow.state_changed.connect(_on_flow_state)
+		if not Net.server_error.is_connected(_on_roll_error):
+			Net.server_error.connect(_on_roll_error)
+		if not GameState.decision_added.is_connected(_refresh_recent):
+			GameState.decision_added.connect(_refresh_recent)
 	if not Net.state.is_empty():
 		refresh(Net.state)
 
@@ -480,7 +496,7 @@ func _build_ui() -> void:
 		top.add_child(UI.label("單人練習", 13, C_MUTED))
 	top.add_child(UI.spacer())
 	top.add_child(_quiet_button("聲音", func(): _open_audio_settings()))
-	top.add_child(_quiet_button("離開", func(): _confirm_leave()))
+	top.add_child(_quiet_button("離開培訓", func(): _confirm_leave()))
 	sv.add_child(top)
 
 	# 1. Current task: where I am, what this station trains, goals
@@ -489,6 +505,13 @@ func _build_ui() -> void:
 	_task_where = UI.label("", 14, C_GOLD)
 	th.add_child(_task_where)
 	task_v.add_child(th)
+	var main_row := UI.hbox(8)
+	var main_chip := QuestUI.chip("主線任務", QuestUI.GOLD)
+	main_chip.name = "MainLineChip"
+	main_row.add_child(main_chip)
+	task_v.add_child(main_row)
+	_route = RouteProgress.new()
+	task_v.add_child(_route)
 	_task_img = TextureRect.new()
 	_task_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_task_img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -530,6 +553,13 @@ func _build_ui() -> void:
 	_client_box = UI.vbox(8)
 	client_v.add_child(_client_box)
 	sv.add_child(_card(client_v))
+	# 最近決策：本局最新 3 筆選擇（完整紀錄在結算的「查看決策回顧」）
+	var recent_v := UI.vbox(8)
+	recent_v.add_child(_panel_header("doc", "最近決策"))
+	_recent_box = UI.vbox(6)
+	_recent_box.name = "RecentDecisions"
+	recent_v.add_child(_recent_box)
+	sv.add_child(_card(recent_v))
 	# Advisor numbers (prospects, clients, reputation, sales) in a drawer of their own
 	_stats_box = GridContainer.new()
 	_stats_box.columns = 2
@@ -618,17 +648,98 @@ func _build_ui() -> void:
 			Net.avatar_loaded.connect(_on_player_avatar_loaded)
 
 
+## 擲骰前進：只在地圖待機時接受（動畫或頁面切換中連點不會送出第二次）；點數由後端決定
 func _on_roll() -> void:
 	if _local_roll_in_flight or _roll_btn.disabled:
 		return
+	if not Engine.is_editor_hint() and not QuestFlow.can_roll():
+		push_warning("擲骰前進：目前狀態為「%s」，這次點擊不送出" % QuestFlow.label())
+		return
+	QuestFlow.claim(0.6)
 	_local_roll_in_flight = true
 	_roll_btn.call("set_loading", true, "擲骰中")
+	QuestFlow.go(QuestFlow.DICE_ROLLING, "擲骰前進")
 	Net.act({"type": "roll"})
+	# 後端 6 秒內沒有回應：按鈕與狀態復原，不讓畫面停在擲骰中
+	get_tree().create_timer(6.0).timeout.connect(func():
+		if _local_roll_in_flight and QuestFlow.state == QuestFlow.DICE_ROLLING:
+			_abort_roll("擲骰沒有收到後端回應，請再按一次「擲骰前進」")
+	)
+
+
+func _on_roll_error(msg: String) -> void:
+	if _local_roll_in_flight and QuestFlow.state == QuestFlow.DICE_ROLLING:
+		_abort_roll("擲骰失敗：" + msg)
+
+
+func _abort_roll(reason: String) -> void:
+	push_error("擲骰前進：" + reason)
+	_local_roll_in_flight = false
+	if is_instance_valid(_roll_btn):
+		_roll_btn.call("set_loading", false)
+		_roll_btn.disabled = false
+	QuestFlow.go(QuestFlow.MAP_IDLE, "擲骰中止")
+	if _quest != null:
+		_quest.show_toast(reason, "error")
+
+
+## 跳過動畫：骰子落定、棋子直接到站，鏡頭聚焦後馬上進任務簡報（點數與站點仍是後端的結果）
+func skip_move_animation() -> void:
+	if not _is_overlay_deferred:
+		return
+	if _board.has_method("freeze_movement"):
+		_board.freeze_movement(0.0)
+	if _board.has_method("snap_pawns"):
+		_board.snap_pawns()
+	_deferred_overlay_timer = minf(_deferred_overlay_timer, FOCUS_SECONDS + 0.05)
+	_focus_fired = false
+	if QuestFlow.state == QuestFlow.DICE_ROLLING:
+		QuestFlow.go(QuestFlow.PLAYER_MOVING, "跳過動畫")
+
+
+## 流程狀態改變：下一站解鎖時沿路線播放金線，播完回到地圖待機
+func _on_flow_state(_from: String, to: String) -> void:
+	if to != QuestFlow.NEXT_STAGE_UNLOCKED:
+		return
+	var dur := 1.2
+	if _board != null and _board.has_method("play_unlock"):
+		dur = float(_board.call("play_unlock", int(Net.me().get("pos", 0)), GameState.next_node(), dur))
+	AudioManager.play("node_unlock")
+	get_tree().create_timer(dur).timeout.connect(func():
+		if QuestFlow.state == QuestFlow.NEXT_STAGE_UNLOCKED:
+			QuestFlow.go(QuestFlow.MAP_IDLE, "解鎖動畫結束")
+	)
 
 
 func _open_quest_settings() -> void:
 	if _quest != null:
 		_quest.open_settings()
+
+
+## Client brief (case setup step 1): 返回培訓方式 leaves this room and goes back to the
+## training-mode page with the line-up kept. Added inside the case setup so it takes the click.
+func _sync_brief_back() -> void:
+	var cs := _case_setup
+	var on := cs != null and is_instance_valid(cs) and int(cs.get("_step")) == 1 and not bool(cs.get("_accepting"))
+	if not on:
+		if _brief_back != null and is_instance_valid(_brief_back):
+			_brief_back.visible = false
+		return
+	if _brief_back == null or not is_instance_valid(_brief_back) or _brief_back.get_parent() != cs:
+		_brief_back = BackButton.new("返回培訓方式")
+		_brief_back.name = "BriefBackButton"
+		_brief_back.z_index = 5
+		_brief_back.pressed.connect(func():
+			if main and main.has_method("back_to_training_mode"):
+				main.back_to_training_mode()
+		)
+		cs.add_child(_brief_back)
+	_brief_back.visible = true
+	var k := clampf(minf(size.x / 1280.0, size.y / 720.0), 0.7, 1.4)
+	_brief_back.reset_size()
+	_brief_back.position = Vector2(16.0 * k, (66.0 if not UI.is_portrait() else 60.0) * k)
+	if _brief_back.get_index() != cs.get_child_count() - 1:
+		cs.move_child(_brief_back, cs.get_child_count() - 1)
 
 
 ## True when the mission layer shows this state itself (own session or event)
@@ -646,6 +757,13 @@ func _exit_tree() -> void:
 	if not Engine.is_editor_hint():
 		AudioManager.set_ambience(false)
 		AudioManager.stop_tension_layers()
+		if QuestFlow.state_changed.is_connected(_on_flow_state):
+			QuestFlow.state_changed.disconnect(_on_flow_state)
+		if Net.server_error.is_connected(_on_roll_error):
+			Net.server_error.disconnect(_on_roll_error)
+		if GameState.decision_added.is_connected(_refresh_recent):
+			GameState.decision_added.disconnect(_refresh_recent)
+		QuestFlow.reset()
 	if Net.training_save_changed.is_connected(_show_save_status):
 		Net.training_save_changed.disconnect(_show_save_status)
 	if not Engine.is_editor_hint():
@@ -888,6 +1006,47 @@ func _refresh_task(s: Dictionary, mine: bool, cur_name: String, stage: String, d
 	_task_case.visible = not lines.is_empty()
 	_task_quest.text = "本季任務已完成 %d / %d" % [done, total] if total > 0 else ""
 	_task_quest.visible = total > 0
+	if _route != null and is_instance_valid(_route):
+		_route.queue_redraw()
+	_refresh_recent()
+
+
+## 最近決策：最新 3 筆（不含經驗值），做得好綠勾、需要加強金色警示，附上幾分鐘前
+func _refresh_recent(_entry: Dictionary = {}) -> void:
+	if _recent_box == null or not is_instance_valid(_recent_box):
+		return
+	UI.clear(_recent_box)
+	var picked: Array = []
+	var ds: Array = [] if Engine.is_editor_hint() else GameState.decision_history()
+	for k in range(ds.size() - 1, -1, -1):
+		var d := ds[k] as Dictionary
+		if str(d.get("stage", "")) == "經驗值":
+			continue
+		picked.append(d)
+		if picked.size() == 3:
+			break
+	if picked.is_empty():
+		_recent_box.add_child(UI.label("還沒有決策紀錄。抵達客戶站點後的每個選擇都會記在這裡。", 13, C_MUTED, true))
+		return
+	var now := Time.get_unix_time_from_system()
+	for d: Dictionary in picked:
+		var q := str(d.get("quality", ""))
+		var row := UI.hbox(8)
+		var ic := QuestUI.icon("circle_check" if q == "good" else ("alert" if q == "bad" else "circle"), 18.0, C_GREEN if q == "good" else (C_GOLD if q == "bad" else C_MUTED))
+		ic.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		row.add_child(ic)
+		var v := UI.vbox(2)
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var t := UI.label(str(d.get("title", "")), 14, C_TEXT, true)
+		t.max_lines_visible = 2
+		v.add_child(t)
+		v.add_child(UI.label(str(d.get("stage", "")), 12, C_MUTED))
+		row.add_child(v)
+		var ts := float(d.get("ts", 0.0))
+		if ts > 0.0:
+			var mins := int((now - ts) / 60.0)
+			row.add_child(UI.label("剛剛" if mins < 1 else "%d 分鐘前" % mins, 12, C_MUTED))
+		_recent_box.add_child(row)
 
 
 ## Shows the primary-client + briefcase picker until the server records this player's case
@@ -1257,6 +1416,7 @@ func _sync_tabs() -> void:
 
 func _process(delta: float) -> void:
 	_sync_center_bounds()
+	_sync_brief_back()
 
 	# Deferred panel countdown timer (waiting for dice roll and pawn movement to finish)
 	if _is_overlay_deferred:
@@ -1322,7 +1482,7 @@ func refresh(s: Dictionary) -> void:
 	_sync_center_bounds()
 	var cur: Dictionary = Net.current_player()
 	var cur_id: String = str(cur.get("id", ""))
-	var cur_name: String = str(cur.get("name", ""))
+	var cur_name: String = PlayerProfile.display_name(cur)
 	var round_num: int = int(s.get("round", 1))
 	var mine: bool = Net.is_my_turn()
 	var stage: String = str(s.get("turnStage", ""))
@@ -1334,7 +1494,7 @@ func refresh(s: Dictionary) -> void:
 		_prev_round_num = round_num
 		_prev_last_roll = 0
 		var cur_player_idx: int = int(s.get("turn", 0)) % 4
-		var player_col: Color = UI.PLAYER_COLORS[cur_player_idx]
+		var player_col: Color = PlayerProfile.player_color(cur, cur_player_idx)
 		_show_turn_transition(round_num, cur_name, player_col, mine)
 		if mine:
 			Sound.play("step", self)
@@ -1355,6 +1515,13 @@ func refresh(s: Dictionary) -> void:
 				_board.freeze_movement(land)
 			total_anim_time = land + float(last_roll_val) * STEP_SECONDS + FOCUS_SECONDS + 0.15
 			_focus_fired = false
+			# 骰子滾動 → 落定後棋子沿路線逐站移動；到站後由任務層決定下一個狀態
+			if QuestFlow.state != QuestFlow.DICE_ROLLING:
+				QuestFlow.go(QuestFlow.DICE_ROLLING, "%s 擲出 %d" % [cur_name, last_roll_val])
+			get_tree().create_timer(land).timeout.connect(func():
+				if QuestFlow.state == QuestFlow.DICE_ROLLING:
+					QuestFlow.go(QuestFlow.PLAYER_MOVING, "前進 %d 站" % last_roll_val)
+			)
 		else:
 			_play_dice_cutscene(cur_name, last_roll_val, mine)
 			# Defer interview/event panel display: dice roll animation (1.0s) + pawn 1/6s per tile + buffer (0.45s)
@@ -1525,12 +1692,14 @@ func refresh(s: Dictionary) -> void:
 		var card := UI.panel(Color(C_CARD, 1.0 if is_cur else 0.55), 10, 8, Color(0, 0, 0, 0))
 		var v := UI.vbox(2)
 		var h := UI.hbox(6)
-		var p_col: Color = UI.PLAYER_COLORS[i % 4]
+		var p_col: Color = PlayerProfile.player_color(p, i)
 		var av_tex: Texture2D = null
 		if not Engine.is_editor_hint():
-			if str(p.get("id", "")) == Net.player_id and Net.avatar_tex != null:
+			# The player's own advisor portrait, the sparring advisors' portraits, else a Google photo
+			av_tex = PlayerProfile.portrait_of(p)
+			if av_tex == null and str(p.get("id", "")) == Net.player_id and Net.avatar_tex != null:
 				av_tex = Net.avatar_tex
-			else:
+			elif av_tex == null:
 				var av_url: String = str(p.get("avatar", ""))
 				if av_url != "" and av_url != "null" and av_url.begins_with("https://"):
 					av_tex = Portraits.get_player_avatar(av_url)
@@ -1541,7 +1710,8 @@ func refresh(s: Dictionary) -> void:
 			h.add_child(av_round)
 		else:
 			h.add_child(UI.label("●", 16, p_col))
-		var nm: String = str(p.get("name", "")) + (" (你)" if str(p.get("id", "")) == Net.player_id else "")
+		var adv := PlayerProfile.bot_advisor(p)
+		var nm: String = PlayerProfile.display_name(p) + (" (你)" if str(p.get("id", "")) == Net.player_id else ("｜" + str(adv.type) if not adv.is_empty() else ""))
 		h.add_child(UI.label(nm, 15, C_TEXT))
 		var streak: int = int(p.get("complianceStreak", 0))
 		if streak >= 2:
@@ -1620,7 +1790,7 @@ func _apply_deferred_overlay() -> void:
 	var is_ev: bool = ev is Dictionary and not is_sess
 	var has_overlay: bool = is_sess or is_ev
 	var cur: Dictionary = Net.current_player()
-	var cur_name: String = str(cur.get("name", ""))
+	var cur_name: String = PlayerProfile.display_name(cur)
 	var mine: bool = Net.is_my_turn()
 	var owned: bool = _quest_owns(s)
 
@@ -1669,7 +1839,7 @@ func _apply_deferred_overlay() -> void:
 	var logs: Array = s.get("log", [])
 	for idx: int in range(logs.size() - 1, -1, -1):
 		var l: Dictionary = logs[idx]
-		_log_box.add_child(UI.label(str(l.get("text", "")), 13, UI.tone_color(str(l.get("tone", "info"))), true))
+		_log_box.add_child(UI.label(PlayerProfile.localize(str(l.get("text", ""))), 13, UI.tone_color(str(l.get("tone", "info"))), true))
 
 
 # ───────── Dynamic cutscene: dice tumbling and bounce freeze ─────────
@@ -1914,39 +2084,8 @@ func _open_audio_settings() -> void:
 	)
 
 
+## 離開培訓: 繼續培訓 / 儲存並返回主畫面 / 放棄本次培訓
 func _confirm_leave() -> void:
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.75)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.z_index = 120
-	add_child(dim)
-
-	var p := UI.panel(UI.PANEL, 16, 20)
-	p.set_anchors_preset(Control.PRESET_CENTER)
-	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	p.grow_vertical = Control.GROW_DIRECTION_BOTH
-	var is_phone := UI.is_phone()
-	p.custom_minimum_size = Vector2(300, 150) if is_phone else Vector2(380, 170)
-	dim.add_child(p)
-	UI.pop_in(p, 0.2)
-
-	var v := UI.vbox(14)
-	p.add_child(v)
-
-	v.add_child(UI.label("離開遊戲", 18 if is_phone else 20, UI.GOLD))
-	v.add_child(UI.label("確定離開？進行中的面談不會保存，可從主選單回到房間。", 13 if is_phone else 14, UI.TEXT, true))
-
-	var btn_row := UI.hbox(12)
-	btn_row.alignment = BoxContainer.ALIGNMENT_END
-	var stay_btn := UI.button("留下", func():
-		UI.pop_out(p, dim.queue_free, 0.16)
-	, 14, UI.PANEL_2)
-	var leave_btn := UI.button("離開", func():
-		UI.pop_out(p, func():
-			dim.queue_free()
-			main.leave_to_menu()
-		, 0.16)
-	, 14, UI.BAD)
-	btn_row.add_child(stay_btn)
-	btn_row.add_child(leave_btn)
-	v.add_child(btn_row)
+	if find_child("LeaveDialog", false, false):
+		return
+	add_child(LeaveDialog.new(main))

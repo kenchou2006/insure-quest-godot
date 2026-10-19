@@ -5,12 +5,19 @@ extends Control
 ## action button is docked right under it (see get_inner_rect). Positions are computed from this
 ## control's own size every frame, so chips stay on the route at any window size.
 ## Same API as board.gd / board_hq.gd: set_data / freeze_movement / get_inner_rect / current_index.
+## 節點狀態：已完成降低亮度並打勾；目前位置放大 1.08 倍、法巴綠框加細金外框；下一站輕微呼吸；
+## 未解鎖降低亮度並顯示鎖頭；特殊事件（稽核、市場波動）只加一個紅色小警示標記。
+## play_unlock：下一站解鎖時，金色細線沿路線從目前位置前進到下一站。
 
 const ToolIcon := preload("res://scripts/ui/board_hq.gd").ToolIcon
 ## A clean aerial without text dropped here replaces the default map
 const MAP_PATHS := ["res://assets/hq/hq_aerial.webp", "res://assets/unified/board.webp"]
 ## Image point kept near the board centre (101 sits right of centre in the default map)
 const FOCUS := Vector2(0.6, 0.52)
+## 沿空拍圖道路描出的路線（圖片座標 0..1，順時針：底部中央 → 左側斜路 → 上緣往 101 → 101 環路
+## → 右側弧形高架 → 底部道路）。24 個站依長度平均落在這條路上，跟著地圖縮放與平移。
+## 圖片被裁切、路線放不下時（例如直向手機）改用下面的圓角環線。
+const ROAD := [Vector2(0.62, 0.659), Vector2(0.559, 0.699), Vector2(0.499, 0.734), Vector2(0.466, 0.744), Vector2(0.452, 0.705), Vector2(0.447, 0.669), Vector2(0.433, 0.639), Vector2(0.41, 0.617), Vector2(0.379, 0.591), Vector2(0.35, 0.566), Vector2(0.32, 0.54), Vector2(0.3, 0.5), Vector2(0.31, 0.47), Vector2(0.35, 0.445), Vector2(0.4, 0.417), Vector2(0.45, 0.401), Vector2(0.5, 0.385), Vector2(0.55, 0.369), Vector2(0.6, 0.344), Vector2(0.65, 0.318), Vector2(0.684, 0.348), Vector2(0.71, 0.333), Vector2(0.739, 0.325), Vector2(0.767, 0.333), Vector2(0.796, 0.348), Vector2(0.821, 0.367), Vector2(0.844, 0.393), Vector2(0.864, 0.423), Vector2(0.881, 0.453), Vector2(0.87, 0.496), Vector2(0.853, 0.515), Vector2(0.8588, 0.543), Vector2(0.878, 0.556), Vector2(0.899, 0.569), Vector2(0.92, 0.585), Vector2(0.9375, 0.598), Vector2(0.948, 0.6165), Vector2(0.955, 0.6375), Vector2(0.96, 0.6585), Vector2(0.962, 0.677), Vector2(0.96, 0.695), Vector2(0.953, 0.706), Vector2(0.9375, 0.715), Vector2(0.911, 0.724), Vector2(0.885, 0.729), Vector2(0.859, 0.732), Vector2(0.8325, 0.732), Vector2(0.806, 0.729), Vector2(0.78, 0.724), Vector2(0.742, 0.697), Vector2(0.673, 0.659)]
 
 const C_BG := Color("#062F2A")
 const C_CARD := Color("#0D4038")
@@ -47,6 +54,13 @@ var show_title := true
 ## Gold ripples left where the pawn passes: [station index, age]
 var _ripples: Array = []
 var _view_tween: Tween
+## 下一站解鎖的金線：起點、終點、進度 0..1（< 0 表示沒有在播放）、淡出
+var _unlock_from := -1
+var _unlock_to := -1
+var _unlock_t := -1.0
+var _unlock_fade := 0.0
+## 特殊事件站（只加紅色小警示）
+const EVENT_KINDS := ["audit", "market"]
 
 
 func _ready() -> void:
@@ -98,6 +112,12 @@ func freeze_movement(duration: float) -> void:
 	_freeze_timer = maxf(duration, 0.0)
 
 
+## 跳過動畫：棋子直接出現在目前位置
+func snap_pawns() -> void:
+	for p: Dictionary in players:
+		_shown[str(p.get("id", ""))] = float(p.get("pos", 0))
+
+
 func current_index() -> int:
 	return int(floorf(float(_shown.get(current_id, 0.0)) + 0.001)) % 24
 
@@ -139,13 +159,54 @@ func _compact() -> bool:
 	return size.x < 520.0
 
 
-## Loop as a rounded rectangle in board space (leaves the top-left for the title)
+## Loop as a rounded rectangle in board space (leaves the top-left for the title); with the road
+## route, the box around the road points
 func _loop_rect() -> Rect2:
+	if _use_road():
+		var road := _road_points(_img_xform()[0], _img_xform()[1])
+		var box := Rect2(road[0], Vector2.ZERO)
+		for q in road:
+			box = box.expand(q)
+		return box
 	var top := 0.24 if not _compact() else 0.16
 	return Rect2(size * Vector2(0.1, top), size * Vector2(0.8, 0.8 - top))
 
 
+## 地圖在這個縮放與平移下的位置：[左上角, 縮放比例]（與 _draw 畫圖片的算法相同）
+func _img_xform(z := 1.0, pan := Vector2.ZERO) -> Array:
+	var img := _map.get_size()
+	var sc := maxf(size.x / img.x, size.y / img.y) * 1.08 * z
+	var at := size * 0.5 - img * FOCUS * sc + pan
+	at = at.clamp(size - img * sc, Vector2.ZERO)
+	return [at, sc]
+
+
+## 道路路線整條都在棋盤內才使用（留 24px 邊）
+func _use_road() -> bool:
+	if _map == null or size.x < 10.0 or size.y < 10.0:
+		return false
+	var xf := _img_xform()
+	var img := _map.get_size()
+	var inner := Rect2(Vector2.ZERO, size).grow(-24.0)
+	for q: Vector2 in ROAD:
+		if not inner.has_point((xf[0] as Vector2) + q * img * float(xf[1])):
+			return false
+	return true
+
+
+func _road_points(at: Vector2, sc: float) -> PackedVector2Array:
+	var img := _map.get_size()
+	var out := PackedVector2Array()
+	for q: Vector2 in ROAD:
+		out.append(at + q * img * sc)
+	out.append(out[0])
+	return out
+
+
 func _loop_points() -> PackedVector2Array:
+	if _use_road():
+		var xf := _img_xform()
+		return _road_points(xf[0], xf[1])
 	var r := _loop_rect()
 	var rad := minf(r.size.x, r.size.y) * 0.16
 	var pts := PackedVector2Array()
@@ -250,7 +311,32 @@ func _process(delta: float) -> void:
 	for r in _ripples:
 		r[1] = float(r[1]) + delta
 	_ripples = _ripples.filter(func(r): return float(r[1]) < 0.55)
+	if _unlock_t >= 0.0 and _unlock_t < 1.0:
+		_unlock_t = minf(1.0, _unlock_t + delta / maxf(0.1, _unlock_dur))
+	elif _unlock_t >= 1.0:
+		_unlock_fade += delta
+		if _unlock_fade > 0.6:
+			_unlock_t = -1.0
 	queue_redraw()
+
+
+var _unlock_dur := 1.2
+
+
+## 下一站解鎖：金色細線沿路線由 from_i 前進到 to_i，回傳播放秒數（沒有下一站時為 0）
+func play_unlock(from_i: int, to_i: int, dur := 1.2) -> float:
+	if to_i < 0 or tiles.size() != 24:
+		return 0.0
+	_unlock_from = posmod(from_i, 24)
+	_unlock_to = posmod(to_i, 24)
+	_unlock_dur = 0.01 if UI.is_animation_disabled() else dur
+	_unlock_t = 0.0
+	_unlock_fade = 0.0
+	return _unlock_dur + 0.1
+
+
+func unlock_playing() -> bool:
+	return _unlock_t >= 0.0 and _unlock_t < 1.0
 
 
 ## Camera eases onto a station (arrival) — zoom 1.35 centred on it, kept inside the map
@@ -320,8 +406,12 @@ func _draw() -> void:
 
 	var raw := _loop_points()
 	var pts := PackedVector2Array()
-	for p in raw:
-		pts.append(_to_view(p))
+	if _use_road():
+		# 沿道路：直接用畫圖片時的位置，縮放與平移後仍貼在路上
+		pts = _road_points(_img_at, _img_scale)
+	else:
+		for p in raw:
+			pts.append(_to_view(p))
 	var lengths := PackedFloat32Array()
 	var total := 0.0
 	for i in range(pts.size() - 1):
@@ -365,15 +455,17 @@ func _draw() -> void:
 			w += 14.0
 		var h := 40.0 if is_cur else 28.0
 		if is_cur:
-			# Current station at 115%
-			w *= 1.15
-			h *= 1.15
+			# 目前位置放大 1.08 倍
+			w *= 1.08
+			h *= 1.08
 		var rel := Vector2((dot.x - _to_view(r.position).x) / maxf(1.0, r.size.x * _zoom), (dot.y - _to_view(r.position).y) / maxf(1.0, r.size.y * _zoom))
 		var chip: Rect2
-		if rel.x < 0.08:
-			chip = Rect2(dot + Vector2(14, -h * 0.5), Vector2(w, h))
-		elif rel.x > 0.92:
-			chip = Rect2(dot + Vector2(-14 - w, -h * 0.5), Vector2(w, h))
+		# 路線左右兩側的站：標籤左右交錯，避免相鄰的站疊在一起
+		var side_band := 0.12 if _use_road() else 0.08
+		if rel.x < side_band or rel.x > 1.0 - side_band:
+			var outward := i % 2 == 0
+			var to_right := (rel.x < 0.5) != outward
+			chip = Rect2(dot + (Vector2(14, -h * 0.5) if to_right else Vector2(-14 - w, -h * 0.5)), Vector2(w, h))
 		else:
 			var up := (i % 2 == 0) == (rel.y > 0.5)
 			chip = Rect2(dot + Vector2(-w * 0.5, -h - 14 if up else 14), Vector2(w, h))
@@ -389,9 +481,14 @@ func _draw() -> void:
 		var emphasis := i == cur or i == _hover or i == _selected or i == next_i
 		var locked := steps > AHEAD and not visited.has(i) and not emphasis
 		var alpha := 1.0 if emphasis or steps <= AHEAD else (0.5 if locked else 0.72)
+		# 已完成的站降低亮度（打勾在 _draw_state）
+		if visited.has(i) and not emphasis:
+			alpha = minf(alpha, 0.6)
 		_draw_chip(font, i, _chips[i], dots[i], i == cur, steps > 0 and steps <= AHEAD, alpha, compact, i == cur or i == next_i or i == _hover or i == _selected)
 		_draw_state(font, i, _chips[i], dots[i], i == cur, i == next_i and i != cur, visited.has(i) and i != cur, locked)
 	_draw_pawns(pts, lengths, total)
+	if _unlock_t >= 0.0:
+		_draw_unlock(pts, lengths, total, dots)
 	for rp in _ripples:
 		var age: float = float(rp[1]) / 0.55
 		var at: Vector2 = dots[int(rp[0])]
@@ -434,6 +531,26 @@ func _draw_state(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, n
 		draw_arc(lc + Vector2(0, -1), 2.8, PI, TAU, 8, Color(C_TEXT, 0.55), 1.2, true)
 
 
+## 解鎖金線：沿路線從目前位置畫到下一站，頭端一個亮點；播完後淡出，下一站外圈亮一下
+func _draw_unlock(pts: PackedVector2Array, lengths: PackedFloat32Array, total: float, dots: Array) -> void:
+	var span := float(posmod(_unlock_to - _unlock_from, 24))
+	if span <= 0.0:
+		span = 24.0
+	var a := float(_unlock_from) / 24.0
+	var reach := span / 24.0 * clampf(_unlock_t, 0.0, 1.0)
+	var fade := 1.0 - clampf(_unlock_fade / 0.6, 0.0, 1.0)
+	var line := PackedVector2Array()
+	var n := maxi(2, int(span * 6.0 * clampf(_unlock_t, 0.0, 1.0)) + 2)
+	for k in range(n):
+		line.append(_along(pts, lengths, total, a + reach * float(k) / float(n - 1)))
+	draw_polyline(line, Color(C_GOLD, 0.95 * fade), 3.0, true)
+	var head: Vector2 = line[line.size() - 1]
+	draw_circle(head, 5.0, Color(C_GOLD, fade))
+	draw_circle(head, 10.0, Color(C_GOLD, 0.25 * fade))
+	if _unlock_t >= 1.0 and _unlock_to < dots.size():
+		draw_arc(dots[_unlock_to], 14.0 + 10.0 * clampf(_unlock_fade / 0.6, 0.0, 1.0), 0, TAU, 32, Color(C_GOLD, fade), 2.0, true)
+
+
 ## Title block drawn last, on a soft backdrop, so station chips never cover it
 func _draw_title(font: Font) -> void:
 	var t := "人生顧問局"
@@ -470,7 +587,7 @@ func _draw_chip(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, up
 	sb.bg_color = Color(C_CARD.darkened(0.15), 0.94 * alpha)
 	sb.set_corner_radius_all(10 if not current else 12)
 	sb.set_border_width_all(2 if current else 1)
-	sb.border_color = C_GOLD if current else (Color(C_GREEN, 0.9 * alpha) if upcoming else Color(1, 1, 1, 0.14 * alpha))
+	sb.border_color = C_GREEN if current else (Color(C_GREEN, 0.9 * alpha) if upcoming else Color(1, 1, 1, 0.14 * alpha))
 	if current:
 		sb.shadow_color = Color(0, 0, 0, 0.35)
 		sb.shadow_size = 6
@@ -478,9 +595,13 @@ func _draw_chip(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, up
 	var icon := 18.0 if current else 14.0
 	var ic := chip.position + Vector2(12 + icon * 0.5, chip.size.y * 0.5)
 	var col := Color(C_TEXT, alpha)
-	if kind == "audit":
-		col = Color(C_RED.lightened(0.2), alpha)
 	_draw_icon(tname, kind, ic, icon * 0.5, col)
+	if kind in EVENT_KINDS:
+		# 紅色小警示標記（三角形＋驚嘆號）
+		var wc := chip.position + Vector2(chip.size.x - 6, 6)
+		draw_colored_polygon(PackedVector2Array([wc + Vector2(0, -6), wc + Vector2(6, 5), wc + Vector2(-6, 5)]), Color(C_RED, alpha))
+		draw_line(wc + Vector2(0, -2.5), wc + Vector2(0, 1.5), Color(C_TEXT, alpha), 1.4, true)
+		draw_circle(wc + Vector2(0, 3.4), 0.9, Color(C_TEXT, alpha))
 	var label := "%02d %s" % [i, tname] if (named and (not compact or current)) else "%02d" % i
 	var fs := 16 if current else (12 if not compact else 11)
 	draw_string(font, Vector2(chip.position.x + icon + 18, chip.position.y + chip.size.y * 0.5 + fs * 0.36), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(C_TEXT, alpha))
@@ -504,14 +625,16 @@ func _draw_pawns(pts: PackedVector2Array, lengths: PackedFloat32Array, total: fl
 		var slot: int = slots.get(key, 0)
 		slots[key] = slot + 1
 		var at := _along(pts, lengths, total, t / 24.0) + Vector2(-9 + slot * 12, 12 + slot * 2)
-		var col: Color = UI.PLAYER_COLORS[idx % UI.PLAYER_COLORS.size()]
+		# Token colour from 新人顧問報到 for the player, each sparring advisor's own colour for bots
+		var col: Color = UI.PLAYER_COLORS[idx % UI.PLAYER_COLORS.size()] if Engine.is_editor_hint() else PlayerProfile.player_color(p, idx)
 		var r := 9.0 if id == current_id else 7.0
 		draw_circle(at + Vector2(0, 2), r, Color(0, 0, 0, 0.35))
 		draw_circle(at, r, col)
 		draw_arc(at, r, 0, TAU, 24, C_TEXT, 2.0, true)
 		if id == current_id:
 			var fs := 11
-			draw_string(font, at + Vector2(-r, fs * 0.36), str(p.get("name", "顧")).substr(0, 1), HORIZONTAL_ALIGNMENT_CENTER, r * 2, fs, C_BG)
+			var shown := str(p.get("name", "顧")) if Engine.is_editor_hint() else PlayerProfile.display_name(p)
+			draw_string(font, at + Vector2(-r, fs * 0.36), shown.substr(0, 1), HORIZONTAL_ALIGNMENT_CENTER, r * 2, fs, C_BG)
 
 
 ## Flat 2px line icons, one symbol per station

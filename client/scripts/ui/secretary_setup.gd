@@ -3,12 +3,15 @@ extends Control
 ## Each card is a fixed Button (stable hover area); only its Visual child moves, so hover never flickers.
 ## Hover / press / select motion uses Tweens; a shader light follows the cursor inside the card.
 signal selected(enabled: bool, role: String)
+## 返回顧問報到, with the highlighted (not yet confirmed) choice so it can be restored
+signal back_requested(current_key: String)
 
 const FEMALE := preload("res://assets/startup/advisor_f.png")
 const MALE := preload("res://assets/startup/advisor_m.png")
 const BACKGROUND := preload("res://assets/startup/loading.png")
 const CURSOR_LIGHT := preload("res://assets/startup/cursor_light.gdshader")
 const SecretaryVoice := preload("res://scripts/secretary_voice.gd")
+const BackButton := preload("res://scripts/ui/back_button.gd")
 
 const C_BG := Color("#062F2A")
 const C_CARD := Color("#0D4038")
@@ -46,6 +49,7 @@ var _rule_l: ColorRect
 var _rule_r: ColorRect
 var _hint: Label
 var _leaving := false
+var _back: Button
 
 
 ## Flat 2px line icons used on the cards
@@ -204,6 +208,9 @@ func _ready() -> void:
 
 	_hint = _text("", 13, C_MUTED)
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_back = BackButton.new("返回顧問報到")
+	_back.pressed.connect(_on_back)
+	add_child(_back)
 	resized.connect(_layout)
 	_layout()
 	for i in range(_cards.size()):
@@ -393,6 +400,12 @@ func _layout() -> void:
 	_heading.add_theme_font_size_override("font_size", hs)
 	_heading.reset_size()
 	var top := maxf(pad * 0.6, 22.0)
+	# 返回 sits top-left; on narrow screens the heading moves under it
+	var bw := _back.get_combined_minimum_size()
+	_back.size = bw
+	_back.position = Vector2(pad * 0.6 if compact else pad * 0.6, top - 6.0)
+	if portrait_screen or size.x < bw.x * 2 + _heading.size.x + 40:
+		top += bw.y + 4.0
 	_heading.position = Vector2((size.x - _heading.size.x) * 0.5, top)
 	_sub.reset_size()
 	_sub.position = Vector2((size.x - _sub.size.x) * 0.5, _heading.position.y + _heading.size.y + 2)
@@ -659,6 +672,14 @@ func _on_confirm() -> void:
 		else:
 			selected.emit(false, "female")
 	)
+
+
+func _on_back() -> void:
+	if _leaving:
+		return
+	_leaving = true
+	var key := str((_cards[_selected] as Card).info.key) if _selected >= 0 else ""
+	back_requested.emit(key)
 
 
 ## Listen button: greeting in this secretary's own voice (same mapping as the in-game guide)

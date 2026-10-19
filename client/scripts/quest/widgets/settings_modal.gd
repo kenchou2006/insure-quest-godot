@@ -1,10 +1,14 @@
 extends Control
 ## SettingsModal (右上角設定): 背景音樂 / 音效 / 秘書語音 volume, 全部靜音, 字幕, 文字顯示速度,
-## 減少動態效果, 暫停／繼續 and 返回主畫面. Real controls, saved at once. While it is open (and
+## 減少動態效果, 暫停／繼續 and 離開培訓 (in a game: the 繼續 / 儲存並返回 / 放棄 dialog;
+## after the game: 返回主畫面). Real controls, saved at once. While it is open (and
 ## while paused) the meeting clock holds. Warnings never depend on sound: muted play keeps icons,
 ## words and colours.
 
 signal leave_requested
+
+## Label of the leave button: 離開培訓 during a game, 返回主畫面 once it has ended
+var home_label := "離開培訓"
 
 var _panel: PanelContainer
 var _paused := false
@@ -12,7 +16,6 @@ var _pause_btn: Button
 var _mute: CheckButton
 var _sliders: Dictionary = {}
 var _pause_card: PanelContainer
-var _confirm_leave: PanelContainer
 
 
 func _init() -> void:
@@ -90,12 +93,11 @@ func _ready() -> void:
 	_pause_btn.name = "PauseButton"
 	_pause_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_pause_btn)
-	var home: Button = QuestUI.button("返回主畫面", _ask_leave, "danger", "door")
+	var home: Button = QuestUI.button(home_label, _ask_leave, "danger", "door")
 	home.name = "HomeButton"
 	home.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(home)
 	_build_pause_card(center)
-	_build_confirm(center)
 
 
 func _slider_row(bus: String, title: String) -> Control:
@@ -161,34 +163,10 @@ func _build_pause_card(parent: Control) -> void:
 	v.add_child(settings)
 
 
-func _build_confirm(parent: Control) -> void:
-	_confirm_leave = PanelContainer.new()
-	_confirm_leave.add_theme_stylebox_override("panel", QuestUI.card_box(1.0, Color(QuestUI.RED, 0.6)))
-	_confirm_leave.visible = false
-	parent.add_child(_confirm_leave)
-	var v := QuestUI.vbox(12)
-	_confirm_leave.add_child(v)
-	v.add_child(QuestUI.title("返回主畫面？", 22))
-	var l := QuestUI.label("本局進度會保留在伺服器上，可以從主畫面重新加入；離開期間不計時。", 15, QuestUI.MUTED, true)
-	l.custom_minimum_size.x = 320
-	v.add_child(l)
-	var row := QuestUI.hbox(10)
-	v.add_child(row)
-	row.add_child(QuestUI.button("取消", func(): _confirm_leave.visible = false; _panel.visible = true, "secondary"))
-	var go: Button = QuestUI.button("確認返回", func():
-		close()
-		leave_requested.emit()
-	, "danger")
-	go.name = "ConfirmLeave"
-	go.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(go)
-
-
 func open() -> void:
 	visible = true
 	_panel.visible = true
 	_pause_card.visible = false
-	_confirm_leave.visible = false
 	_mute.set_pressed_no_signal(MusicManager.muted)
 	for bus in _sliders:
 		(_sliders[bus] as HSlider).set_value_no_signal(MusicManager.get_slider(bus))
@@ -220,5 +198,6 @@ func _toggle_pause() -> void:
 
 
 func _ask_leave() -> void:
-	_panel.visible = false
-	_confirm_leave.visible = true
+	# The receiver decides: in a game the 離開培訓 dialog, after it straight to the main screen
+	close()
+	leave_requested.emit()
