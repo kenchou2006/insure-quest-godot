@@ -254,7 +254,8 @@ func _say(states: Array, modal := true) -> void:
 		"training_entry": [_steps_area],
 		"first_assignment": [_file, _accept],
 		"later_matching": [_file, _accept],
-		"clue_review": [_clue_sheet],
+		# 下一步：選工具 stays bright (and pressable) while the clues are explained
+		"clue_review": [_clue_sheet, _next_btn],
 		"tool_selection": [_tool_grid],
 		"meeting_ready": [_confirm],
 		"locked_client_info": [_codex_panel],
@@ -710,6 +711,8 @@ func _show_clues() -> void:
 
 	var next := AcceptButton.new("下一步：選工具", "briefcase")
 	next.name = "NextToolsButton"
+	# The step the clue tutorial leads to: pressable while the secretary is still talking
+	next.set_meta(&"tutorial_pressable", true)
 	next.custom_minimum_size = Vector2(360, 60)
 	next.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	next.set_enabled(true)

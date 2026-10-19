@@ -84,7 +84,9 @@ func _run() -> void:
 	main.guide = g
 	await process_frame
 	g.choose(true, "female")
-	g._seen_states = ["training_entry", "first_assignment", "dossier_unlocking", "clue_review", "tool_selection", "meeting_ready"]
+	# Every case-setup tutorial already seen (later_matching / locked_client_info play once the
+	# device has two or more unlocked clients), so no dim stands between the mouse and the buttons
+	g._seen_states = ["training_entry", "first_assignment", "later_matching", "locked_client_info", "dossier_unlocking", "clue_review", "tool_selection", "meeting_ready"]
 	g.screen_changed("game")
 	var cs: Control = load("res://scripts/ui/case_setup.gd").new()
 	cs.z_index = 110

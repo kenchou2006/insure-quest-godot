@@ -2,7 +2,8 @@ extends SceneTree
 ## Run: godot --headless --path client --script res://tests/clue_overlay_smoke.gd
 ## The clues page never stays locked: 單人培訓 → 接受任務 → 看客戶線索 → 跳過導覽 → 下一步：選工具,
 ## with animations on and real clicks; the dim only stands while its dialog is up, every page
-## switch resets it, and without a secretary no dim layer exists at all.
+## switch resets it, and without a secretary no dim layer exists at all. While the clue tutorial is
+## still talking, 下一步：選工具 is bright, takes the click and ends the tutorial.
 
 var failures := 0
 
@@ -116,6 +117,38 @@ func _run() -> void:
 	cs.queue_free()
 	await process_frame
 	check(not ov.visible and not g._modal, "leaving the case setup resets the dim")
+	(r[0] as Node).queue_free()
+	await _wait(0.1)
+
+	# Clue tutorial still up: 下一步：選工具 is bright, takes the click and ends the tutorial
+	r = await _scene(true)
+	g = r[1]
+	cs = r[2]
+	ov = g._overlay
+	for i in range(4):
+		if g._open and g._modal:
+			g._line_done()
+			await _click(ov._continue.get_global_rect().get_center())
+	await _click(cs._accept.get_global_rect().get_center())
+	await _wait(2.2)
+	check(cs._step == 2 and g.is_open() and ov.visible and ov.dialog_showing(), "clue tutorial up (step %d)" % cs._step)
+	next = _next_button(cs)
+	var at: Vector2 = next.get_global_rect().get_center()
+	check(ov.passes_click(at - ov.get_global_rect().position), "下一步 is a bright, pressable element of the clue tutorial")
+	check(not ov.passes_click(cs._clue_sheet.get_global_rect().get_center() - ov.get_global_rect().position), "the clue sheet stays bright but locked")
+	var wat: Vector2 = root.get_final_transform() * at
+	var mm := InputEventMouseMotion.new()
+	mm.position = wat
+	mm.global_position = wat
+	root.push_input(mm)
+	await process_frame
+	var hov := root.gui_get_hovered_control()
+	check(hov == next or (hov != null and next.is_ancestor_of(hov)), "下一步 takes the mouse through the dim (got %s)" % str(hov))
+	await _click(at)
+	await _wait(0.8)
+	check(cs._step == 3 and cs._briefcase != null, "下一步 during the tutorial opens the briefcase (step %d)" % cs._step)
+	check(not ov.dialog_showing() or str(g._active_key).ends_with("tool_selection"), "the clue tutorial ended (%s)" % g._active_key)
+	check(ov.visible == ov.dialog_showing(), "no dim without a dialog")
 	(r[0] as Node).queue_free()
 	await _wait(0.1)
 

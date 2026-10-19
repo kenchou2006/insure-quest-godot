@@ -1,7 +1,8 @@
 extends Control
 ## Modal tutorial overlay (強制聚焦導覽) for the training secretary: a full-screen deep green-black
 ## dim (60%) that swallows every click while its dialog is up, rounded bright "holes" over the
-## interface elements being explained, the secretary's portrait and a gold-framed dialog on top
+## interface elements being explained (a hole over a control marked PRESSABLE_META lets the click
+## through and ends the tutorial: the player took the step it points at), the secretary's portrait and a gold-framed dialog on top
 ## (scales in from 95%),
 ## typed subtitles, a voice progress bar, a fixed top-right 「跳過」 and, once the line has been
 ## spoken, 「繼續」 / 「我知道了」. Only a view: training_secretary.gd drives the lines and voice.
@@ -30,6 +31,10 @@ var _mute: Button
 var _skip: Button
 var _targets: Array = []
 var _hole_rects: Array = []
+## Holes over controls that stay pressable during the tutorial
+var _pass_rects: Array = []
+## Set on a control (set_meta(PRESSABLE_META, true)) the player may press while it is explained
+const PRESSABLE_META := &"tutorial_pressable"
 var _progress := 0.0
 var _anim: Tween
 var is_shown := false
@@ -39,12 +44,12 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	visible = false
-	_shade = ColorRect.new()
+	_shade = Shade.new(self)
 	_shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var m := ShaderMaterial.new()
 	m.shader = SPOT
 	_shade.material = m
-	# Swallows every click so nothing behind can be pressed
+	# Swallows every click so nothing behind can be pressed (except a pressable bright element)
 	_shade.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_shade)
 	_rings = Rings.new(self)
@@ -243,8 +248,28 @@ func _process(_delta: float) -> void:
 		_update_holes()
 
 
+## A press on a pressable bright element goes through to it (the dim lets it pass) and ends the
+## tutorial right after, e.g. 下一步：選工具 while the clue tutorial is still talking
+func _input(event: InputEvent) -> void:
+	if not is_shown or not visible or _shade.mouse_filter != Control.MOUSE_FILTER_STOP:
+		return
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if passes_click(get_global_transform_with_canvas().affine_inverse() * mb.position):
+		skip_pressed.emit.call_deferred()
+
+
+func passes_click(local_point: Vector2) -> bool:
+	for r: Rect2 in _pass_rects:
+		if r.has_point(local_point):
+			return true
+	return false
+
+
 func _update_holes() -> void:
 	_hole_rects.clear()
+	_pass_rects.clear()
 	var origin := get_global_rect().position
 	for c: Control in _targets:
 		if not is_instance_valid(c) or not c.is_visible_in_tree():
@@ -252,6 +277,8 @@ func _update_holes() -> void:
 		var r := c.get_global_rect()
 		r.position -= origin
 		_hole_rects.append(r.grow(8.0))
+		if bool(c.get_meta(PRESSABLE_META, false)):
+			_pass_rects.append(r)
 		if _hole_rects.size() == 4:
 			break
 	var mat := _shade.material as ShaderMaterial
@@ -377,6 +404,17 @@ func _layout_bar() -> void:
 	_bar.size = Vector2(w * _progress, 3)
 	_bar_label.reset_size()
 	_bar_label.position = Vector2(_bar_bg.position.x + w + 10.0, _bar_bg.position.y - _bar_label.size.y * 0.5 + 1.5)
+
+
+## The dim: catches every click except over a pressable bright element
+class Shade extends ColorRect:
+	var o: Control
+
+	func _init(owner_overlay: Control) -> void:
+		o = owner_overlay
+
+	func _has_point(point: Vector2) -> bool:
+		return not bool(o.call("passes_click", point))
 
 
 ## Gold hairline around each bright hole
