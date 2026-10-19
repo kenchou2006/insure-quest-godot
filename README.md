@@ -1,4 +1,4 @@
-# INSURE QUEST 人生顧問局 (Life Advisor Bureau) (Godot Web Edition)
+# INSURE QUEST 人生顧問局 (Life Advisor Bureau)
 
 BNP Paribas Cardif InsurHack Topic 1-1 "Insurance Monopoly": A multiplayer web game using Monopoly mechanics to train insurance advisors on "needs-based selling and compliance communication".
 Supports 2–4 players online, solo practice against bot advisors, AI clients, and AI coach; installable as a PWA.
