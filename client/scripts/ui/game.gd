@@ -197,6 +197,8 @@ var _record_box: VBoxContainer
 var _hud_action: HBoxContainer
 var _quest: Control
 var _map_header: Control
+## 最後一回合玩家已走完、等其他顧問收尾時的常駐提示（報告要等整個回合結束才會產生）
+var _final_wait: PanelContainer
 var _focus_fired := false
 ## 返回培訓方式 on the client brief (case setup step 1), placed inside the case setup
 var _brief_back: Button
@@ -1008,7 +1010,47 @@ func _refresh_task(s: Dictionary, mine: bool, cur_name: String, stage: String, d
 	_task_quest.visible = total > 0
 	if _route != null and is_instance_valid(_route):
 		_route.queue_redraw()
+	# 地圖左上的「第 N / 5 站」只在建立時算過一次，回合推進後要跟著更新
+	if _map_header != null and is_instance_valid(_map_header):
+		_map_header.call("refresh")
+	_refresh_final_wait(s)
 	_refresh_recent()
+
+
+## 最後一回合：玩家這一輪已經走完，後端要等其他顧問也走完本回合才結束並產生培訓報告。
+## 這段時間畫面回到地圖，沒有提示會像是卡住，所以常駐一張說明（不擋點擊）。
+func _refresh_final_wait(s: Dictionary) -> void:
+	var players: Array = s.get("players", [])
+	var my_idx := -1
+	for i in range(players.size()):
+		if str((players[i] as Dictionary).get("id", "")) == Net.player_id:
+			my_idx = i
+	var turn := int(s.get("turn", 0))
+	var rounds := int((s.get("settings", {}) as Dictionary).get("rounds", 6))
+	var waiting := str(s.get("phase", "")) == "playing" and int(s.get("round", 1)) >= rounds and my_idx >= 0 and turn > my_idx
+	if not waiting:
+		if _final_wait != null and is_instance_valid(_final_wait):
+			_final_wait.visible = false
+		return
+	if _final_wait == null or not is_instance_valid(_final_wait):
+		_final_wait = UI.panel(UI.PANEL_2, 14, 10)
+		_final_wait.name = "FinalRoundWait"
+		_final_wait.add_theme_stylebox_override("panel", UI.box(Color("#14352d"), 14, UI.GOLD, 10))
+		_final_wait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_final_wait.z_index = 84
+		_final_wait.anchor_left = 0.5
+		_final_wait.anchor_right = 0.5
+		_final_wait.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		_final_wait.offset_top = 76.0 if not UI.is_phone() else 60.0
+		var lbl := UI.label("", 14, UI.GOLD, true)
+		lbl.name = "Text"
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.custom_minimum_size = Vector2(minf(420.0, maxf(240.0, _left_stack.size.x - 48.0)), 0)
+		_final_wait.add_child(lbl)
+		_left_stack.add_child(_final_wait)
+	var left := maxi(1, players.size() - turn)
+	(_final_wait.get_node("Text") as Label).text = "最後一回合：你的任務已完成\n其他顧問完成本回合後，就會自動產生培訓報告（還有 %d 位）" % left
+	_final_wait.visible = true
 
 
 ## 最近決策：最新 3 筆（不含經驗值），做得好綠勾、需要加強金色警示，附上幾分鐘前

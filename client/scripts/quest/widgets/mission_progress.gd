@@ -27,7 +27,8 @@ func _init(is_compact := false) -> void:
 func refresh() -> void:
 	var cur := GameState.current_stage()
 	var total := maxi(1, GameState.total_stages())
-	_num.text = str(cur)
+	# 全部回合結束後後端的回合數會是 總數 + 1：顯示停在最後一站，圓點全部標為完成
+	_num.text = str(mini(cur, total))
 	_of.text = "/%d 站" % total
 	if compact:
 		return

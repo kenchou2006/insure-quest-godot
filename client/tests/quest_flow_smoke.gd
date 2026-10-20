@@ -233,6 +233,23 @@ func _run() -> void:
 	await _frames(2)
 	check(not bool(board.call("_use_road")), "narrow board falls back to the loop (road would be cut off)")
 
+	# 8. 標頭「第 N / M 站」跟著回合走；全部結束（後端回合 = 總數 + 1）時停在最後一站、圓點全部完成
+	var mp: HBoxContainer = load("res://scripts/quest/widgets/mission_progress.gd").new()
+	holder.add_child(mp)
+	net.set("state", {"round": 3, "settings": {"rounds": 5}})
+	mp.call("refresh")
+	check(_all_text(mp).contains("第 3 /5 站"), "header follows the round (3/5)")
+	net.set("state", {"round": 6, "phase": "ended", "settings": {"rounds": 5}})
+	mp.call("refresh")
+	check(_all_text(mp).contains("第 5 /5 站"), "after the last round the header stays on 5/5, not 6/5")
+	var all_done := true
+	for d in (mp.get("_dots") as Node).get_children():
+		if int(d.get("state")) != 2:
+			all_done = false
+	check(all_done, "every station dot is done once the game has ended")
+	var game_src: String = FileAccess.get_file_as_string("res://scripts/ui/game.gd")
+	check(game_src.contains("_map_header.call(\"refresh\")"), "the map header is refreshed on every state")
+
 	holder.queue_free()
 	net.set("state", {})
 	gs.set("record", {})
