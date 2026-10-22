@@ -1,7 +1,7 @@
 @tool
 extends Control
 ## F6 architectural sandbox. Construction is local and never changes a game room.
-const Board := preload("res://scripts/ui/board.gd")
+const Board := preload("res://scripts/ui/board_3d.gd")
 func _ready() -> void:
 	theme = UI.make_theme()
 	var background := ColorRect.new()

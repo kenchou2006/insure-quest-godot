@@ -26,6 +26,42 @@
         "127.0.0.1"
       ],
       "port": 8788
+    },
+    {
+      "name": "original-main-8788",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "../insure-quest-godot-original/server",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "8788",
+        "--ip",
+        "127.0.0.1",
+        "--persist-to",
+        "../.wrangler-webtest"
+      ],
+      "port": 8788
+    },
+    {
+      "name": "mine-8787",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "server",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "8787",
+        "--ip",
+        "127.0.0.1",
+        "--persist-to",
+        "../.wrangler-webtest"
+      ],
+      "port": 8787
     }
   ]
 }

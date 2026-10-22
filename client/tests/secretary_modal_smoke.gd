@@ -84,7 +84,7 @@ func _run() -> void:
 	check(ov._continue.visible and ov._continue.text == "繼續", "繼續 after the first line")
 	g._on_continue()
 	g._line_done()
-	check(ov._continue.text == "我知道了", "我知道了 on the last line")
+	check(not ov.visible and ov._shade.mouse_filter == Control.MOUSE_FILTER_IGNORE, "last line automatically unlocks without another click")
 	g._on_continue()
 	check(not g.is_open() and ov._shade.mouse_filter == Control.MOUSE_FILTER_IGNORE, "我知道了 unlocks at once")
 	await _wait(0.4)

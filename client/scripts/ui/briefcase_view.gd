@@ -35,6 +35,9 @@ var customer: Dictionary = {}
 var tools: Array = []
 var capacity := 3
 var selected: Array = []
+var _explained: Dictionary = {}
+var _line_until := 0
+var _replace_button: Button
 var focused := ""
 var sending := false
 ## Right-hand space kept clear in the bottom bar (the secretary's corner portrait)
@@ -121,6 +124,9 @@ func _ready() -> void:
 # --- Data in -----------------------------------------------------------------------------------
 
 func set_customer(c: Dictionary) -> void:
+	if str(c.get("customer_id", "")) != str(customer.get("customer_id", "")):
+		_explained.clear()
+		_line_until = 0
 	customer = c
 	_refresh()
 
@@ -140,7 +146,10 @@ func set_tools(t: Array, cap: int) -> void:
 
 
 func set_selected(ids: Array) -> void:
+	var added := ids.filter(func(id): return not selected.has(id))
 	selected = ids.duplicate()
+	if not added.is_empty():
+		_line_until = Time.get_ticks_msec() + 1400
 	for t: Dictionary in tools:
 		var st := str(t.get("status", ""))
 		if st in ["available", "selected"]:
@@ -176,7 +185,7 @@ func _tool(id: String) -> Dictionary:
 ## Clue ids the focused tool connects to (discovered clues and the compliance row only)
 func focused_matches() -> Array:
 	var t := _tool(focused)
-	return [] if t.is_empty() or customer.is_empty() else BriefcaseData.matches(t, customer)
+	return [] if t.is_empty() or customer.is_empty() or not _explained.has(focused) else BriefcaseData.matches(t, customer)
 
 
 # --- Build -------------------------------------------------------------------------------------
@@ -334,9 +343,18 @@ func _build_attributes() -> void:
 	_fonts.append([_a_button, 20])
 	_a_button.pressed.connect(func():
 		if focused != "" and not sending:
-			toggle_requested.emit(focused)
+			_choose_tool(focused)
 	)
 	v.add_child(_a_button)
+	_replace_button = Button.new()
+	_replace_button.text = "換一項工具"
+	_replace_button.pressed.connect(func():
+		_explained.erase(focused)
+		_line_until = 0
+		focused = ""
+		_refresh()
+	)
+	v.add_child(_replace_button)
 
 
 func _build_bar() -> void:
@@ -390,16 +408,22 @@ func _rebuild_pack() -> void:
 
 
 func _on_slot_pressed(s: ToolSlot) -> void:
-	var id := str(s.tool.get("id", ""))
-	if id == "":
-		return
-	# First tap inspects; tapping the inspected tool again packs or unpacks it
-	if id == focused and str(s.tool.get("status", "")) in ["available", "selected"] and not sending:
-		toggle_requested.emit(id)
-		return
-	Sound.play("click", self)
-	focus_tool(id)
+	_choose_tool(str(s.tool.get("id", "")))
 
+func _choose_tool(id: String) -> void:
+	var tool := _tool(id)
+	if sending or tool.is_empty() or str(tool.get("status", "")) not in ["available", "selected"]:
+		return
+	focused = id
+	if selected.has(id):
+		toggle_requested.emit(id)
+		_line_until = 0
+	elif selected.size() < capacity:
+		var already_explained := _explained.has(id)
+		_explained[id] = true
+		if not BriefcaseData.matches(tool, customer).is_empty() or already_explained:
+			toggle_requested.emit(id)
+	_refresh()
 
 ## 客戶資料: every customer field from the data file, on demand (the panel keeps to the clues)
 func _open_info() -> void:
@@ -574,18 +598,19 @@ func _refresh_attributes() -> void:
 	for cl: Dictionary in customer.get("clues", []):
 		titles[str(cl.get("id", ""))] = str(cl.get("title", ""))
 	var m := focused_matches()
-	if t.is_empty():
-		_a_matches.text = ""
-	elif m.is_empty():
-		_a_matches.text = "對應線索：目前已取得的線索中，沒有直接對應的項目"
-		_a_matches.add_theme_color_override("font_color", C_MUTED)
+	if t.is_empty() or not _explained.has(focused):
+		_a_matches.text = "點選工具後，查看本局用途"
 	else:
-		_a_matches.text = "對應線索：" + "、".join(m.map(func(id): return str(titles.get(id, id))))
-		_a_matches.add_theme_color_override("font_color", C_GOLD)
+		_a_matches.text = BriefcaseData.selection_reason(t, customer)
+	_a_matches.max_lines_visible = 2
+	_a_matches.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_a_matches.add_theme_color_override("font_color", C_MUTED if m.is_empty() else C_GOLD)
+	_replace_button.visible = _explained.has(focused) and m.is_empty() and not selected.has(focused)
+	_replace_button.disabled = sending
 	# Action
 	var packed := selected.has(focused)
 	var full := selected.size() >= capacity
-	var label := "選用此工具"
+	var label := "仍然攜帶" if _explained.has(focused) and m.is_empty() else "選用此工具"
 	var enabled := true
 	_a_note.text = ""
 	match st:
@@ -623,7 +648,7 @@ func _refresh_bar() -> void:
 	elif left > 0:
 		status_label.text = "再選 %d 項即可開始會談" % left
 	else:
-		status_label.text = "已備妥，可以開始會談"
+		status_label.text = BriefcaseData.coverage_summary(customer, selected)
 	status_label.add_theme_color_override("font_color", C_GOLD if left == 0 and not sending else C_CREAM)
 	start_button.disabled = left != 0 or sending or customer.is_empty()
 	(start_button as StartButton).refresh_state()
@@ -816,6 +841,7 @@ func _layout_bar_wide() -> void:
 	status_label.reset_size()
 	status_label.position = Vector2(x, (h - status_label.size.y) * 0.5)
 	status_label.size.x = maxf(start_button.position.x - 12.0 * k - x, 0)
+	_fit_summary()
 	status_label.clip_text = true
 	_bar_sep.visible = true
 
@@ -851,7 +877,16 @@ func _layout_bar_portrait() -> void:
 	status_label.reset_size()
 	status_label.position = Vector2(pad, by + (bh - status_label.size.y) * 0.5)
 	status_label.size.x = maxf(start_button.position.x - pad * 2, 0)
+	_fit_summary()
 	status_label.clip_text = true
+
+func _fit_summary() -> void:
+	var font := status_label.get_theme_font("font")
+	var fs := roundi(14 * k)
+	while fs > roundi(10 * k) and font.get_string_size(status_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x > status_label.size.x:
+		fs -= 1
+	status_label.add_theme_font_size_override("font_size", fs)
+	status_label.tooltip_text = status_label.text
 
 
 func _fit_avatar() -> void:
@@ -1577,7 +1612,7 @@ class LinesOverlay extends Control:
 
 	func _draw() -> void:
 		var v = view
-		if v == null:
+		if v == null or Time.get_ticks_msec() >= v._line_until or not v.selected.has(v.focused):
 			return
 		var slot: Control = null
 		for s in v._slots:

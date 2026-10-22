@@ -179,6 +179,29 @@ static func matches(tool: Dictionary, cust: Dictionary, include_locked := false)
 		out.append("compliance")
 	return out
 
+static func selection_reason(tool: Dictionary, cust: Dictionary) -> String:
+	var ids := matches(tool, cust)
+	if ids.is_empty():
+		var missing := "尚未發現直接相關的線索"
+		if "family_duty" in tool.get("matched_tags", []):
+			missing = "尚未發現扶養家人的線索"
+		return "△ 本局優先度低\n" + missing
+	var title := "合規風險"
+	for clue: Dictionary in cust.get("clues", []):
+		if ids.has(str(clue.get("id", ""))):
+			title = str(clue.get("title", "需求線索"))
+			break
+	var uses := {"needs_form": "釐清客戶目標與優先順序", "cashflow": "盤點客戶可負擔預算", "family_map": "確認扶養關係與家庭責任", "gap_sheet": "找出優先保障缺口", "risk_survey": "確認配置與風險承受度", "compliance_check": "檢核說明與合規風險"}
+	return "✓ 對應：" + title.left(12) + "\n" + str(uses.get(str(tool.get("id", "")), "協助確認這項客戶需求"))
+
+static func coverage_summary(cust: Dictionary, ids: Array) -> String:
+	var labels: Array = []
+	var categories := {"needs_form": "客戶目標", "cashflow": "預算能力", "family_map": "家庭責任", "gap_sheet": "保障缺口", "risk_survey": "風險承受", "compliance_check": "合規風險"}
+	for tool: Dictionary in tool_defs():
+		if ids.has(str(tool.get("id", ""))) and not matches(tool, cust).is_empty():
+			labels.append("✓ " + str(categories.get(str(tool.id), tool.name)))
+	return "　".join(labels) if not labels.is_empty() else "已選滿 3 項；尚無直接對應線索"
+
 
 ## Report analysis after the case: which clues each packed tool spoke to, and which important
 ## clues no packed tool covered. Descriptive only (no right / wrong).

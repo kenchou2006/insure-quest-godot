@@ -1,7 +1,7 @@
 extends Node
 var failures := 0
 const Grid := preload("res://scripts/city/city_grid.gd")
-const Board := preload("res://scripts/ui/board.gd")
+const Board := preload("res://scripts/ui/board_3d.gd")
 const Building := preload("res://scenes/city/neighborhood_office.tscn")
 
 func check(condition: bool, message: String) -> void:

@@ -1,0 +1,134 @@
+
+> insure-quest-server@1.0.0 check
+> npm run typecheck && npm test
+
+
+> insure-quest-server@1.0.0 typecheck
+> tsc --noEmit
+
+
+> insure-quest-server@1.0.0 test
+> node --import ./test/helpers/register-cf.mjs --test test/*.test.ts
+
+[AI Fallback] nvidia-nim 未能成功回應，自動切換至 workers-ai...
+✔ 動態人生變數清單符合數量與格式要求 (1.765ms)
+✔ 每位客戶 × 每個動態情境：資深電腦的配置仍為 good 且通過壓力測試 (249.8731ms)
+✔ applyTwist 回傳新副本，不污染原始 CLIENTS 物件 (0.4572ms)
+✔ ruleCompliance 合規雷達：正確辨識違規、警告與合規語句 (1.1595ms)
+✔ mergeCompliance：融合規則版與 AI 版時取較嚴重者與扣分較多者 (0.3143ms)
+✔ talk 動作：規則版流程、扣 talkLeft、合規扣分、記錄至 asked 與白名單過濾 (4.7342ms)
+✔ revealedFacts 白名單過濾：不在客戶 facts 清單的偽造線索會被丟棄 (2.3116ms)
+✔ 訪客（沒有 accountId）永遠不用 AI，且電腦顧問永遠不用 AI (0.6082ms)
+✔ AI 回傳不合法 / null 會退還額度並 fallback 至規則版 (0.4298ms)
+✔ 十年後的信：規則引擎定結局、模板信包含 event 與 gap、相反結論被替換 (1.0348ms)
+✔ publicView 與結算報告 FinalRow 帶出信件與動態變數資訊 (6.4946ms)
+✔ 合規雷達：否定語境（正確揭露）不算違規，肯定說法仍判紅燈 (1.3722ms)
+✔ 顧問等級：依經驗值換算等級與下一級門檻 (6.9956ms)
+✔ LLM 對話把關：違規需在原話找到引用、線索每輪最多 1 條、防注入固定句不用於一般違規 (4.815ms)
+✔ AI 使用紀錄：成功呼叫會記錄供應者（含不計額度的供應者），失敗不記錄 (3.3069ms)
+✔ AI 生成客戶的需求金額統一格式 (28.1267ms)
+✔ 串流：從尚未完成的 JSON 取出客戶回答 (2.2339ms)
+✔ 合規違規：評級上限為 C，且說明原因包含紅燈 (2.0715ms)
+✔ 合規違規：簽約時觸發客訴信（complaint），信件內容提到申訴與評議 (0.9517ms)
+✔ 合規稽核：紅燈違規扣 10 點聲望，一般 mis 扣 6 點 (5.0828ms)
+✔ 評審體驗碼認證：錯誤代碼回傳 401，正確代碼回傳 200 與 7 天 Cookie (64.8154ms)
+✔ 評審體驗碼：名額已滿回傳 403，頻繁失敗回傳 429 防爆破 (14.2925ms)
+✔ 評審體驗帳號絕非講師，且 /api/auth/config 標記 demo: true (3.7778ms)
+✔ Demo Seed：兩場 Demo 遊戲產生完全相同的首位客戶、人生轉折與骰子點數 (10.7487ms)
+✔ 講師洞察（Trainer Insights）：正確聚合 30 天數據、標籤排序與學員矩陣 (4.087ms)
+✔ AI 生成客戶依性別與年齡帶分配通用頭像 (3.4303ms)
+[Room ABCDE] 所有真人玩家均已斷線超時，作廢此局並清空房間暫存
+[Room ABCDE] 所有真人玩家均已斷線超時，作廢此局並清空房間暫存
+✔ a room whose host never connects is deleted by the alarm (107.0134ms)
+✔ a lobby with its host waiting is kept no matter how long nobody joins (26.5468ms)
+✔ the host leaving the lobby closes the room and tells the others (10.2664ms)
+✔ a non-host leaving the lobby only frees the seat (13.9822ms)
+✔ multiplayer rooms reject guests; solo rooms accept a guest but nobody else (15.2697ms)
+✔ abandon: solo player voids the game, no record is saved, sockets are closed (14.6477ms)
+✔ abandon: a spectator cannot void a solo game (11.1872ms)
+✔ abandon: a multiplayer host cannot void the game for others (12.425ms)
+✔ solo player disconnects: room survives 44 s, is voided after 45 s without saving (8.8149ms)
+✔ solo player reconnects within 45 s: game continues (9.1646ms)
+✔ multiplayer: one human offline is taken over, the room is kept (12.7409ms)
+✔ multiplayer: all humans offline for 45 s voids the room (10.8783ms)
+✔ ended game: deleted when the last socket leaves; sweep alarm keeps it while someone is viewing (14.4652ms)
+✔ ended game: sweep alarm deletes it if the close event was missed (7.6058ms)
+✔ Records: AI usage older than 7 days is pruned, the last 7 days are kept (7.9722ms)
+✔ Records: expired login sessions are removed on wake-up (3.0458ms)
+✔ 10年財務時間軸：輸出為確定性純函數且所有數值均為有限整數 (12.6824ms)
+✔ 資深電腦配置：多數客戶最壞的一年明顯較好，且沒有客戶明顯變差 (1.4347ms)
+✔ 0 保障幣配置不會有免費午餐：沒有保費就沒有任何理賠 (0.7146ms)
+✔ 未簽約：adopted 為 false，withPlan 與 noPlan 完全一致 (0.7055ms)
+✔ defaultFinance 與 financeFor 回退邏輯正確且每位客戶盈餘 >= 3000 (0.4326ms)
+[AI Fallback] primary-nim 未能成功回應，自動切換至 secondary-workers...
+[AI Fallback] nvidia-nim 未能成功回應，自動切換至 workers-ai...
+[AI Fallback] nvidia-nim 未能成功回應，自動切換至 workers-ai...
+[AI Meter] workers-ai 額度已用完，略過...
+✔ 客戶名冊至少 18 位，且 id 不重複 (2.3109ms)
+✔ 每位客戶：資深電腦的配置判定為 good 並通過壓力測試 (35.9465ms)
+✔ 隨機配置大多無法完整通過壓力測試 (17.0197ms)
+✔ 四位電腦顧問可以完整跑完一場，資深平均分數高於新人 (297.005ms)
+✔ 單人模式（一位玩家）也能跑完 (1.4077ms)
+✔ 動作防護：非當前玩家、錯誤階段、無效配置都會被拒絕 (2.955ms)
+✔ 規則版 AI：保證／恐嚇字眼一律判為不合規 (0.2041ms)
+✔ AI 生成客戶：不合理的理想區間會被拒絕，合理者會被校準 (0.9159ms)
+✔ 沒有完成面談的玩家最高 C (0.9373ms)
+✔ 合規測驗：選項會打亂，正確位置不固定，作答前不洩漏答案與對照表 (24.5023ms)
+✔ 教練提示：每場面談限一次、不扣聲望、結果階段不可用 (1.4421ms)
+✔ AI 計量：扣額度、失敗退還、用完或訪客改用規則版 (0.5609ms)
+✔ extractJson：可從程式碼區塊、think 標記與雜訊中取出 JSON (1.0947ms)
+✔ FallbackRawAI：支援 NVIDIA NIM 優先並在失敗/未配置時切換至備援供應者 (1.372ms)
+✔ MeteredAI 容錯計量：走 unmetered（如 NVIDIA NIM）不扣次數，只有 fallback 到 metered 時才扣額度 (0.8504ms)
+✔ 旁觀者預測、專屬結局、面談紀錄標籤、終局大事件 (1.7182ms)
+✔ 學習檔案：弱點排序、客戶圖鑑與徽章 (0.8168ms)
+Google ID token lacked nonce when nonce was expected
+✔ Google ID Token 驗證：簽章、aud、exp、nonce、email_verified (65.4979ms)
+✔ 情境抉擇、保單健檢、季度任務、終局榮譽榜 (3.0967ms)
+✔ 完整對局含新玩法：電腦顧問能跑完並產生榮譽榜 (72.6094ms)
+✔ 客戶版圖：簽約佔領格子、再次停格觸發保單健檢與轉介、解約清空格子、公開狀態包含 territory (2.1882ms)
+✔ 理賠服務時刻：人生事件擊中已簽約客戶，產生理賠數據結構與萬單位格式化說明 (1.1487ms)
+✔ 終局客戶守護分：計算公式、紅燈案件零分、加權調整與用心顧問評分優勢 (0.2743ms)
+✔ 玩家頭像 URL 可透過 addPlayer 傳入並在 publicView 呈現 (0.8253ms)
+✔ 訪談對話中 aiBusy 為 true 時，talk 與 to_plan 及其他提問皆會被伺服器拒絕 (0.8615ms)
+✔ partialJsonStringDone：正確判斷客戶回答字串結束與跳脫字元 (0.6923ms)
+✔ FinalRow AI 等待狀態：AI 啟用時以 pending 起始並填入 AI 評語；AI 失敗時以 fallback 結束且不留 pending；訪客立即取得 fallback (1.5936ms)
+✔ partialJsonStringDone 正確從未完整 JSON 擷取 body, content, text (0.3841ms)
+✔ 非 talk AI 功能（hint / debrief / letter）串流測試：接收漸進式 chunks 且最終狀態儲存驗證後文本 (2.2946ms)
+Google credential verification failed: { hasCred: true, noncePresent: false }
+Google credential verification failed: { hasCred: true, noncePresent: false }
+✔ non-object WebSocket messages are ignored (60.5769ms)
+✔ settings.demo only accepts real client ids, not prototype keys (11.3894ms)
+✔ malformed actions and non-string text are rejected without throwing (20.0881ms)
+✔ Google FedCM credential endpoint requires nonce cookie (19.3577ms)
+✔ NIM rate limit: one call per second per account, extra calls queue for the next free second (7.6533ms)
+[AI Fallback] nvidia-nim 未能成功回應，自動切換至 workers-ai...
+✔ over-rate NIM call waits for its slot and still uses NIM instead of the next provider (39.0549ms)
+✔ other providers are used only when NIM itself fails (4.816ms)
+✔ sanitizePlayerInput strips tag breakouts, role markers, code fences and collapses whitespace (1.8206ms)
+✔ demo purge deletes >7d demo users only and leaves Google users and fresh demo users (4.4515ms)
+✔ deleteUserData removes only the caller rows and wipes personal shard (4.0112ms)
+✔ monthly purge deletes only never-played, logged-out accounts idle for 90 days (4.8141ms)
+✔ LocalRoom plays a full solo game to the report without any server (70.9152ms)
+✔ LocalRoom: abandon sends closed; a second hello cannot take a seat (3.5213ms)
+✔ s2t converts simplified characters in specific phrases (2.0909ms)
+✔ s2t keeps already-Traditional characters and ambiguous characters unchanged (0.3853ms)
+✔ normalizeStrings recursively converts nested objects and arrays (1.5493ms)
+✔ partialJsonStringDone normalizes partial streamed json text with s2t (0.8072ms)
+✔ AI-result normalization test with an LLMAI provider returning simplified text (9.1913ms)
+training checkpoint failed Error: simulated storage outage
+    at rec.saveAttempt (file:///C:/Users/raven/Documents/GitHub/insure-quest-godot/server/test/training-attempts.test.ts:86:37)
+    at Room.saveTraining (file:///C:/Users/raven/Documents/GitHub/insure-quest-godot/server/src/room.ts:233:45)
+    at Room.destroy (file:///C:/Users/raven/Documents/GitHub/insure-quest-godot/server/src/room.ts:259:23)
+    at async Room.closeRoom (file:///C:/Users/raven/Documents/GitHub/insure-quest-godot/server/src/room.ts:272:5)
+    at async Room.handle (file:///C:/Users/raven/Documents/GitHub/insure-quest-godot/server/src/room.ts:437:9)
+✔ attempt upsert preserves terminal status, owner isolation, paging, deletion and scored-record idempotence (14.4864ms)
+✔ attempt API requires owner session, decodes IDs, and refuses cross-user/all queries (62.9888ms)
+✔ room checkpoints authoritative state; failed abandonment survives and retries without accepting client scores (20.6472ms)
+ℹ tests 97
+ℹ suites 0
+ℹ pass 97
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1793.5183

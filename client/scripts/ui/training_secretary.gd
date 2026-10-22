@@ -627,10 +627,19 @@ func _line_done() -> void:
 		_type_tween.kill()
 	_subtitle.visible_ratio = 1.0
 	if _modal:
-		# Spoken: offer 「繼續」 / 「我知道了」 and wait for the player
+		# Never leave the interface locked after the final spoken line.
+		if _line_ready:
+			return
 		_line_ready = true
 		_overlay.set_progress(1.0, "語音完成" if voice_on and _voice != "" else "字幕完成")
 		_overlay.show_continue("繼續" if _index < _lines.size() - 1 else "我知道了")
+		if _index >= _lines.size() - 1:
+			_close_modal(true)
+		else:
+			get_tree().create_timer(0.6).timeout.connect(func():
+				if gen == _line_gen and _open and _modal and _line_ready:
+					_on_continue()
+			)
 		return
 	_line_gen += 1
 	gen = _line_gen

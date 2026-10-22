@@ -82,6 +82,9 @@ func checkpoint(state: Dictionary, player_id: String, game_id: String, owner: St
 	decisions.append_array(incoming.slice(overlap))
 	data.decisions = decisions
 	data.book = me.get("book", []).duplicate(true)
+	# Keep unlock history alongside the attempt; live resume is owned by the room.
+	var progress: Variant = me.get("mapProgress", state.get("mapProgress", {}))
+	if progress is Dictionary: data.mapProgress = progress.duplicate(true)
 	data.metrics = {"reputation": me.get("reputation", 0), "commission": me.get("commission", 0)}
 	data.quizCorrect = me.get("quizCorrect", 0)
 	data.quizTotal = me.get("quizTotal", 0)

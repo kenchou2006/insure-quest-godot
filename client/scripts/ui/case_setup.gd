@@ -212,19 +212,21 @@ func _compute_info(profile_clients: Array) -> void:
 
 func _load_profile() -> void:
 	_accept.set_enabled(false)
-	var done := false
+	# A shared object is intentional: lambdas capture scalar locals by value.
+	# Both timeout and response must agree which one completed this request.
+	var request := {"done": false}
 	# Never wait on the network for more than 3 s; the device record is used meanwhile
 	get_tree().create_timer(3.0).timeout.connect(func():
-		if not done and is_instance_valid(self):
-			done = true
+		if not request.done and is_instance_valid(self):
+			request.done = true
 			_ready_to_accept = true
 			_accept.set_enabled(true)
 			_say_entry()
 	)
 	var res: Array = await Net.fetch_profile()
-	if done or not is_instance_valid(self) or _accepting:
+	if request.done or not is_instance_valid(self) or _accepting:
 		return
-	done = true
+	request.done = true
 	if bool(res[0]) and res[1] is Dictionary:
 		_compute_info((res[1] as Dictionary).get("clients", []))
 		_show_mission()

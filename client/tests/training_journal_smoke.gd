@@ -12,6 +12,7 @@ func _run() -> void:
 	assert(journal.checkpoint(state, "p1", "local-unique", "guest"))
 	assert(journal.list_records("guest")[0].data.decisions.size() == 1, "Repeated state must not duplicate decisions")
 	state.players[0].decisions.append({"title": "第二個決策"})
+	state.players[0].mapProgress = {"completed": ["hq"], "unlocked": ["hq", "bank"]}
 	state.session = {"playerId": "p1", "step": "discover", "client": {"id": "c", "name": "客戶"}, "asked": [{"question": "保障需求？", "answer": "家庭保障"}]}
 	assert(journal.checkpoint(state, "p1", "local-unique", "guest"))
 	assert(journal.close_attempt())
@@ -22,6 +23,7 @@ func _run() -> void:
 	assert(records.size() == 1 and records[0].status == "abandoned")
 	assert(records[0].data.decisions.size() == 2)
 	assert(records[0].data.currentSession.asked[0].answer == "家庭保障")
+	assert(records[0].data.mapProgress.unlocked == ["hq", "bank"], "Map unlock history must survive reload")
 	assert(reload.list_records("other-account").is_empty())
 	state.trainingAttemptId = "cloud-id"
 	assert(reload.checkpoint(state, "p1", "room", "owner"))

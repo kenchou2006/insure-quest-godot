@@ -138,10 +138,15 @@ func _run() -> void:
 	for r in v._clue_rows:
 		if r.matched:
 			matched.append(r.clue_id)
-	check(matched == ["income"], "focused tool checks its clue (%s)" % str(matched))
+	check(matched.is_empty(), "inspection does not reveal matching clues")
 	check(_texts(v.attr_panel).contains("收支盤點器"), "attributes switch to the focused tool")
 	check(v.start_button.disabled, "開始會談 disabled with an empty case")
-	v.toggle_requested.emit("cashflow")
+	v._choose_tool("cashflow")
+	check(v.focused_matches() == ["income"], "selection reveals discovered matching clue")
+	check(v._a_matches.text.split("\n").size() == 2, "explanation has two lines")
+	check(v._line_until > Time.get_ticks_msec(), "line appears after selection")
+	await _wait(1.5)
+	check(v._line_until < Time.get_ticks_msec(), "line expires automatically")
 	v.toggle_requested.emit("needs_form")
 	check(cs._tools.size() == 2 and v.start_button.disabled, "two packed, still disabled")
 	check(v.status_label.text == "再選 1 項即可開始會談", "hint counts down (%s)" % v.status_label.text)
@@ -157,7 +162,14 @@ func _run() -> void:
 	# Tapping the focused tool again packs it
 	v.focus_tool("gap_sheet")
 	v._on_slot_pressed(v._slots[3])
-	check(cs._tools.has("gap_sheet"), "second tap on the focused tool packs it")
+	check(not cs._tools.has("gap_sheet"), "low priority tool waits for confirmation")
+	check(v._a_button.text == "仍然攜帶" and v._replace_button.visible, "low priority offers both choices")
+	v._replace_button.pressed.emit()
+	check(not cs._tools.has("gap_sheet"), "replace cancels without packing")
+	v._choose_tool("gap_sheet")
+	v._a_button.pressed.emit()
+	check(cs._tools.has("gap_sheet"), "low priority tool remains allowed")
+	check(v.status_label.text.contains("✓"), "full case summarizes actual coverage")
 	var rects := [v.clue_panel.get_rect(), v.briefcase_area.get_rect(), v.attr_panel.get_rect(), v._bar.get_rect()]
 	# Another customer in the same scene: data changes, layout does not
 	cs.client = _option("zhiming")
