@@ -23,10 +23,11 @@ var _selected := -1
 var _observing: Dictionary = {}
 var _prev_observed: Dictionary = {}
 var _submitted := false
+var _need_more_questions := false
 
 
 func guide_lines() -> Array:
-	return ["這是線索板。把每張線索放進「必要需求」、「潛在風險」或「暫時無關」。", "放進需求區會調查並翻開線索，最多 3 張；判斷錯了會花掉會談時間。全部分類後再確認需求判斷。"]
+	return ["這是線索板。把每張線索放進「必要需求」、「潛在風險」或「暫時無關」。", "放進需求區會調查並翻開線索，最多 3 張；判斷錯了會花掉會談時間。全部分類後再確認需求判斷；若訪談還不到 3 題，按鈕會帶你回會談補問。"]
 
 
 func help_lines() -> Array:
@@ -303,17 +304,34 @@ func _sync() -> void:
 	_count.text = "已分類 %d / %d" % [placed, total]
 	var sess := GameState.my_session()
 	var covered: Array = sess.get("covered", [])
+	var n_covered := mini(covered.size(), 3)
+	var need_return := false
 	var reason := ""
 	if not _observing.is_empty():
 		reason = "線索調查中，請稍候"
 	elif placed < total:
 		reason = "還有 %d 張線索沒有分類" % (total - placed)
-	elif not bool(sess.get("ready", false)):
-		reason = "請先回到會談完成 3 個問題（目前 %d/3）" % mini(covered.size(), 3)
 	elif bool(sess.get("aiBusy", false)):
 		reason = "客戶還在回應中"
+	elif not bool(sess.get("ready", false)):
+		need_return = true
 	if not _submitted:
-		_confirm.call("set_reason", reason)
+		if need_return:
+			_need_more_questions = true
+			_confirm.call("set_label", "回到會談補問（%d/3）" % n_covered)
+			_confirm.call("set_icon", "back")
+			_confirm.call("set_reason", "")
+			_confirm.disabled = false
+			var missing := 3 - n_covered
+			var tip := "需求判斷要根據至少 3 個不同主題的訪談。還差 %d 題，回會談再問一題吧。" % missing
+			_reason.text = tip
+			_reason.visible = true
+			_confirm.tooltip_text = tip
+		else:
+			_need_more_questions = false
+			_confirm.call("set_label", "確認需求判斷")
+			_confirm.call("set_icon", "check")
+			_confirm.call("set_reason", reason)
 	elif is_instance_valid(_clear):
 		_clear.disabled = true
 
@@ -353,6 +371,9 @@ func _show_detail(i: int) -> void:
 # --- Confirm ----------------------------------------------------------------------------------
 
 func _on_confirm() -> void:
+	if _need_more_questions:
+		go.emit("dialogue", {})
+		return
 	if _submitted:
 		return
 	_submitted = true
