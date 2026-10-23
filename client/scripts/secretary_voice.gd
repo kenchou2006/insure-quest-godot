@@ -11,10 +11,10 @@ const PROFILES := {
 }
 
 ## Name fragments of common zh voices (Windows, Edge online, macOS, Google, Android)
-const FEMALE_HINTS := ["female", "女", "hanhan", "yating", "hsiaochen", "hsiaoyu", "xiaoxiao", "xiaoyi", "xiaochen", "xiaohan", "xiaomo", "xiaorui", "xiaoshuang", "huihui", "yaoyao", "meijia", "mei-jia", "tingting", "ting-ting", "lili", "google"]
+const FEMALE_HINTS := ["female", "女", "hanhan", "yating", "hsiaochen", "hsiaoyu", "xiaoxiao", "xiaoyi", "xiaochen", "xiaohan", "xiaomo", "xiaorui", "xiaoshuang", "huihui", "yaoyao", "meijia", "mei-jia", "tingting", "ting-ting", "lili", "google", "sinji"]
 static var _reported := {}
 
-const MALE_HINTS := ["male", "男", "zhiwei", "yunjhe", "yunxi", "yunyang", "yunjian", "yunxia", "yunye", "yunze", "yunfeng", "yunhao", "kangkang", "limu", "li-mu", "liang"]
+const MALE_HINTS := ["male", "男", "zhiwei", "yunjhe", "yunxi", "yunyang", "yunjian", "yunxia", "yunye", "yunze", "yunfeng", "yunhao", "kangkang", "limu", "li-mu", "liang", "eddy", "reed", "rocko", "grandpa"]
 
 
 ## secretary_id from the stored guide choice

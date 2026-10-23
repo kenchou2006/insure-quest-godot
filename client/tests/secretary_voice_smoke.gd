@@ -37,6 +37,33 @@ func _run() -> void:
 	check(SecretaryVoice.pick("kevin", edge) == "yunjhe", "Kevin prefers zh-TW male over zh-CN male")
 	check(SecretaryVoice.pick("aly", edge) == "hsiaochen", "Aly picks the Edge zh-TW female voice")
 
+	# macOS / iOS (Safari / Chrome Apple voices)
+	var macos := [
+		{"id": "Eddy (Chinese (Taiwan))", "name": "Eddy (Chinese (Taiwan))", "language": "zh-TW"},
+		{"id": "Reed (Chinese (Taiwan))", "name": "Reed (Chinese (Taiwan))", "language": "zh-TW"},
+		{"id": "Rocko (Chinese (Taiwan))", "name": "Rocko (Chinese (Taiwan))", "language": "zh-TW"},
+		{"id": "Grandpa (Chinese (Taiwan))", "name": "Grandpa (Chinese (Taiwan))", "language": "zh-TW"},
+		{"id": "Flo (Chinese (Taiwan))", "name": "Flo (Chinese (Taiwan))", "language": "zh-TW"},
+		{"id": "Sandy (Chinese (Taiwan))", "name": "Sandy (Chinese (Taiwan))", "language": "zh-TW"},
+		{"id": "Shelley (Chinese (Taiwan))", "name": "Shelley (Chinese (Taiwan))", "language": "zh-TW"},
+		{"id": "Grandma (Chinese (Taiwan))", "name": "Grandma (Chinese (Taiwan))", "language": "zh-TW"},
+		{"id": "Meijia", "name": "Meijia", "language": "zh-TW"},
+		{"id": "Tingting", "name": "Tingting", "language": "zh-CN"},
+		{"id": "Sinji", "name": "Sinji", "language": "yue-HK"},
+		{"id": "Eddy (Chinese (China mainland))", "name": "Eddy (Chinese (China mainland))", "language": "zh-CN"},
+		{"id": "Reed (Chinese (China mainland))", "name": "Reed (Chinese (China mainland))", "language": "zh-CN"},
+		{"id": "Rocko (Chinese (China mainland))", "name": "Rocko (Chinese (China mainland))", "language": "zh-CN"},
+		{"id": "Grandpa (Chinese (China mainland))", "name": "Grandpa (Chinese (China mainland))", "language": "zh-CN"},
+		{"id": "Flo (Chinese (China mainland))", "name": "Flo (Chinese (China mainland))", "language": "zh-CN"},
+		{"id": "Sandy (Chinese (China mainland))", "name": "Sandy (Chinese (China mainland))", "language": "zh-CN"},
+		{"id": "Shelley (Chinese (China mainland))", "name": "Shelley (Chinese (China mainland))", "language": "zh-CN"},
+		{"id": "Grandma (Chinese (China mainland))", "name": "Grandma (Chinese (China mainland))", "language": "zh-CN"},
+	]
+	check(SecretaryVoice.pick("kevin", macos) in ["Eddy (Chinese (Taiwan))", "Reed (Chinese (Taiwan))", "Rocko (Chinese (Taiwan))", "Grandpa (Chinese (Taiwan))"], "Kevin picks a zh-TW male voice on macOS")
+	check(SecretaryVoice.pick("aly", macos) == "Meijia", "Aly picks Meijia on macOS")
+	check(SecretaryVoice.pick("aly", macos) != SecretaryVoice.pick("kevin", macos), "Aly and Kevin never share a voice on macOS")
+	check(SecretaryVoice.pick("kevin", macos) != "Sinji" and SecretaryVoice.pick("aly", macos) != "Sinji", "Sinji is never chosen")
+
 	# Only female Chinese voices (e.g. Google / macOS default): Kevin must stay silent, not fall back to a woman
 	var female_only := [
 		{"id": "google-tw", "name": "Google 國語（臺灣）", "language": "zh-TW"},
