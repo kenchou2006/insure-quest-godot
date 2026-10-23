@@ -289,7 +289,7 @@ static func label(text: String, size := 17, color := TEXT, wrap := false) -> Lab
 	l.add_theme_font_size_override("font_size", fs(size))
 	l.add_theme_color_override("font_color", color)
 	if wrap:
-		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return l
 
@@ -327,7 +327,7 @@ static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> B
 static func option_button(text: String, cb: Callable, color := PANEL_2) -> Button:
 	var b := Button.new()
 	b.text = glue(text)
-	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.custom_minimum_size = Vector2(0, 48)

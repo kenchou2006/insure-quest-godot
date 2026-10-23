@@ -31,6 +31,8 @@ var _marked: Dictionary = {}
 var _wrong_marks: Dictionary = {}
 var _forgiven := false
 var _done := false
+var _list_wrap: Control
+var _scroll: ScrollContainer
 var _list: VBoxContainer
 var _scan_line: ColorRect
 var _ring: QuestUI.Ring
@@ -92,20 +94,20 @@ func build() -> void:
 	head.add_child(QuestUI.label("｜找出 %d 個風險點" % _risk_total, 18, QuestUI.TEXT, false, true))
 	cv.add_child(head)
 	cv.add_child(QuestUI.label("點選你認為可能違反合規的內容（可複選）。", 13, QuestUI.MUTED, true))
-	var list_wrap := Control.new()
-	list_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	list_wrap.custom_minimum_size = Vector2(0, 200)
-	list_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_list_wrap = Control.new()
+	_list_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_list_wrap.custom_minimum_size = Vector2(0, 200)
+	_list_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_list = QuestUI.vbox(8)
-	var sc := QuestUI.scroll(_list)
-	sc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	list_wrap.add_child(sc)
+	_scroll = QuestUI.scroll(_list)
+	_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_list_wrap.add_child(_scroll)
 	_scan_line = ColorRect.new()
 	_scan_line.color = Color(QuestUI.GOLD, 0.7)
 	_scan_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_scan_line.visible = false
-	list_wrap.add_child(_scan_line)
-	cv.add_child(list_wrap)
+	_list_wrap.add_child(_scan_line)
+	cv.add_child(_list_wrap)
 	for i in range(_lines.size()):
 		var r := _row(i, _lines[i])
 		_list.add_child(r)
@@ -371,9 +373,12 @@ func _scan_pass() -> void:
 	AudioManager.play("clue_scan")
 	var tw := create_tween()
 	# The same short stop on every line: the scan never singles a sentence out
+	var scroll_offset := float(_scroll.scroll_vertical) if _scroll else 0.0
+	var wrap_h := _list_wrap.size.y if _list_wrap else 200.0
 	for r in _rows:
-		var y: float = (r as Control).position.y + (r as Control).size.y * 0.5
-		tw.tween_property(_scan_line, "position:y", y, 0.16).set_trans(Tween.TRANS_SINE)
+		var raw_y: float = (r as Control).position.y - scroll_offset + (r as Control).size.y * 0.5
+		var target_y: float = clampf(raw_y, 0.0, minf(raw_y, wrap_h - 2.0))
+		tw.tween_property(_scan_line, "position:y", target_y, 0.16).set_trans(Tween.TRANS_SINE)
 		tw.tween_interval(0.1)
 	tw.tween_property(_scan_line, "modulate:a", 0.0, 0.3)
 	tw.tween_callback(func():

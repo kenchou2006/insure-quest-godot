@@ -41,7 +41,7 @@ func _init(is_compact := false, with_header := true) -> void:
 	right.add_child(_sub)
 	_rows = QuestUI.vbox(5)
 	right.add_child(_rows)
-	for spec in [["trust", "信任"], ["insight", "需求"], ["fit", "預算適配"], ["compliance", "合規"]]:
+	for spec in [["trust", "信任"], ["insight", "需求"], ["fit", "預算適配"], ["risk", "合規風險"]]:
 		var row := QuestUI.metric_bar(spec[1], 0)
 		_rows.add_child(row)
 		_bars[spec[0]] = row
@@ -65,7 +65,12 @@ func refresh() -> void:
 	_sub.text = "・".join(bits)
 	_sub.visible = _sub.text != ""
 	var m := GameState.metrics()
-	var vals := {"trust": float(m.get("trust", 50)), "insight": float(m.get("insight", 20)), "fit": float(m.get("fit", 50)), "compliance": float(m.get("compliance", 100))}
+	var vals := {
+		"trust": float(m.get("trust", 50)),
+		"insight": float(m.get("insight", 20)),
+		"fit": float(m.get("fit", 50)),
+		"risk": 100.0 - float(m.get("compliance", 100)),
+	}
 	for k in vals:
 		_set_bar(k, vals[k])
 
@@ -76,7 +81,7 @@ func _set_bar(key: String, value: float) -> void:
 	var num: Label = row.get_child(2)
 	var old: float = _values.get(key, value)
 	_values[key] = value
-	var col := QuestUI.metric_color(value)
+	var col := (QuestUI.RED if value >= 60.0 else Color("#C8D2CE")) if key == "risk" else QuestUI.metric_color(value)
 	bar.color = col
 	num.add_theme_color_override("font_color", col)
 	num.text = str(int(round(value)))
@@ -85,11 +90,12 @@ func _set_bar(key: String, value: float) -> void:
 		return
 	var tw := bar.create_tween()
 	tw.tween_property(bar, "value", value, 0.5).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	_float_delta(row, value - old)
+	_float_delta(row, value - old, key == "risk")
 
 
-func _float_delta(row: Control, d: float) -> void:
-	var l := QuestUI.label(("+%d" if d > 0 else "%d") % int(round(d)), 13, QuestUI.GREEN if d > 0 else QuestUI.RED, false, true)
+func _float_delta(row: Control, d: float, inverted := false) -> void:
+	var good := (d > 0) != inverted
+	var l := QuestUI.label(("+%d" if d > 0 else "%d") % int(round(d)), 13, QuestUI.GREEN if good else QuestUI.RED, false, true)
 	l.top_level = true
 	add_child(l)
 	l.global_position = row.global_position + Vector2(row.size.x - 20, -6)

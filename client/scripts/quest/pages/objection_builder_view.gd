@@ -254,7 +254,7 @@ func _option(text: String, group: ButtonGroup) -> Button:
 	b.button_group = group
 	b.text = text
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	b.custom_minimum_size = Vector2(0, 64)
 	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	b.add_theme_font_size_override("font_size", QuestUI.fs(15))

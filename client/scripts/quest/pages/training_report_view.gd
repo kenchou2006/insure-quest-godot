@@ -277,7 +277,7 @@ func _dimensions() -> Dictionary:
 		"溝通傾聽": comm,
 		"預算適配": float(sk.get("fit", 50)),
 		"異議處理": (objection + comm) * 0.5,
-		"合規風險": comp,
+		"合規表現": comp,
 		"時間管理": time_total / time_n if time_n > 0 else 70.0,
 	}
 

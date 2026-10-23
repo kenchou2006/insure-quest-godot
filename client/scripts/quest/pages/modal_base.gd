@@ -28,6 +28,7 @@ func add_card(border := Color(QuestUI.GOLD, 0.55)) -> VBoxContainer:
 	add_child(dim)
 	card = PanelContainer.new()
 	card.name = "ModalCard"
+	card.custom_minimum_size.y = 0.0
 	var sb := QuestUI.card_box(0.97, border, 16, 14 if phone() else 24)
 	sb.shadow_color = Color(0, 0, 0, 0.45)
 	sb.shadow_size = 18
@@ -38,6 +39,7 @@ func add_card(border := Color(QuestUI.GOLD, 0.55)) -> VBoxContainer:
 	_scroll = ScrollContainer.new()
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.custom_minimum_size.y = 0.0
 	outer.add_child(_scroll)
 	card_body = QuestUI.vbox(10 if phone() else 14)
 	card_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -72,19 +74,24 @@ func _place_card() -> void:
 		return
 	var vs := size
 	var margin := 8.0 if phone() else 24.0
-	var w := minf(max_card_width, vs.x - margin * 2)
-	card_body.custom_minimum_size.x = w - (28 if phone() else 48)
+	var w := minf(max_card_width, vs.x - margin * 2.0)
+	card_body.custom_minimum_size.x = w - (28.0 if phone() else 48.0)
 	var sb := card.get_theme_stylebox("panel")
 	var pad := (sb.get_margin(SIDE_TOP) + sb.get_margin(SIDE_BOTTOM)) if sb else (28.0 if phone() else 40.0)
 	var foot := card_footer.get_combined_minimum_size().y + (10.0 if card_footer.get_child_count() > 0 else 0.0)
 	var body_h := card_body.get_combined_minimum_size().y
 	var want := body_h + foot + pad
-	var h := minf(want, vs.y - margin * 2)
-	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if want > h + 1 else ScrollContainer.SCROLL_MODE_DISABLED
-	_scroll.custom_minimum_size = Vector2(0, maxf(40.0, h - pad - foot))
+	var avail_h := vs.y - margin * 2.0
+	var max_scroll_h := maxf(40.0, avail_h - pad - foot)
+
+	card.custom_minimum_size.y = 0.0
+	_scroll.custom_minimum_size.y = 0.0
+
+	var overflow := want > avail_h
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO if overflow else ScrollContainer.SCROLL_MODE_DISABLED
+
+	var h := minf(want, pad + foot + max_scroll_h)
 	card.size = Vector2(w, h)
-	# Never taller than the screen: if the minimum still wins, the card is clamped to the screen
-	h = minf(card.size.y, vs.y - margin * 2)
 	card.size.y = h
 	card.position = Vector2((vs.x - w) * 0.5, maxf(margin, (vs.y - card.size.y) * 0.5))
 

@@ -198,6 +198,8 @@ func _res_row(key: String, title_text: String, sub: String) -> Control:
 
 
 func _bump(key: String, d: int) -> void:
+	if _sending:
+		return
 	var n := int(_alloc[key]) + d
 	if n < 0 or n > TOTAL:
 		return
@@ -210,13 +212,50 @@ func _bump(key: String, d: int) -> void:
 	_sync()
 
 
+## 保障卡按鈕：依標題與詳細說明的換行高度回報真實最小高度，以 104（緊湊 84）為下限
+class CoverageCardButton extends Button:
+	var is_compact := false
+	var content: Control = null
+	var title_lbl: Label = null
+	var detail_lbl: Label = null
+	var _last_w := 0.0
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED:
+			if size.x > 0.0 and not is_equal_approx(size.x, _last_w):
+				_update_text_height(size.x)
+
+	func _update_text_height(w: float) -> void:
+		_last_w = w
+		var avail_w := maxf(40.0, w - 20.0)
+		for lbl: Label in [title_lbl, detail_lbl]:
+			if lbl and is_instance_valid(lbl) and lbl.text != "":
+				var font: Font = lbl.get_theme_font("font")
+				if font == null:
+					font = ThemeDB.fallback_font
+				var font_size: int = lbl.get_theme_font_size("font_size")
+				if font_size <= 0:
+					font_size = QuestUI.fs(15 if lbl == title_lbl else 11)
+				if font:
+					var s: Vector2 = font.get_multiline_string_size(lbl.text, HORIZONTAL_ALIGNMENT_LEFT, avail_w, font_size)
+					lbl.custom_minimum_size.y = s.y
+		update_minimum_size()
+
+	func _get_minimum_size() -> Vector2:
+		var base_h: float = 84.0 if is_compact else 104.0
+		if content and is_instance_valid(content):
+			var ch := content.get_combined_minimum_size().y + 14.0
+			return Vector2(0.0, maxf(base_h, ch))
+		return Vector2(0.0, base_h)
+
+
 func _card_button(cd: Dictionary) -> Button:
 	var id := str(cd.get("id", ""))
-	var b := Button.new()
+	var b := CoverageCardButton.new()
 	b.name = "Card_" + id
+	b.is_compact = compact()
 	b.toggle_mode = true
 	b.button_pressed = _cards.has(id)
-	b.custom_minimum_size = Vector2(0, 104 if not compact() else 84)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	b.tooltip_text = str(cd.get("detail", ""))
@@ -227,9 +266,16 @@ func _card_button(cd: Dictionary) -> Button:
 	v.offset_top = 8
 	v.offset_bottom = -6
 	b.add_child(v)
+	b.content = v
+	v.minimum_size_changed.connect(b.update_minimum_size)
 	v.add_child(QuestUI.label(str(cd.get("tag", "")), 12, QuestUI.GOLD))
-	v.add_child(QuestUI.label(str(cd.get("title", "")), 15, QuestUI.TEXT, true, true))
-	v.add_child(QuestUI.label(str(cd.get("detail", "")), 11, QuestUI.MUTED, true))
+	var tl := QuestUI.label(str(cd.get("title", "")), 15, QuestUI.TEXT, true, true)
+	v.add_child(tl)
+	b.title_lbl = tl
+	var dl := QuestUI.label(str(cd.get("detail", "")), 11, QuestUI.MUTED, true)
+	v.add_child(dl)
+	b.detail_lbl = dl
+	b._update_text_height(180.0 if not compact() else 140.0)
 	for st in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
 		var s := StyleBoxFlat.new()
 		s.set_corner_radius_all(12)
@@ -256,6 +302,8 @@ func _card_button(cd: Dictionary) -> Button:
 
 
 func _toggle_card(id: String, on: bool, b: Button) -> void:
+	if _sending:
+		return
 	AudioManager.play("ui_click")
 	if on and not _cards.has(id):
 		if _cards.size() >= 3:
@@ -351,6 +399,8 @@ func _build_need_rows() -> void:
 		ob.select(sel)
 		var need: String = n
 		ob.item_selected.connect(func(idx: int):
+			if _sending:
+				return
 			var val := str(ob.get_item_metadata(idx))
 			if val == "":
 				_cover.erase(need)
@@ -426,6 +476,8 @@ func _card_names(ids: Array) -> String:
 
 
 func _use_tool(id: String) -> void:
+	if _sending:
+		return
 	var used: Dictionary = GameState.record.get("tools", {})
 	used[id] = true
 	GameState.set_value("tools", used)

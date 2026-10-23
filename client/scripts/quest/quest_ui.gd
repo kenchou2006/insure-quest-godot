@@ -72,7 +72,7 @@ static func label(text: String, size := BODY, color := TEXT, wrap := false, bold
 	if bold:
 		l.add_theme_font_override("font", FONT_BOLD)
 	if wrap:
-		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 		l.custom_minimum_size.x = 40
 		# Wrapped text takes the row's free width (never squeezed to a column of single words)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL

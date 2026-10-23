@@ -99,6 +99,7 @@ func play(roller: String, value: int, mine: bool) -> float:
 
 
 func _ready() -> void:
+	resized.connect(_place)
 	if not Engine.is_editor_hint():
 		QuestFlow.state_changed.connect(_on_flow)
 

@@ -144,7 +144,7 @@ func _render(body: VBoxContainer) -> void:
 	if title_text == "" and dl is Dictionary:
 		title_text = str(dl.get("title", ""))
 	var t := QuestUI.title(title_text, 22 if not phone() else 17)
-	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	t.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	body.add_child(t)
 	var desc := str(_ev.get("body", ""))
 	if desc != "":
@@ -298,7 +298,7 @@ func _choice_button(text: String) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	b.custom_minimum_size = Vector2(0, 50)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND

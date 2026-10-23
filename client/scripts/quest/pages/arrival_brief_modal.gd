@@ -52,7 +52,7 @@ func build() -> void:
 	var ttl := QuestUI.title("抵達站點｜%s" % where, 28 if not phone() else 20, QuestUI.TEXT)
 	ttl.name = "BriefTitle"
 	ttl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ttl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ttl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	head.add_child(ttl)
 	var counter := QuestUI.label("%02d / %02d" % [GameState.current_stage(), GameState.total_stages()], 16, QuestUI.MUTED)
 	counter.name = "StageCounter"
