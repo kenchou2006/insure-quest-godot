@@ -229,6 +229,18 @@ func _run() -> void:
 	check(dur > 0.4 and bool(board.call("unlock_playing")), "unlock line plays")
 	await _wait(0.7)
 	check(not bool(board.call("unlock_playing")), "unlock line finishes")
+	board.size = Vector2(1265, 1050)
+	await _frames(3)
+	check(bool(board.call("_use_road")), "1265x1050: stations on the traced road")
+	var dots_1265: Array = board.get("_dots")
+	var inside_1265 := dots_1265.size() == 24
+	for d in dots_1265:
+		if not Rect2(Vector2.ZERO, board.size).has_point(d):
+			inside_1265 = false
+	check(inside_1265, "1265x1050: all 24 stations inside the board")
+	board.size = Vector2(1100, 900)
+	await _frames(2)
+	check(bool(board.call("_use_road")), "1100x900: stations on the traced road")
 	board.size = Vector2(420, 700)
 	await _frames(2)
 	check(not bool(board.call("_use_road")), "narrow board falls back to the loop (road would be cut off)")

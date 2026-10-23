@@ -18,6 +18,8 @@ const FOCUS := Vector2(0.6, 0.52)
 ## → 右側弧形高架 → 底部道路）。24 個站依長度平均落在這條路上，跟著地圖縮放與平移。
 ## 圖片被裁切、路線放不下時（例如直向手機）改用下面的圓角環線。
 const ROAD := [Vector2(0.62, 0.659), Vector2(0.559, 0.699), Vector2(0.499, 0.734), Vector2(0.466, 0.744), Vector2(0.452, 0.705), Vector2(0.447, 0.669), Vector2(0.433, 0.639), Vector2(0.41, 0.617), Vector2(0.379, 0.591), Vector2(0.35, 0.566), Vector2(0.32, 0.54), Vector2(0.3, 0.5), Vector2(0.31, 0.47), Vector2(0.35, 0.445), Vector2(0.4, 0.417), Vector2(0.45, 0.401), Vector2(0.5, 0.385), Vector2(0.55, 0.369), Vector2(0.6, 0.344), Vector2(0.65, 0.318), Vector2(0.684, 0.348), Vector2(0.71, 0.333), Vector2(0.739, 0.325), Vector2(0.767, 0.333), Vector2(0.796, 0.348), Vector2(0.821, 0.367), Vector2(0.844, 0.393), Vector2(0.864, 0.423), Vector2(0.881, 0.453), Vector2(0.87, 0.496), Vector2(0.853, 0.515), Vector2(0.8588, 0.543), Vector2(0.878, 0.556), Vector2(0.899, 0.569), Vector2(0.92, 0.585), Vector2(0.9375, 0.598), Vector2(0.948, 0.6165), Vector2(0.955, 0.6375), Vector2(0.96, 0.6585), Vector2(0.962, 0.677), Vector2(0.96, 0.695), Vector2(0.953, 0.706), Vector2(0.9375, 0.715), Vector2(0.911, 0.724), Vector2(0.885, 0.729), Vector2(0.859, 0.732), Vector2(0.8325, 0.732), Vector2(0.806, 0.729), Vector2(0.78, 0.724), Vector2(0.742, 0.697), Vector2(0.673, 0.659)]
+## 道路路線邊界框中心（圖片座標 0..1，[0.3..0.962, 0.318..0.744] 之中心）
+const ROAD_CENTER := Vector2(0.631, 0.531)
 
 const C_BG := Color("#062F2A")
 const C_CARD := Color("#0D4038")
@@ -163,7 +165,8 @@ func _compact() -> bool:
 ## route, the box around the road points
 func _loop_rect() -> Rect2:
 	if _use_road():
-		var road := _road_points(_img_xform()[0], _img_xform()[1])
+		var xf := _img_xform()
+		var road := _road_points(xf[0], xf[1])
 		var box := Rect2(road[0], Vector2.ZERO)
 		for q in road:
 			box = box.expand(q)
@@ -174,9 +177,20 @@ func _loop_rect() -> Rect2:
 
 ## 地圖在這個縮放與平移下的位置：[左上角, 縮放比例]（與 _draw 畫圖片的算法相同）
 func _img_xform(z := 1.0, pan := Vector2.ZERO) -> Array:
+	if _map == null or size.x < 10.0 or size.y < 10.0:
+		return [Vector2.ZERO, 1.0]
 	var img := _map.get_size()
-	var sc := maxf(size.x / img.x, size.y / img.y) * 1.08 * z
-	var at := size * 0.5 - img * FOCUS * sc + pan
+	var base_sc := maxf(size.x / img.x, size.y / img.y) * 1.08
+	# 優先保持預設 FOCUS（101 偏右）；若路線會超出留邊則平移至 ROAD 邊界框置中
+	var focus_at := (size * 0.5 - img * FOCUS * base_sc).clamp(size - img * base_sc, Vector2.ZERO)
+	var f := FOCUS
+	var inner := Rect2(Vector2.ZERO, size).grow(-24.0)
+	for q: Vector2 in ROAD:
+		if not inner.has_point(focus_at + q * img * base_sc):
+			f = ROAD_CENTER
+			break
+	var sc := base_sc * z
+	var at := size * 0.5 - img * f * sc + pan
 	at = at.clamp(size - img * sc, Vector2.ZERO)
 	return [at, sc]
 
@@ -389,13 +403,10 @@ func _raw_dot(i: int) -> Vector2:
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), C_BG)
 	if _map:
-		var img := _map.get_size()
-		var s := maxf(size.x / img.x, size.y / img.y) * 1.08 * _zoom
-		var at := size * 0.5 - img * FOCUS * s + _pan
-		at = at.clamp(size - img * s, Vector2.ZERO)
-		_img_at = at
-		_img_scale = s
-		draw_texture_rect(_map, Rect2(at, img * s), false)
+		var xf := _img_xform(_zoom, _pan)
+		_img_at = xf[0]
+		_img_scale = xf[1]
+		draw_texture_rect(_map, Rect2(_img_at, _map.get_size() * _img_scale), false)
 	# Gentle grade toward the brand palette and a vignette so chips read clearly
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.16, 0.14, 0.22))
 	var font := get_theme_default_font()
