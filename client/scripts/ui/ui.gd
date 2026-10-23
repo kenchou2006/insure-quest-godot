@@ -2,26 +2,26 @@
 class_name UI
 ## UI utilities: color palette, theme, and factory functions for common components. All screens are constructed in code for team maintainability and review.
 
-const BG := Color("#0d231e")
-const PANEL := Color("#14352d")
-const PANEL_2 := Color("#1a4239")
-const ACCENT := Color("#00875a")
-const ACCENT_2 := Color("#2ed59e")
-const GOLD := Color("#e5a93c")
-const TEXT := Color("#f4fbf7")
-const MUTED := Color("#9ebdb3")
-const GOOD := Color("#3ddc97")
-const OK := Color("#e5a93c")
-const BAD := Color("#e63946")
-const INFO := Color("#8fd3c7")
+const BG := Color("#062F2A")
+const PANEL := Color("#0D4038")
+const PANEL_2 := Color("#134A41")
+const ACCENT := Color("#00A86B")
+const ACCENT_2 := Color("#4CC79A")
+const GOLD := Color("#C6A15B")
+const TEXT := Color("#F3F0E7")
+const MUTED := Color("#AABCB5")
+const GOOD := Color("#2FBF86")
+const OK := Color("#C6A15B")
+const BAD := Color("#D9685F")
+const INFO := Color("#9CC5B8")
 
-const PLAYER_COLORS := [Color("#3ddc97"), Color("#f2a541"), Color("#7aa2ff"), Color("#ff6bb5")]
+const PLAYER_COLORS := [Color("#3FC79A"), Color("#C6A15B"), Color("#8FB3C4"), Color("#C9928C")]
 
 const METRIC_NAMES := {"trust": "客戶信任", "insight": "需求洞察", "fit": "方案適配", "risk": "風險管理", "compliance": "合規表達"}
 const RES_NAMES := {"cash": "緊急預備", "protect": "風險保障", "growth": "目標成長"}
 const TILE_COLORS := {
-	"start": Color("#e5a93c"), "client": Color("#00875a"), "life": Color("#e07a5f"), "market": Color("#4ea8de"),
-	"training": Color("#9b72cf"), "referral": Color("#2ed59e"), "audit": Color("#e63946"), "seminar": Color("#8fd3c7"),
+	"start": Color("#C6A15B"), "client": Color("#00A86B"), "life": Color("#7FB9A2"), "market": Color("#8FB3C4"),
+	"training": Color("#4CC79A"), "referral": Color("#9AD3B9"), "audit": Color("#D9685F"), "seminar": Color("#AABCB5"),
 }
 const TILE_ICONS := {
 	"start": "★", "client": "◎", "life": "✚", "market": "↗", "training": "✓", "referral": "♥", "audit": "⚠", "seminar": "◇",
@@ -46,6 +46,23 @@ static func tile_badge(type_key: String, compact: bool = false) -> String:
 	return "%s %s" % [ic, tile_name(type_key)]
 
 static var layout_profile: String = "desktop"
+static var reduce_motion := false
+
+static func load_preferences() -> void:
+	if Engine.is_editor_hint():
+		return
+	var prefs := ConfigFile.new()
+	var system_reduced := false
+	if OS.has_feature("web"):
+		system_reduced = bool(JavaScriptBridge.eval("window.matchMedia('(prefers-reduced-motion: reduce)').matches", true))
+	prefs.load("user://ui_preferences.cfg")
+	reduce_motion = bool(prefs.get_value("display", "reduce_motion", system_reduced))
+
+static func set_reduce_motion(enabled: bool) -> void:
+	reduce_motion = enabled
+	var prefs := ConfigFile.new()
+	prefs.set_value("display", "reduce_motion", enabled)
+	prefs.save("user://ui_preferences.cfg")
 static var content_size: Vector2i = Vector2i(1280, 720)
 
 static func is_portrait() -> bool:
@@ -95,12 +112,12 @@ static func box(color: Color, radius := 14, border := Color(-1, -1, -1, -1), pad
 	s.content_margin_top = pad * 0.75
 	s.content_margin_bottom = pad * 0.75
 	if shadow:
-		s.shadow_color = Color(0, 0, 0, 0.35)
-		s.shadow_size = 6
-		s.shadow_offset = Vector2(0, 3)
+		s.shadow_color = Color(0, 0, 0, 0.14)
+		s.shadow_size = 3
+		s.shadow_offset = Vector2(0, 1)
 	if border == Color(-1, -1, -1, -1):
 		s.set_border_width_all(1)
-		s.border_color = Color(ACCENT.r, ACCENT.g, ACCENT.b, 0.25)
+		s.border_color = Color(1, 1, 1, 0.12)
 	elif border.a > 0:
 		s.set_border_width_all(2)
 		s.border_color = border
@@ -272,7 +289,7 @@ static func label(text: String, size := 17, color := TEXT, wrap := false) -> Lab
 	l.add_theme_font_size_override("font_size", fs(size))
 	l.add_theme_color_override("font_color", color)
 	if wrap:
-		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return l
 
@@ -293,13 +310,16 @@ static func rich(bbcode: String, size := 17) -> RichTextLabel:
 static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> Button:
 	var b := Button.new()
 	b.text = glue(text)
+	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	b.add_theme_font_size_override("font_size", fs(size))
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		b.add_theme_stylebox_override(state, button_stylebox(color, state, 10, 12))
 	b.pressed.connect(func():
 		Sound.play("click", b)
-		cb.call()
+		if cb.is_valid(): cb.call()
 	)
+	b.mouse_entered.connect(func(): _button_glint(b, true))
+	b.mouse_exited.connect(func(): _button_glint(b, false))
 	return b
 
 
@@ -307,7 +327,7 @@ static func button(text: String, cb: Callable, size := 17, color := ACCENT) -> B
 static func option_button(text: String, cb: Callable, color := PANEL_2) -> Button:
 	var b := Button.new()
 	b.text = glue(text)
-	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.custom_minimum_size = Vector2(0, 48)
@@ -329,13 +349,41 @@ static func option_button(text: String, cb: Callable, color := PANEL_2) -> Butto
 
 
 static func is_animation_disabled() -> bool:
-	if Engine.is_editor_hint():
+	if Engine.is_editor_hint() or reduce_motion:
 		return true
 	if OS.has_feature("web"):
 		var res = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('automation') === '1'", true)
 		if bool(res):
 			return true
 	return false
+
+static func _button_glint(button_node: Button, active: bool) -> void:
+	if is_animation_disabled() or button_node.disabled:
+		return
+	var previous: Variant = button_node.get_meta("glint_tween") if button_node.has_meta("glint_tween") else null
+	if previous is Tween and previous.is_valid(): previous.kill()
+	var tween := button_node.create_tween()
+	button_node.set_meta("glint_tween", tween)
+	tween.tween_property(button_node, "self_modulate", Color(1.12, 1.12, 1.06) if active else Color.WHITE, 0.14)
+
+static func card_reveal(node: Control) -> void:
+	if is_animation_disabled(): return
+	node.pivot_offset = node.size * 0.5
+	node.scale = Vector2(0.92, 1.0)
+	node.modulate.a = 0.0
+	var tween := node.create_tween().set_parallel(true)
+	tween.tween_property(node, "scale", Vector2.ONE, 0.30).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(node, "modulate:a", 1.0, 0.20)
+
+static func coin_change(node: Control) -> void:
+	if is_animation_disabled(): return
+	var old: Variant = node.get_meta("coin_tween") if node.has_meta("coin_tween") else null
+	if old is Tween and old.is_valid(): old.kill()
+	node.pivot_offset = node.size * 0.5
+	node.scale = Vector2(1.12, 1.12)
+	var tween := node.create_tween()
+	node.set_meta("coin_tween", tween)
+	tween.tween_property(node, "scale", Vector2.ONE, 0.24).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 ## Typewriter effect on a Label (used for fallback progressive reveal when AI did not stream)

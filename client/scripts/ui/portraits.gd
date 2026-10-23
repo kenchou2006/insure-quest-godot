@@ -17,6 +17,11 @@ static func get_texture(client_id: String) -> Texture2D:
 			key = str(pmap[client_id])
 	if _cache.has(key):
 		return _cache[key]
+	var unified_path := "res://assets/unified/portraits/%s.webp" % key
+	if ResourceLoader.exists(unified_path):
+		var unified_texture: Texture2D = load(unified_path)
+		_cache[key] = unified_texture
+		return unified_texture
 
 	# 1. Primary path: res://assets/portraits/<id or pool key>.<ext>
 	for ext in ["jpg", "webp", "png"]:

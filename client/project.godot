@@ -14,15 +14,27 @@ config/name="INSURE QUEST 人生顧問局"
 config/description="保險顧問銷售訓練桌遊（多人／單人對電腦，AI 客戶與教練）"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/icon="res://icon.svg"
 boot_splash/bg_color=Color(0.05098, 0.137255, 0.117647, 1)
-boot_splash/show_image=false
+boot_splash/image="res://assets/startup/loading.png"
+config/icon="res://icon.svg"
 
 [autoload]
 
 Net="*res://scripts/net.gd"
 WebText="*res://scripts/web_text.gd"
 GoogleAuth="*res://scripts/google_auth.gd"
+MusicManager="*res://scripts/music_manager.gd"
+AudioManager="*res://scripts/quest/audio_manager.gd"
+PlayerProfile="*res://scripts/quest/player_profile.gd"
+GameState="*res://scripts/quest/game_state.gd"
+SceneTransitionManager="*res://scripts/quest/scene_transition_manager.gd"
+TensionManager="*res://scripts/quest/tension_manager.gd"
+TutorialManager="*res://scripts/quest/tutorial_manager.gd"
+QuestFlow="*res://scripts/quest/quest_flow.gd"
+
+[audio]
+
+general/text_to_speech=true
 
 [display]
 

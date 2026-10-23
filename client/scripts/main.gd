@@ -3,11 +3,19 @@ extends Control
 ## Main controller: screen switching, solo/multiplayer flow, and toast messages.
 
 const MenuScreen := preload("res://scripts/ui/menu.gd")
+const StartupScreen := preload("res://scripts/ui/startup.gd")
 const LobbyScreen := preload("res://scripts/ui/lobby.gd")
 const GameScreen := preload("res://scripts/ui/game.gd")
 const ReportScreen := preload("res://scripts/ui/report.gd")
+## Page 10: the training report (the original report stays for ?classic=1)
+const TrainingReport := preload("res://scripts/quest/pages/training_report_view.gd")
 const RecordsScreen := preload("res://scripts/ui/records.gd")
+const SecretaryGuide := preload("res://scripts/ui/training_secretary.gd")
+const SecretarySetup := preload("res://scripts/ui/secretary_setup.gd")
+## 新人顧問報到: between the cover and the secretary choice (first visit, or edited from the hall)
+const PlayerOnboarding := preload("res://scenes/player_onboarding.tscn")
 const AutomationBridge := preload("res://scripts/automation.gd")
+const UiLock := preload("res://scripts/ui_lock.gd")
 
 signal layout_changed(is_portrait: bool)
 
@@ -18,9 +26,22 @@ var _solo_bots: Array = []
 var _solo := false
 var _busy_label: Label
 var _auto: Node = null
+var _guide: Control
+var _guide_height := 0.0
+## Deep sea-green loading / transition veil: covers every screen switch so an old or half-built
+## screen (e.g. the multiplayer lobby a solo game passes through) is never seen.
+var _veil: ColorRect
+var _veil_tween: Tween
+var _veil_gen := 0
+## True while we have created / joined a room; late state messages after leaving are ignored
+var _expect_room := false
+## Set when a secretary was just chosen: the hall greets with the tutorial right away
+var _hall_greeting := false
 
 
 var _was_quota_exhausted := false
+## Secretary card highlighted but not confirmed yet (kept when the player steps back)
+var _secretary_draft := ""
 
 
 func _ready() -> void:
@@ -30,7 +51,11 @@ func _ready() -> void:
 		preview.screen = "menu"
 		add_child(preview)
 		return
+	UI.load_preferences()
 	theme = UI.make_theme()
+	# The advisor created on 新人顧問報到 is the name every room receives
+	if PlayerProfile.player_profile_created and PlayerProfile.player_name != "":
+		Net.player_name = PlayerProfile.player_name
 	var bg := ColorRect.new()
 	bg.color = UI.BG
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -38,9 +63,9 @@ func _ready() -> void:
 	add_child(bg)
 
 	# Taipei urban life low-contrast background texture (dark base, low detail, creating a warm advisor atmosphere)
-	if ResourceLoader.exists("res://assets/title.jpg"):
+	if ResourceLoader.exists("res://assets/unified/background.webp"):
 		var bg_tex := TextureRect.new()
-		bg_tex.texture = load("res://assets/title.jpg")
+		bg_tex.texture = load("res://assets/unified/background.webp")
 		bg_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		bg_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		bg_tex.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -48,28 +73,44 @@ func _ready() -> void:
 		bg_tex.modulate = Color(0.7, 0.85, 0.75, 0.16)
 		add_child(bg_tex)
 
+	# Start on the loading veil: nothing is shown until the first screen has drawn
+	_veil = ColorRect.new()
+	_veil.color = UI.BG
+	_veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_veil.mouse_filter = Control.MOUSE_FILTER_STOP
+	# Above every screen and the secretary; only toasts and the busy line sit higher
+	_veil.z_index = 200
+	add_child(_veil)
+
 	_toasts = UI.vbox(6)
 	_toasts.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
 	_toasts.position.y = 12
 	_toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_toasts.z_index = 100
+	_toasts.z_index = 210
 
 	_busy_label = UI.label("", 16, UI.GOLD)
-	_busy_label.z_index = 100
+	_busy_label.z_index = 210
 
 	get_tree().root.size_changed.connect(_on_size_changed)
 	_on_size_changed()
 
 	Net.welcomed.connect(_on_welcomed)
 	Net.state_changed.connect(_on_state)
-	Net.server_error.connect(func(m): toast(m, UI.BAD))
+	Net.server_error.connect(func(m):
+		toast(m, UI.BAD)
+		# A rejected create / join must not leave the player on the loading veil
+		if _veil_holding():
+			set_busy("")
+			_reveal()
+	)
 	Net.connection_changed.connect(_on_connection)
 	Net.room_closed.connect(func(m: String):
+		_expect_room = false
 		_solo_bots = []
 		_solo = false
 		set_busy("")
 		toast(m, UI.INFO, 4.0)
-		show_menu()
+		show_startup()
 	)
 	Net.reaction.connect(func(from_name, emoji): toast("%s %s" % [from_name, emoji], UI.INFO))
 	Net.quota_changed.connect(func(_used: int, _limit: int, exhausted: bool):
@@ -80,8 +121,11 @@ func _ready() -> void:
 		else:
 			_was_quota_exhausted = false
 	)
+	_guide = SecretaryGuide.new()
+	add_child(_guide)
+	_guide.dock_changed.connect(_on_guide_dock)
 	_init_auth()
-	show_menu()
+	show_startup()
 	add_child(_toasts)
 	add_child(_busy_label)
 	if AutomationBridge.is_active():
@@ -143,7 +187,14 @@ func _on_size_changed() -> void:
 			_screen.on_layout_changed(UI.is_portrait())
 
 
+## Switch order: veil on → old screen hidden and freed → new screen built under the veil →
+## wait until it has drawn (textures uploaded) → veil fades. Only one screen exists at a time.
 func _set_screen(kind: String, node: Control) -> void:
+	_veil_on()
+	# The old spotlight hangs off the window root, outside every screen: never let it outlive one
+	Tutorial.close_active()
+	if _guide != null:
+		_guide.dismiss()
 	if _screen and is_instance_valid(_screen):
 		_screen.visible = false
 		if _screen.get_parent() == self:
@@ -153,12 +204,127 @@ func _set_screen(kind: String, node: Control) -> void:
 	_screen_kind = kind
 	node.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(node)
+	node.visible = true
+	if _guide != null:
+		move_child(_guide, get_child_count() - 1)
+		_guide.screen_changed(kind)
+	if _veil:
+		move_child(_veil, get_child_count() - 1)
 	if _toasts and _toasts.get_parent() == self:
 		move_child(_toasts, get_child_count() - 1)
 		move_child(_busy_label, get_child_count() - 1)
+	UiLock.log_event("screen:" + kind)
+	_reveal()
+
+
+## Opaque veil immediately (no fade-in, so nothing old shows through)
+func _veil_on() -> void:
+	if _veil == null:
+		return
+	_veil_gen += 1
+	if _veil_tween:
+		_veil_tween.kill()
+	_veil.modulate.a = 1.0
+	_veil.visible = true
+	_veil.mouse_filter = Control.MOUSE_FILTER_STOP
+	UiLock.log_event("veil_on")
+
+
+func _veil_holding() -> bool:
+	return _veil != null and _veil.visible and _veil.mouse_filter == Control.MOUSE_FILTER_STOP
+
+
+## Fades the veil once the current screen has been drawn (three frames: built, drawn with its
+## textures uploaded, drawn again). Plain frame waits, so it can never hang on any platform.
+func _reveal() -> void:
+	if _veil == null:
+		return
+	var gen := _veil_gen
+	for i in range(3):
+		await get_tree().process_frame
+	if gen != _veil_gen or not is_instance_valid(_veil):
+		return
+	_veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	UiLock.log_event("veil_off")
+	if UI.is_animation_disabled():
+		_veil.visible = false
+		return
+	_veil_tween = create_tween()
+	# 0.32 s fade out (scene-change spec 0.25–0.4 s); the veil itself goes up at once so the old
+	# screen never flashes through
+	_veil_tween.tween_property(_veil, "modulate:a", 0.0, 0.32).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_veil_tween.tween_callback(func(): _veil.visible = false)
+
+
+## Loading state while waiting on the network: veil stays up (with the busy text) until the next
+## screen arrives; a watchdog lifts it after 15 s so the player is never stuck on a blank screen.
+func _hold_veil() -> void:
+	_veil_on()
+	var gen := _veil_gen
+	get_tree().create_timer(15.0).timeout.connect(func():
+		if gen == _veil_gen and is_instance_valid(_veil) and _veil.visible:
+			UiLock.log_event("veil_watchdog_release")
+			set_busy("")
+			_reveal()
+	)
+
+
+## Lock state for the [UI-LOCK] trace (scripts/ui_lock.gd)
+func ui_snapshot() -> Dictionary:
+	var scene := _screen_kind
+	var cs: Variant = _screen.get("_case_setup") if _screen != null and is_instance_valid(_screen) else null
+	var has_cs: bool = cs is Control and is_instance_valid(cs)
+	if has_cs:
+		scene += "/case_setup:step%d" % int(cs.get("_step"))
+	var ov_visible := false
+	var ov_filter := "none"
+	var sec := "none"
+	if _guide != null:
+		sec = _guide.state_name()
+		var ov: Variant = _guide.get("_overlay")
+		if ov is Control and is_instance_valid(ov):
+			ov_visible = (ov as Control).visible
+			ov_filter = UiLock.filter_name(((ov as Control).get("_shade") as Control).mouse_filter)
+	var legacy := Tutorial.has_active()
+	var busy: bool = has_cs and bool(cs.call("is_busy"))
+	return {
+		"current_scene": scene,
+		"overlay_visible": ov_visible or legacy,
+		"overlay_mouse_filter": ov_filter + ("+spotlight" if legacy else ""),
+		"input_locked": _veil_holding() or (ov_visible and ov_filter == "STOP") or legacy or busy,
+		"is_transitioning": _veil != null and _veil.visible,
+		"secretary_state": sec,
+	}
+
+
+## Click trace (debug builds, or ?uidebug=1 on the web): which Control received each click
+func _input(event: InputEvent) -> void:
+	if not UiLock.click_trace or not (event is InputEventMouseButton and event.pressed):
+		return
+	var vp := get_viewport()
+	var hit: Control = vp.gui_get_hovered_control()
+	var desc := "none"
+	if hit != null:
+		desc = "%s (%s, z=%d, mouse_filter=%s, disabled=%s)" % [str(hit.get_path()), hit.get_class(), hit.z_index,
+			UiLock.filter_name(hit.mouse_filter), str(hit.get("disabled")) if hit is BaseButton else "-"]
+	UiLock.log_event("click %s → %s" % [str(vp.get_mouse_position().round()), desc])
+
+
+## Game opening cover; shown at launch and every time the player leaves a game (intro replays each time).
+func show_startup() -> void:
+	if AutomationBridge.is_active():
+		show_menu()
+		return
+	var startup := StartupScreen.new()
+	startup.entered.connect(_enter_training)
+	_set_screen("startup", startup)
 
 
 func show_menu() -> void:
+	# No advisor profile yet: 報到 comes first (recordings with ?automation=1 go straight on)
+	if not PlayerProfile.player_profile_created and not AutomationBridge.is_active():
+		show_onboarding("flow")
+		return
 	if _screen_kind == "menu" and _screen != null and is_instance_valid(_screen) and not _screen.is_queued_for_deletion():
 		Net.fetch_me()
 		return
@@ -196,6 +362,9 @@ func set_busy(text: String) -> void:
 # ───────── Flow ─────────
 
 func create_and_join(solo_bots: Array, solo: bool) -> void:
+	_guide.begin_training()
+	_expect_room = true
+	_hold_veil()
 	if solo and not Net.is_logged_in() and Net.local_available():
 		_solo_bots = solo_bots
 		_solo = solo
@@ -207,6 +376,8 @@ func create_and_join(solo_bots: Array, solo: bool) -> void:
 	var r := await Net.create_room(solo)
 	set_busy("")
 	if not r[0]:
+		_expect_room = false
+		_reveal()
 		toast(str(r[1]), UI.BAD, 4.0)
 		return
 	_solo_bots = solo_bots
@@ -217,6 +388,9 @@ func create_and_join(solo_bots: Array, solo: bool) -> void:
 
 
 func resume_seat() -> void:
+	_guide.begin_training()
+	_expect_room = true
+	_hold_veil()
 	_solo_bots = []
 	_solo = false
 	Net.is_solo = false
@@ -225,6 +399,9 @@ func resume_seat() -> void:
 
 
 func join_room(code: String) -> void:
+	_guide.begin_training()
+	_expect_room = true
+	_hold_veil()
 	_solo_bots = []
 	_solo = false
 	Net.is_solo = false
@@ -232,14 +409,41 @@ func join_room(code: String) -> void:
 	set_busy("連線中……")
 
 
-func leave_to_menu() -> void:
+## 離開培訓: keep=true leaves the room without abandoning it (the seat stays, a server room can be
+## resumed from the hall; the training record is saved either way); keep=false gives this training up
+func leave_training(keep: bool) -> void:
+	if keep:
+		_expect_room = false
+		Net.leave(false)
+		_solo_bots = []
+		_solo = false
+		Net.is_solo = false
+		show_startup()
+	else:
+		leave_to_menu()
+
+
+## From the client brief (before any meeting) back to the training-mode page, choices kept
+func back_to_training_mode() -> void:
 	if Net.is_solo and not Net.is_local():
 		Net.send({"t": "abandon"})
+	_expect_room = false
 	Net.leave()
 	_solo_bots = []
 	_solo = false
 	Net.is_solo = false
 	show_menu()
+
+
+func leave_to_menu() -> void:
+	if Net.is_solo and not Net.is_local():
+		Net.send({"t": "abandon"})
+	_expect_room = false
+	Net.leave()
+	_solo_bots = []
+	_solo = false
+	Net.is_solo = false
+	show_startup()
 
 
 func _on_welcomed(_data: Dictionary) -> void:
@@ -272,12 +476,21 @@ func _on_connection(online: bool) -> void:
 
 
 func _on_state(state: Dictionary) -> void:
+	# Late messages from a room we already left must not bring any old screen back
+	if not _expect_room or Net.room_code == "":
+		return
 	var phase := str(state.get("phase", ""))
 	match phase:
 		"lobby":
-			if _screen_kind != "lobby":
+			if Net.is_solo or _solo:
+				# Solo practice passes through the room lobby while bots are added: keep loading
+				if _screen_kind != "game" and not _veil_holding():
+					_hold_veil()
+			elif _screen_kind != "lobby":
 				var l := LobbyScreen.new()
 				l.main = self
+				# Hidden by default; shown only by the switch below, under the veil
+				l.visible = false
 				_set_screen("lobby", l)
 		"playing":
 			if _screen_kind != "game":
@@ -287,12 +500,72 @@ func _on_state(state: Dictionary) -> void:
 		"ended":
 			Tutorial.record_game()
 			if _screen_kind != "report":
-				var r := ReportScreen.new()
-				r.main = self
+				var r: Control = ReportScreen.new() if GameState.classic_ui else TrainingReport.new()
+				r.set("main", self)
 				_set_screen("report", r)
 	if _screen and _screen.has_method("refresh"):
 		_screen.refresh(state)
+	if _guide != null:
+		_guide.observe(state)
 
 
 func get_screen_kind() -> String:
 	return _screen_kind
+
+## Cover button: 新人顧問報到 the first time, afterwards straight to the secretary choice (the last
+## advisor profile is used; the hall's player pill edits it)
+func _enter_training() -> void:
+	_guide.unlock_speech()
+	if PlayerProfile.player_profile_created:
+		open_secretary_settings()
+	else:
+		show_onboarding("flow")
+
+
+## mode "flow": back → cover, done → secretary choice; mode "edit": back / done → training-mode page
+func show_onboarding(mode := "flow") -> void:
+	var page: Control = PlayerOnboarding.instantiate()
+	page.set("main", self)
+	page.set("mode", mode)
+	if mode == "edit":
+		page.connect("done", show_menu)
+		page.connect("back", show_menu)
+	else:
+		page.connect("done", open_secretary_settings)
+		page.connect("back", show_startup)
+	_set_screen("onboarding", page)
+
+## True once after a secretary was chosen (Aly or Kevin): the hall opens its tutorial without a tap
+func take_hall_greeting() -> bool:
+	var v := _hall_greeting
+	_hall_greeting = false
+	return v
+
+## Docked guide; holds the stored secretary choice (selected_secretary / secretary_id)
+func secretary_guide() -> Control:
+	return _guide
+
+func open_secretary_settings() -> void:
+	var setup := SecretarySetup.new()
+	if _guide.configured:
+		setup.initial_key = _guide.role if _guide.enabled else "solo"
+	if _secretary_draft != "":
+		setup.initial_key = _secretary_draft
+	setup.selected.connect(func(use_guide: bool, role: String):
+		_secretary_draft = ""
+		_guide.choose(use_guide, role)
+		_hall_greeting = use_guide
+		show_menu()
+	)
+	# 返回 → 新人顧問報到; the highlighted (unconfirmed) secretary is kept for next time
+	setup.back_requested.connect(func(current_key: String):
+		_secretary_draft = current_key
+		show_onboarding("flow")
+	)
+	_set_screen("secretary_setup", setup)
+
+func _on_guide_dock(height: float) -> void:
+	_guide_height = height
+	if is_instance_valid(_screen):
+		_screen.offset_bottom = -height
+

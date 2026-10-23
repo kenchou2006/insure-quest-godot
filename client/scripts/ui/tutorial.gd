@@ -132,6 +132,18 @@ static func should_show(step_id: String, is_actor: bool) -> bool:
 
 
 
+static func has_active() -> bool:
+	return _active != null and is_instance_valid(_active)
+
+
+## Screen changes: drop a spotlight that would otherwise outlive its screen (step not marked done)
+static func close_active() -> void:
+	if has_active():
+		_active.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_active.queue_free()
+	_active = null
+
+
 static func show_spotlight(parent: Control, target: Control, step_id: String, text: String, on_dismiss: Callable = Callable()) -> Tutorial:
 	if not should_show(step_id, true):
 		return null

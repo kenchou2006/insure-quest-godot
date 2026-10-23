@@ -1,30 +1,19 @@
 @tool
 class_name Sound
 ## Sound manager: synthesizes sound effects programmatically with AudioStreamWAV without external audio files.
-## Supports mute toggle and web-version delayed playback protection.
+## Everything plays on the UI bus (buttons, hints, mission complete); volume and mute live in MusicManager.
 
-static var muted: bool = false
 static var _player: AudioStreamPlayer = null
 static var _streams: Dictionary = {}
-
-
-static func is_muted() -> bool:
-	return muted
-
-
-static func toggle_mute() -> bool:
-	muted = not muted
-	return muted
 
 
 static func play(name: String, caller: Node = null) -> void:
 	if Engine.is_editor_hint():
 		return
-	if muted:
-		return
 	if _player == null or not is_instance_valid(_player):
 		_player = AudioStreamPlayer.new()
 		_player.name = "GlobalSoundPlayer"
+		_player.bus = "UI"
 		if caller != null and caller.get_tree() != null:
 			caller.get_tree().root.add_child(_player)
 		else:
@@ -65,6 +54,13 @@ static func _get_or_create_stream(name: String) -> AudioStreamWAV:
 			stream = _gen_stamp()
 		"claim":
 			stream = _gen_claim()
+		# Training-file sounds: soft and short, no coin / casino character
+		"doc_confirm":
+			stream = _gen_soft([659.25, 987.77], 0.09, 0.14)
+		"scan":
+			stream = _gen_scan(0.34, 0.07)
+		"unlock":
+			stream = _gen_soft([783.99, 1174.66], 0.11, 0.13)
 	if stream != null:
 		_streams[name] = stream
 	return stream
@@ -295,3 +291,54 @@ static func _gen_stamp(duration: float = 0.18, volume: float = 0.32) -> AudioStr
 static func _gen_claim(duration: float = 0.35, volume: float = 0.25) -> AudioStreamWAV:
 	return _gen_arpeggio([523.25, 659.25, 783.99, 1046.5], 0.08, volume)
 
+
+## Two gentle sine notes with soft attack and decay (document confirm / unlock)
+static func _gen_soft(freqs: Array, note_dur: float, volume: float) -> AudioStreamWAV:
+	var mix_rate: int = 22050
+	var per: int = int(note_dur * mix_rate)
+	var total: int = per * freqs.size() + int(0.12 * mix_rate)
+	var data: PackedByteArray = PackedByteArray()
+	data.resize(total * 2)
+	for i in range(total):
+		var wave: float = 0.0
+		for n in range(freqs.size()):
+			var start: int = n * per
+			if i < start:
+				continue
+			var t: float = float(i - start) / float(mix_rate)
+			var env: float = minf(1.0, t / 0.008) * exp(-t * 9.0)
+			wave += sin(2.0 * PI * float(freqs[n]) * t) * env
+		var val: int = clampi(int(wave * 0.6 * volume * 32767.0), -32768, 32767)
+		data[i * 2] = val & 0xFF
+		data[i * 2 + 1] = (val >> 8) & 0xFF
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = mix_rate
+	wav.stereo = false
+	wav.data = data
+	return wav
+
+
+## Quiet rising filtered sweep for the data scan
+static func _gen_scan(duration: float, volume: float) -> AudioStreamWAV:
+	var mix_rate: int = 22050
+	var samples: int = int(duration * mix_rate)
+	var data: PackedByteArray = PackedByteArray()
+	data.resize(samples * 2)
+	var phase: float = 0.0
+	var lp: float = 0.0
+	for i in range(samples):
+		var frac: float = float(i) / float(samples)
+		phase += 2.0 * PI * lerpf(420.0, 1250.0, frac) / float(mix_rate)
+		lp = lerpf(lp, randf() * 2.0 - 1.0, 0.08)
+		var env: float = sin(PI * frac)
+		var wave: float = (sin(phase) * 0.55 + lp * 0.45) * env * volume
+		var val: int = clampi(int(wave * 32767.0), -32768, 32767)
+		data[i * 2] = val & 0xFF
+		data[i * 2 + 1] = (val >> 8) & 0xFF
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = mix_rate
+	wav.stereo = false
+	wav.data = data
+	return wav

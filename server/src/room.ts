@@ -9,7 +9,7 @@ import { addPlayer, applyAction, createGame, enrichCoach, injectClient, log, mul
 import { botAction } from './game/bots.ts';
 import { BOARD, CARDS, QUESTIONS } from './game/data.ts';
 import { makeAI, MeteredAI, s2t, type AIService, type Meter, type RawAI } from './ai.ts';
-import { globalRecords, userRecords, type RecordInput, type RecordSummary } from './records.ts';
+import { globalRecords, userRecords, type RecordInput, type TrainingAttempt } from './records.ts';
 import type { Env } from './index.ts';
 
 const BOT_DELAY_MS = 1300;
@@ -31,6 +31,7 @@ type ClientMsg =
   | { t: 'react'; emoji: string }
   | { t: 'predict'; grade: string }
   | { t: 'abandon' }
+  | { t: 'retry_save' }
   | { t: 'ping' };
 
 /** Identity bound to each connection: accountId resolved by Worker from login cookie, unforgeable by client */
@@ -206,12 +207,60 @@ export class Room extends DurableObject<Env> {
 
   private async save() {
     if (!this.game) return;
+    if (this.game.phase !== 'lobby') {
+      this.game.trainingAttemptId ??= crypto.randomUUID();
+      this.game.trainingStartedAt ??= Date.now();
+    }
     this.game.version++;
     await this.ctx.storage.put('game', this.game);
+    await this.saveTraining();
+  }
+
+  /** The room keeps its durable snapshot until every terminal write succeeds. */
+  private async saveTraining(): Promise<boolean> {
+    const g = this.game;
+    if (!g || g.phase === 'lobby' || !g.trainingAttemptId) return true;
+    let saved = true;
+    const status: TrainingAttempt['status'] = g.phase === 'ended' ? 'completed' : g.trainingClosed ? 'abandoned' : 'in_progress';
+    for (const p of g.players) {
+      if (p.isBot || !p.accountId) continue;
+      const attemptId = `${g.trainingAttemptId}:${p.id}`;
+      const row = g.final?.find(r => r.playerId === p.id);
+      const now = Date.now();
+      try {
+        const data = { ...(row ?? {}), decisions: p.decisions, book: p.book, sessions: p.sessionLogs ?? [], quizCorrect: p.quizCorrect, quizTotal: p.quizTotal,
+          metrics: p.skillSum, currentSession: g.session?.playerId === p.id ? { ...g.session, clientName: g.clients[g.session.clientId]?.name } : null, final: row ?? null };
+        await this.userRecords(p.accountId).saveAttempt({ attempt_id: attemptId, userId: p.accountId, status,
+          started_at: g.trainingStartedAt!, updated_at: now, room: g.code, name: p.name, round: g.round,
+          stage: g.session?.playerId === p.id ? g.session.step : g.turnStage, score: row?.score ?? null, grade: row?.grade ?? null, data });
+        if (status === 'completed' && row) {
+          const record: RecordInput = { attemptId, name: row.name, ts: g.trainingStartedAt!, score: row.score, grade: row.grade,
+            players: g.players.length, userId: p.accountId, room: g.code, data };
+          await this.userRecords(p.accountId).add(record);
+          const logs = p.sessionLogs ?? [];
+          await this.globalRecords().addSummary({ ...record, tags: logs.flatMap(s => s.tags || []), sessions: logs.length,
+            violations: logs.reduce((n, s) => n + (s.violations || 0), 0), warnings: logs.reduce((n, s) => n + (s.warnings || 0), 0) });
+        }
+        this.sendToAccount(p.accountId, { t: 'training_saved', attempt_id: attemptId, status: 'saved', training_status: status, updated_at: now });
+      } catch (e) {
+        saved = false;
+        console.warn('training checkpoint failed', e);
+        this.sendToAccount(p.accountId, { t: 'training_saved', attempt_id: attemptId, status: 'failed', training_status: status, updated_at: now });
+      }
+    }
+    return saved;
   }
 
   /** Completely clear room storage and scheduled alarm to prevent orphaned data */
   private async destroy() {
+    if (this.game && this.game.phase !== 'lobby') {
+      this.game.trainingClosed = true;
+      await this.ctx.storage.put('game', this.game);
+      if (!await this.saveTraining()) {
+        await this.ctx.storage.setAlarm(Date.now() + 60_000);
+        return;
+      }
+    }
     this.game = null;
     await this.ctx.storage.deleteAlarm().catch(() => {});
     await this.ctx.storage.deleteAll().catch(() => {});
@@ -289,6 +338,12 @@ export class Room extends DurableObject<Env> {
     if (!g) return this.err(ws, '房間不存在');
     const att = ws.deserializeAttachment() as Attachment;
     const me = att.playerId;
+    if (msg.t === 'retry_save') {
+      if (!me || !att.accountId || !g.players.some(p => p.id === me && p.accountId === att.accountId)) return this.err(ws, '請先登入並加入訓練');
+      await this.saveTraining();
+      return;
+    }
+    if (g.trainingClosed) return this.err(ws, '訓練已結束，正在保存紀錄');
     const isHost = !!me && g.hostId === me;
     const ctx = this.makeCtx(g.players.find(x => x.id === me));
 
@@ -440,6 +495,7 @@ export class Room extends DurableObject<Env> {
     await this.run(async () => {
       const g = this.game;
       if (!g) return;
+      if (g.trainingClosed) { await this.destroy(); return; }
 
       // Host never connected after creating the room: delete it. A lobby with the host present is kept
       // indefinitely (waiting for others is fine); the host leaving closes it in onLeave.
@@ -510,32 +566,6 @@ export class Room extends DurableObject<Env> {
       g.aiPending = false;
     }
     this.pushState();
-    // Save records only for logged-in players (guests not saved)
-    for (const row of g.final ?? []) {
-      const p = g.players.find(x => x.id === row.playerId)!;
-      if (row.isBot || !p.accountId) continue;
-      const record: RecordInput = {
-        name: row.name, ts: Date.now(), score: row.score, grade: row.grade,
-        players: g.players.length, userId: p.accountId, room: g.code,
-        data: { ...row, decisions: p.decisions, book: p.book, sessions: p.sessionLogs ?? [], quizCorrect: p.quizCorrect, quizTotal: p.quizTotal }
-      };
-      // 1. Write to personal standalone DO shard (10 GB dedicated capacity, isolated data, never overflows)
-      await this.userRecords(p.accountId).add(record)
-        .catch(e => console.warn('user record save failed', e));
-      const sessionLogs = p.sessionLogs ?? [];
-      const gameTags = sessionLogs.flatMap(s => s.tags || []);
-      const totalViolations = sessionLogs.reduce((acc, s) => acc + (s.violations || 0), 0);
-      const totalWarnings = sessionLogs.reduce((acc, s) => acc + (s.warnings || 0), 0);
-      // 2. Write to global lightweight summary (for trainer backend high-efficiency aggregation)
-      await this.globalRecords().addSummary({
-        name: record.name, ts: record.ts, score: record.score, grade: record.grade,
-        players: record.players, userId: record.userId, room: record.room,
-        tags: gameTags,
-        sessions: sessionLogs.length,
-        violations: totalViolations,
-        warnings: totalWarnings,
-      }).catch(e => console.warn('global summary save failed', e));
-    }
     await this.ctx.storage.setAlarm(Date.now() + ENDED_SWEEP_MS);
   }
 

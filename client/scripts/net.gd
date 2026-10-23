@@ -10,6 +10,10 @@ signal reaction(from_name: String, emoji: String)
 signal connection_changed(online: bool)
 signal quota_changed(used: int, limit: int, exhausted: bool)
 signal auth_changed()
+signal training_save_changed(status: Dictionary)
+var training_save_status: Dictionary = {"local": "idle", "cloud": "idle", "message": ""}
+var _journal = preload("res://scripts/training_journal.gd").new()
+var _training_cloud: Dictionary = {}
 ## Streaming fragment of client response during interview (currently accumulated text)
 signal stream_text(text: String)
 ## Stream client answer finished (coach tip may still be generating)
@@ -59,6 +63,8 @@ func _ready() -> void:
 	# Editor preview (@tool) only requires a state container, without reading settings or connecting
 	if Engine.is_editor_hint():
 		return
+	_journal.load_records()
+	UI.load_preferences()
 	if OS.has_feature("web"):
 		# origin + mount prefix (e.g. https://host/insure-quest when served under a Route)
 		var origin = JavaScriptBridge.eval("window.location.origin + window.location.pathname.replace(/\\/[^\\/]*$/, '')", true)
@@ -336,7 +342,10 @@ func logout() -> Array:
 
 
 func delete_account() -> Array:
+	var owner := training_owner()
 	var r: Array = await http_json(HTTPClient.METHOD_POST, "/api/account/delete", {})
+	if bool(r[0]):
+		_journal.delete_owner(owner)
 	ai_quota = {"used": 0, "limit": 0}
 	ai_enabled = false
 	avatar_tex = null
@@ -354,6 +363,33 @@ func google_sign_in() -> void:
 ## Direct OAuth redirect (fallback entry point when FedCM is disabled and in cooldown)
 func google_sign_in_redirect() -> void:
 	GoogleAuth.sign_in_redirect()
+
+
+## Name used for 測試登入: profile name → saved name → 測試顧問
+func dev_login_name() -> String:
+	var n: String = PlayerProfile.player_name.strip_edges() if PlayerProfile.player_profile_created else ""
+	if n == "":
+		n = player_name.strip_edges()
+	return n if n != "" else "測試顧問"
+
+
+## 測試登入 URL (local dev server only; the server answers 404 elsewhere)
+func dev_login_url(name := "") -> String:
+	var n := name.strip_edges() if name.strip_edges() != "" else dev_login_name()
+	return base_url + "/api/auth/dev-login?name=" + n.uri_encode() + "&return=/"
+
+
+## 測試登入: leaves the page for the dev-login redirect, which comes back logged in
+func login_dev(name := "") -> void:
+	open_url(dev_login_url(name))
+
+
+## Navigates the page on web (same tab), opens the system browser elsewhere
+func open_url(url: String) -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.location.href=%s" % JSON.stringify(url))
+	else:
+		OS.shell_open(url)
 
 
 func fetch_profile(user_id: String = "") -> Array:
@@ -410,7 +446,7 @@ func join_local() -> void:
 	_local_connected_emitted = false
 	room_code = "LOCAL"
 	_local_game_count += 1
-	_game_id = "LOCAL_%d_%d" % [int(Time.get_unix_time_from_system()), _local_game_count]
+	_game_id = "LOCAL_" + Crypto.new().generate_random_bytes(16).hex_encode()
 	player_id = ""
 	state = {}
 	if OS.has_feature("web") and not Engine.is_editor_hint():
@@ -427,6 +463,12 @@ func _send_local_hello() -> void:
 
 
 func leave(forget_seat := true) -> void:
+	if not Engine.is_editor_hint():
+		var saved: bool = _journal.close_attempt()
+		if not saved:
+			training_save_status.local = "failed"
+			training_save_status.message = _journal.last_error
+			training_save_changed.emit(training_save_status)
 	if _local:
 		if OS.has_feature("web") and not Engine.is_editor_hint():
 			var local_iface = JavaScriptBridge.get_interface("iqLocal")
@@ -623,7 +665,18 @@ func _handle(text: String) -> void:
 			welcomed.emit(m)
 		"state":
 			state = m["state"]
+			if not spectator and str(state.get("phase", "")) in ["playing", "ended"]:
+				var saved: bool = _journal.checkpoint(state, player_id, get_game_id(), training_owner())
+				training_save_status.local = "saved" if saved else "failed"
+				training_save_status.message = "" if saved else _journal.last_error
+				training_save_status.cloud = "local_only" if _local or not is_logged_in() else _training_cloud.get(_journal.active_id, "pending")
+				training_save_changed.emit(training_save_status)
 			state_changed.emit(state)
+		"training_saved":
+			_training_cloud[str(m.get("attempt_id", ""))] = str(m.get("status", "failed"))
+			if str(m.get("attempt_id", "")) == _journal.active_id:
+				training_save_status.cloud = str(m.get("status", "failed"))
+				training_save_changed.emit(training_save_status)
 		"error":
 			server_error.emit(str(m.get("message", "錯誤")))
 		"closed":
@@ -648,6 +701,27 @@ func _handle(text: String) -> void:
 
 
 # ───────── State Helpers ─────────
+
+func training_owner() -> String:
+	return str(get_user().get("id", "guest")) if is_logged_in() else "guest"
+
+func local_training_attempts() -> Array:
+	return _journal.list_records(training_owner())
+
+func retry_training_save() -> void:
+	var saved: bool = _journal.retry()
+	training_save_status.local = "saved" if saved else "failed"
+	training_save_status.message = "" if saved else _journal.last_error
+	if not _local and is_logged_in() and not room_code.is_empty():
+		training_save_status.cloud = "pending" if is_online() else "failed"
+		send({"t": "retry_save"})
+	training_save_changed.emit(training_save_status)
+
+func fetch_training_attempts(offset: int = 0) -> Array:
+	return await http_json(HTTPClient.METHOD_GET, "/api/training-attempts?limit=50&offset=%d" % offset)
+
+func fetch_training_attempt(id: String) -> Array:
+	return await http_json(HTTPClient.METHOD_GET, "/api/training-attempts/" + id.uri_encode())
 
 func me() -> Dictionary:
 	for p in state.get("players", []):

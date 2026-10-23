@@ -13,7 +13,7 @@ afterEach(() => { clock = realNow(); });
 
 function fakeEnv() {
   const saved: unknown[] = [];
-  const stub = { add: async (r: unknown) => { saved.push(r); }, addSummary: async () => {}, aiUsage: async () => 0 };
+  const stub = { saveAttempt: async () => {}, listAttempts: async () => ({ attempts: [] }), add: async (r: unknown) => { saved.push(r); }, addSummary: async () => {}, aiUsage: async () => 0 };
   const RECORDS = { idFromName: (n: string) => n, get: () => stub };
   return { env: { AI_PROVIDER: 'rules', AI_DAILY_LIMIT: '10', RECORDS } as any, saved };
 }

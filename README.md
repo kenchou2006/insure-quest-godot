@@ -1,4 +1,4 @@
-# INSURE QUEST 人生顧問局 (Life Advisor Bureau) (Godot Web Edition)
+# INSURE QUEST 人生顧問局 (Life Advisor Bureau)
 
 BNP Paribas Cardif InsurHack Topic 1-1 "Insurance Monopoly": A multiplayer web game using Monopoly mechanics to train insurance advisors on "needs-based selling and compliance communication".
 Supports 2–4 players online, solo practice against bot advisors, AI clients, and AI coach; installable as a PWA.
@@ -43,6 +43,8 @@ web/           Godot web export output (build artifact, not tracked in version c
 - (Optional) `pip install fonttools`: only needed when regenerating font subsets
 
 ## Local Development
+
+On Windows, double-click `start-server.cmd` in the project root to build the web client and start the local server at `http://127.0.0.1:8787/insure-quest/` (the same flow as `.claude/launch.json`). Requires Node.js, Godot and its Web export templates; the Windows launcher uses PowerShell and does not require Git Bash. The launcher installs missing server dependencies and finds Godot on PATH or in Downloads; alternatively set the `GODOT` environment variable. Keep the terminal open while playing; press Ctrl+C to stop. From a terminal, use `start-server.cmd -SkipBuild` to reuse the current web build, or `start-server.cmd -Port 8788` to select another port.
 
 ```bash
 cd server
@@ -218,10 +220,11 @@ The same UI dynamically switches layouts based on window CSS dimensions (`main.g
 PWA is enabled during Godot export: generates manifest, icons, offline page, and service worker; supports 「加入主畫面」(Add to Home Screen) for fullscreen launch in portrait or landscape.
 `pack-web.mjs` updates the service worker cache manifest to the actually downloaded `index.wasm.gz`; subsequent launches load the engine from cache.
 An active server connection is required to play (multiplayer and AI run server-side); an offline page is shown when disconnected.
-After deploying updates, installed users first load the cached previous version, and the main menu displays 「有新版本，點此更新」("New version available, click here to update"); the same applies during development (or check "Update on reload" in DevTools).
+After deploying updates, the page checks `version.json` while loading and, if a newer build exists, activates it and reloads automatically before the game starts (no update prompt). The main menu repeats the check and updates silently as well.
 
 ## Licensing and Assets
 
 - Font: Noto Sans TC (SIL Open Font License).
 - Illustrations (scenes, title, client portraits) are AI-generated with FLUX: `server/tools/generate-all-scenes.mjs` and `server/tools/generate-portraits.mjs` call the local-only `/api/dev/gen-img` (needs `DEV_LOGIN=1`), which uses NVIDIA NIM `flux.1-dev` first and Workers AI `flux-1-schnell` as fallback (NIM's content filter rejects some wordings such as numeric ages or certain clothing terms, so each portrait also has a short NIM-safe `nim` description that is retried on NIM before Workers AI is used).
 - Client scenarios and numerical values are for training simulation purposes only; coverage cards represent functional concepts, do not correspond to any real insurance products, and do not constitute insurance or investment advice.
+

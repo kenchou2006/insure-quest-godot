@@ -1,0 +1,721 @@
+@tool
+extends Control
+## Aerial HQ map board: cinematic night aerial of Taipei with 101, the 24 stations as labelled chips
+## (icon + number + name) on a dashed loop. The current station is the large gold chip; the main
+## action button is docked right under it (see get_inner_rect). Positions are computed from this
+## control's own size every frame, so chips stay on the route at any window size.
+## Same API as board.gd / board_hq.gd: set_data / freeze_movement / get_inner_rect / current_index.
+## 節點狀態：已完成降低亮度並打勾；目前位置放大 1.08 倍、法巴綠框加細金外框；下一站輕微呼吸；
+## 未解鎖降低亮度並顯示鎖頭；特殊事件（稽核、市場波動）只加一個紅色小警示標記。
+## play_unlock：下一站解鎖時，金色細線沿路線從目前位置前進到下一站。
+
+const ToolIcon := preload("res://scripts/ui/board_hq.gd").ToolIcon
+## A clean aerial without text dropped here replaces the default map
+const MAP_PATHS := ["res://assets/hq/hq_aerial.webp", "res://assets/unified/board.webp"]
+## Image point kept near the board centre (101 sits right of centre in the default map)
+const FOCUS := Vector2(0.6, 0.52)
+## 沿空拍圖道路描出的路線（圖片座標 0..1，順時針：底部中央 → 左側斜路 → 上緣往 101 → 101 環路
+## → 右側弧形高架 → 底部道路）。24 個站依長度平均落在這條路上，跟著地圖縮放與平移。
+## 圖片被裁切、路線放不下時（例如直向手機）改用下面的圓角環線。
+const ROAD := [Vector2(0.62, 0.659), Vector2(0.559, 0.699), Vector2(0.499, 0.734), Vector2(0.466, 0.744), Vector2(0.452, 0.705), Vector2(0.447, 0.669), Vector2(0.433, 0.639), Vector2(0.41, 0.617), Vector2(0.379, 0.591), Vector2(0.35, 0.566), Vector2(0.32, 0.54), Vector2(0.3, 0.5), Vector2(0.31, 0.47), Vector2(0.35, 0.445), Vector2(0.4, 0.417), Vector2(0.45, 0.401), Vector2(0.5, 0.385), Vector2(0.55, 0.369), Vector2(0.6, 0.344), Vector2(0.65, 0.318), Vector2(0.684, 0.348), Vector2(0.71, 0.333), Vector2(0.739, 0.325), Vector2(0.767, 0.333), Vector2(0.796, 0.348), Vector2(0.821, 0.367), Vector2(0.844, 0.393), Vector2(0.864, 0.423), Vector2(0.881, 0.453), Vector2(0.87, 0.496), Vector2(0.853, 0.515), Vector2(0.8588, 0.543), Vector2(0.878, 0.556), Vector2(0.899, 0.569), Vector2(0.92, 0.585), Vector2(0.9375, 0.598), Vector2(0.948, 0.6165), Vector2(0.955, 0.6375), Vector2(0.96, 0.6585), Vector2(0.962, 0.677), Vector2(0.96, 0.695), Vector2(0.953, 0.706), Vector2(0.9375, 0.715), Vector2(0.911, 0.724), Vector2(0.885, 0.729), Vector2(0.859, 0.732), Vector2(0.8325, 0.732), Vector2(0.806, 0.729), Vector2(0.78, 0.724), Vector2(0.742, 0.697), Vector2(0.673, 0.659)]
+## 道路路線邊界框中心（圖片座標 0..1，[0.3..0.962, 0.318..0.744] 之中心）
+const ROAD_CENTER := Vector2(0.631, 0.531)
+
+const C_BG := Color("#062F2A")
+const C_CARD := Color("#0D4038")
+const C_GREEN := Color("#00A86B")
+const C_TEXT := Color("#F3F0E7")
+const C_MUTED := Color("#AABCB5")
+const C_GOLD := Color("#C6A15B")
+const C_RED := Color("#D9685F")
+const AHEAD := 6
+## Seconds the pawn takes per station (0.18–0.25 s), each with a step tone and a gold ripple
+const STEP_SECONDS := 0.22
+
+var tiles: Array = []
+var players: Array = []
+var territory: Dictionary = {}
+var current_id := ""
+## Line under the title (round / whose turn), set by game.gd
+var title_sub := ""
+var _shown: Dictionary = {}
+var _freeze_timer := 0.0
+var _zoom := 1.0
+var _pan := Vector2.ZERO
+var _hover := -1
+var _selected := -1
+var _pulse := 0.0
+var _map: Texture2D
+var _tools: HBoxContainer
+var _chips: Array = []
+var _dots: Array = []
+var _img_at := Vector2.ZERO
+var _img_scale := 1.0
+## The painted 人生顧問局 title; the game screen turns it off (its header shows the cover logo)
+var show_title := true
+## Gold ripples left where the pawn passes: [station index, age]
+var _ripples: Array = []
+var _view_tween: Tween
+## 下一站解鎖的金線：起點、終點、進度 0..1（< 0 表示沒有在播放）、淡出
+var _unlock_from := -1
+var _unlock_to := -1
+var _unlock_t := -1.0
+var _unlock_fade := 0.0
+## 特殊事件站（只加紅色小警示）
+const EVENT_KINDS := ["audit", "market"]
+
+
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	clip_contents = true
+	for path: String in MAP_PATHS:
+		if ResourceLoader.exists(path):
+			_map = load(path)
+			break
+	_tools = HBoxContainer.new()
+	_tools.add_theme_constant_override("separation", 6)
+	add_child(_tools)
+	for spec: Array in [["in", "放大"], ["out", "縮小"], ["reset", "復位"]]:
+		var b: Button = ToolIcon.new(spec[0], spec[1])
+		b.pressed.connect(_tool_action.bind(spec[0]))
+		_tools.add_child(b)
+	resized.connect(_layout)
+	mouse_exited.connect(func(): _hover = -1)
+	_layout()
+
+
+func _layout() -> void:
+	if _tools == null:
+		return
+	_tools.reset_size()
+	_tools.position = Vector2(size.x - _tools.size.x - 14, 14)
+	_clamp_pan()
+
+
+# ───────── Public API ─────────
+
+func set_data(board: Array, ps: Array, current: String, terr: Dictionary = {}) -> void:
+	tiles = board.duplicate(true)
+	players = ps
+	current_id = current
+	territory = terr
+	var live_ids: Array = []
+	for p: Dictionary in ps:
+		var id := str(p.get("id", ""))
+		live_ids.append(id)
+		if not _shown.has(id):
+			_shown[id] = float(p.get("pos", 0))
+	for id: String in _shown.keys():
+		if not live_ids.has(id):
+			_shown.erase(id)
+
+
+func freeze_movement(duration: float) -> void:
+	_freeze_timer = maxf(duration, 0.0)
+
+
+## 跳過動畫：棋子直接出現在目前位置
+func snap_pawns() -> void:
+	for p: Dictionary in players:
+		_shown[str(p.get("id", ""))] = float(p.get("pos", 0))
+
+
+func current_index() -> int:
+	return int(floorf(float(_shown.get(current_id, 0.0)) + 0.001)) % 24
+
+
+## Dock for the main action button: just under the current station chip, kept inside the board
+func get_inner_rect() -> Rect2:
+	var w := 220.0
+	var h := 56.0
+	if _chips.size() != 24:
+		return Rect2(Vector2((size.x - w) * 0.5, size.y - h - 24), Vector2(w, h))
+	var chip: Rect2 = _chips[current_index()]
+	# Below the chip on the upper half of the loop, above it (towards the map centre) on the lower half
+	var lower := chip.get_center().y > size.y * 0.5
+	var at := Vector2(chip.get_center().x - w * 0.5, chip.position.y - h - 10 if lower else chip.end.y + 10)
+	if at.y < 8 or at.y + h > size.y - 8:
+		at.y = chip.end.y + 10 if lower else chip.position.y - h - 10
+	at.x = clampf(at.x, 8, size.x - w - 8)
+	return Rect2(at, Vector2(w, h))
+
+
+## View of the map around a station, for the task card picture
+func station_crop(i: int) -> Texture2D:
+	if _map == null or _dots.size() != 24:
+		return _map
+	var img := _map.get_size()
+	var center: Vector2 = ((_dots[i] as Vector2) - _img_at) / maxf(0.001, _img_scale)
+	var region_size := Vector2(img.x * 0.34, img.x * 0.34 / 3.0)
+	var region := Rect2(center - region_size * 0.5, region_size)
+	region.position = region.position.clamp(Vector2.ZERO, img - region_size)
+	var atlas := AtlasTexture.new()
+	atlas.atlas = _map
+	atlas.region = region
+	return atlas
+
+
+# ───────── Geometry ─────────
+
+func _compact() -> bool:
+	return size.x < 520.0
+
+
+## Loop as a rounded rectangle in board space (leaves the top-left for the title); with the road
+## route, the box around the road points
+func _loop_rect() -> Rect2:
+	if _use_road():
+		var xf := _img_xform()
+		var road := _road_points(xf[0], xf[1])
+		var box := Rect2(road[0], Vector2.ZERO)
+		for q in road:
+			box = box.expand(q)
+		return box
+	var top := 0.24 if not _compact() else 0.16
+	return Rect2(size * Vector2(0.1, top), size * Vector2(0.8, 0.8 - top))
+
+
+## 地圖在這個縮放與平移下的位置：[左上角, 縮放比例]（與 _draw 畫圖片的算法相同）
+func _img_xform(z := 1.0, pan := Vector2.ZERO) -> Array:
+	if _map == null or size.x < 10.0 or size.y < 10.0:
+		return [Vector2.ZERO, 1.0]
+	var img := _map.get_size()
+	var base_sc := maxf(size.x / img.x, size.y / img.y) * 1.08
+	# 優先保持預設 FOCUS（101 偏右）；若路線會超出留邊則平移至 ROAD 邊界框置中
+	var focus_at := (size * 0.5 - img * FOCUS * base_sc).clamp(size - img * base_sc, Vector2.ZERO)
+	var f := FOCUS
+	var inner := Rect2(Vector2.ZERO, size).grow(-24.0)
+	for q: Vector2 in ROAD:
+		if not inner.has_point(focus_at + q * img * base_sc):
+			f = ROAD_CENTER
+			break
+	var sc := base_sc * z
+	var at := size * 0.5 - img * f * sc + pan
+	at = at.clamp(size - img * sc, Vector2.ZERO)
+	return [at, sc]
+
+
+## 道路路線整條都在棋盤內才使用（留 24px 邊）
+func _use_road() -> bool:
+	if _map == null or size.x < 10.0 or size.y < 10.0:
+		return false
+	var xf := _img_xform()
+	var img := _map.get_size()
+	var inner := Rect2(Vector2.ZERO, size).grow(-24.0)
+	for q: Vector2 in ROAD:
+		if not inner.has_point((xf[0] as Vector2) + q * img * float(xf[1])):
+			return false
+	return true
+
+
+func _road_points(at: Vector2, sc: float) -> PackedVector2Array:
+	var img := _map.get_size()
+	var out := PackedVector2Array()
+	for q: Vector2 in ROAD:
+		out.append(at + q * img * sc)
+	out.append(out[0])
+	return out
+
+
+func _loop_points() -> PackedVector2Array:
+	if _use_road():
+		var xf := _img_xform()
+		return _road_points(xf[0], xf[1])
+	var r := _loop_rect()
+	var rad := minf(r.size.x, r.size.y) * 0.16
+	var pts := PackedVector2Array()
+	# Start at bottom centre and go left (clockwise on screen): bottom, left, top, right
+	pts.append(Vector2(r.get_center().x, r.end.y))
+	var corners := [
+		[Vector2(r.position.x + rad, r.end.y - rad), PI * 0.5],
+		[Vector2(r.position.x + rad, r.position.y + rad), PI],
+		[Vector2(r.end.x - rad, r.position.y + rad), PI * 1.5],
+		[Vector2(r.end.x - rad, r.end.y - rad), 0.0],
+	]
+	for c: Array in corners:
+		for k in range(9):
+			var a: float = c[1] + PI * 0.5 * k / 8.0
+			pts.append((c[0] as Vector2) + Vector2(cos(a), sin(a)) * rad)
+	pts.append(Vector2(r.get_center().x, r.end.y))
+	return pts
+
+
+func _to_view(p: Vector2) -> Vector2:
+	return (p - size * 0.5) * _zoom + size * 0.5 + _pan
+
+
+## Point at distance fraction t (0..1) along the loop
+func _along(pts: PackedVector2Array, lengths: PackedFloat32Array, total: float, t: float) -> Vector2:
+	var d := fposmod(t, 1.0) * total
+	for i in range(lengths.size()):
+		if d <= lengths[i] or i == lengths.size() - 1:
+			var prev := lengths[i - 1] if i > 0 else 0.0
+			var seg := maxf(0.001, lengths[i] - prev)
+			return pts[i].lerp(pts[i + 1], clampf((d - prev) / seg, 0, 1))
+	return pts[0]
+
+
+# ───────── Input ─────────
+
+func _tool_action(kind: String) -> void:
+	match kind:
+		"in": _set_zoom(_zoom * 1.25)
+		"out": _set_zoom(_zoom / 1.25)
+		"reset":
+			_zoom = 1.0
+			_pan = Vector2.ZERO
+			_selected = -1
+
+
+func _set_zoom(z: float) -> void:
+	var old := _zoom
+	_zoom = clampf(z, 1.0, 2.5)
+	_pan *= _zoom / old
+	_clamp_pan()
+
+
+func _clamp_pan() -> void:
+	var limit := size * (_zoom - 1.0) * 0.5
+	_pan = _pan.clamp(-limit, limit)
+
+
+func _chip_at(p: Vector2) -> int:
+	for i in range(_chips.size()):
+		if (_chips[i] as Rect2).grow(4).has_point(p):
+			return i
+	return -1
+
+
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		if event.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT) and _zoom > 1.0:
+			_pan += event.relative
+			_clamp_pan()
+			accept_event()
+		var h := _chip_at(event.position)
+		if h != _hover:
+			_hover = h
+			mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if h >= 0 else Control.CURSOR_ARROW
+	elif event is InputEventMouseButton and event.pressed:
+		match event.button_index:
+			MOUSE_BUTTON_WHEEL_UP:
+				_set_zoom(_zoom * 1.1)
+				accept_event()
+			MOUSE_BUTTON_WHEEL_DOWN:
+				_set_zoom(_zoom / 1.1)
+				accept_event()
+			MOUSE_BUTTON_LEFT:
+				var t := _chip_at(event.position)
+				_selected = -1 if t == _selected else t
+
+
+func _process(delta: float) -> void:
+	_pulse += delta
+	_freeze_timer = maxf(0.0, _freeze_timer - delta)
+	for p: Dictionary in players:
+		var id := str(p.get("id", ""))
+		var before: float = _shown.get(id, float(p.get("pos", 0)))
+		var diff := fposmod(float(p.get("pos", 0)) - before, 24.0)
+		if _freeze_timer <= 0 and diff > 0.001:
+			var after := fposmod(before + minf(diff, delta / STEP_SECONDS), 24.0)
+			_shown[id] = after
+			if int(floorf(before)) != int(floorf(after)) and id == current_id and not Engine.is_editor_hint():
+				AudioManager.play("piece_step")
+				_ripples.append([int(floorf(after)) % 24, 0.0])
+	for r in _ripples:
+		r[1] = float(r[1]) + delta
+	_ripples = _ripples.filter(func(r): return float(r[1]) < 0.55)
+	if _unlock_t >= 0.0 and _unlock_t < 1.0:
+		_unlock_t = minf(1.0, _unlock_t + delta / maxf(0.1, _unlock_dur))
+	elif _unlock_t >= 1.0:
+		_unlock_fade += delta
+		if _unlock_fade > 0.6:
+			_unlock_t = -1.0
+	queue_redraw()
+
+
+var _unlock_dur := 1.2
+
+
+## 下一站解鎖：金色細線沿路線由 from_i 前進到 to_i，回傳播放秒數（沒有下一站時為 0）
+func play_unlock(from_i: int, to_i: int, dur := 1.2) -> float:
+	if to_i < 0 or tiles.size() != 24:
+		return 0.0
+	_unlock_from = posmod(from_i, 24)
+	_unlock_to = posmod(to_i, 24)
+	_unlock_dur = 0.01 if UI.is_animation_disabled() else dur
+	_unlock_t = 0.0
+	_unlock_fade = 0.0
+	return _unlock_dur + 0.1
+
+
+func unlock_playing() -> bool:
+	return _unlock_t >= 0.0 and _unlock_t < 1.0
+
+
+## Camera eases onto a station (arrival) — zoom 1.35 centred on it, kept inside the map
+func focus_station(i: int, dur := 0.6) -> void:
+	if _chips.size() != 24 or i < 0:
+		return
+	var raw := _raw_dot(i)
+	var z := 1.35
+	var limit := size * (z - 1.0) * 0.5
+	var target_pan := (-(raw - size * 0.5) * z).clamp(-limit, limit)
+	_tween_view(z, target_pan, dur)
+
+
+## Camera back to the whole route
+func reset_view(dur := 0.5) -> void:
+	if is_equal_approx(_zoom, 1.0) and _pan.length() < 0.5:
+		return
+	_tween_view(1.0, Vector2.ZERO, dur)
+
+
+func _tween_view(z: float, pan: Vector2, dur: float) -> void:
+	if _view_tween and _view_tween.is_valid():
+		_view_tween.kill()
+	if UI.is_animation_disabled() or dur <= 0.0:
+		_zoom = z
+		_pan = pan
+		return
+	var z0 := _zoom
+	var p0 := _pan
+	_view_tween = create_tween()
+	_view_tween.tween_method(func(t: float):
+		_zoom = lerpf(z0, z, t)
+		_pan = p0.lerp(pan, t)
+	, 0.0, 1.0, dur).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+
+
+## Station position on the route before the camera transform
+func _raw_dot(i: int) -> Vector2:
+	var raw := _loop_points()
+	var lengths := PackedFloat32Array()
+	var total := 0.0
+	for k in range(raw.size() - 1):
+		total += raw[k].distance_to(raw[k + 1])
+		lengths.append(total)
+	return _along(raw, lengths, total, float(i) / 24.0)
+
+
+# ───────── Drawing ─────────
+
+func _draw() -> void:
+	draw_rect(Rect2(Vector2.ZERO, size), C_BG)
+	if _map:
+		var xf := _img_xform(_zoom, _pan)
+		_img_at = xf[0]
+		_img_scale = xf[1]
+		draw_texture_rect(_map, Rect2(_img_at, _map.get_size() * _img_scale), false)
+	# Gentle grade toward the brand palette and a vignette so chips read clearly
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.16, 0.14, 0.22))
+	var font := get_theme_default_font()
+	if tiles.size() != 24:
+		if show_title:
+			_draw_title(font)
+		return
+
+	var raw := _loop_points()
+	var pts := PackedVector2Array()
+	if _use_road():
+		# 沿道路：直接用畫圖片時的位置，縮放與平移後仍貼在路上
+		pts = _road_points(_img_at, _img_scale)
+	else:
+		for p in raw:
+			pts.append(_to_view(p))
+	var lengths := PackedFloat32Array()
+	var total := 0.0
+	for i in range(pts.size() - 1):
+		total += pts[i].distance_to(pts[i + 1])
+		lengths.append(total)
+	# Dashed route
+	var dash := 9.0
+	var gap := 7.0
+	var d := 0.0
+	while d < total:
+		var a := _along(pts, lengths, total, d / total)
+		var b := _along(pts, lengths, total, minf(d + dash, total) / total)
+		draw_line(a, b, Color(1, 1, 1, 0.6), 2.0, true)
+		d += dash + gap
+
+	var cur := current_index() if not players.is_empty() else -1
+	var next_i: int = GameState.next_node() if not Engine.is_editor_hint() else -1
+	var visited: Array = GameState.completed_nodes() if not Engine.is_editor_hint() else []
+	var dots: Array = []
+	for i in range(24):
+		dots.append(_along(pts, lengths, total, float(i) / 24.0))
+	_dots = dots
+	_chips.resize(24)
+	var r := _loop_rect()
+	var compact := _compact()
+	# Chips: horizontal edges alternate inside / outside, vertical edges sit inside the loop
+	for i in range(24):
+		var dot: Vector2 = dots[i]
+		var tname := str((tiles[i] as Dictionary).get("name", ""))
+		var is_cur := i == cur
+		# Only the current and next stations carry their names; the rest stay quiet (number + icon)
+		var named := is_cur or i == next_i or i == _hover or i == _selected
+		var label := "%02d %s" % [i, tname] if (named and (not compact or is_cur)) else "%02d" % i
+		var fs := 16 if is_cur else (12 if not compact else 11)
+		var tw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		var icon := 18.0 if is_cur else 14.0
+		var w := tw + icon + 26.0
+		# Room for the check (visited) or lock (beyond one roll) mark at the chip's end
+		var ahead_i := posmod(i - cur, 24) if cur >= 0 else 24
+		if not is_cur and (visited.has(i) or (ahead_i > AHEAD and not named)):
+			w += 14.0
+		var h := 40.0 if is_cur else 28.0
+		if is_cur:
+			# 目前位置放大 1.08 倍
+			w *= 1.08
+			h *= 1.08
+		var rel := Vector2((dot.x - _to_view(r.position).x) / maxf(1.0, r.size.x * _zoom), (dot.y - _to_view(r.position).y) / maxf(1.0, r.size.y * _zoom))
+		var chip: Rect2
+		# 路線左右兩側的站：標籤左右交錯，避免相鄰的站疊在一起
+		var side_band := 0.12 if _use_road() else 0.08
+		if rel.x < side_band or rel.x > 1.0 - side_band:
+			var outward := i % 2 == 0
+			var to_right := (rel.x < 0.5) != outward
+			chip = Rect2(dot + (Vector2(14, -h * 0.5) if to_right else Vector2(-14 - w, -h * 0.5)), Vector2(w, h))
+		else:
+			var up := (i % 2 == 0) == (rel.y > 0.5)
+			chip = Rect2(dot + Vector2(-w * 0.5, -h - 14 if up else 14), Vector2(w, h))
+		chip.position = chip.position.clamp(Vector2(4, 4), size - chip.size - Vector2(4, 4))
+		_chips[i] = chip
+	# Draw non-current chips first so the current one sits on top
+	var order: Array = range(24)
+	if cur >= 0:
+		order.erase(cur)
+		order.append(cur)
+	for i: int in order:
+		var steps := posmod(i - cur, 24) if cur >= 0 else 24
+		var emphasis := i == cur or i == _hover or i == _selected or i == next_i
+		var locked := steps > AHEAD and not visited.has(i) and not emphasis
+		var alpha := 1.0 if emphasis or steps <= AHEAD else (0.5 if locked else 0.72)
+		# 已完成的站降低亮度（打勾在 _draw_state）
+		if visited.has(i) and not emphasis:
+			alpha = minf(alpha, 0.6)
+		_draw_chip(font, i, _chips[i], dots[i], i == cur, steps > 0 and steps <= AHEAD, alpha, compact, i == cur or i == next_i or i == _hover or i == _selected)
+		_draw_state(font, i, _chips[i], dots[i], i == cur, i == next_i and i != cur, visited.has(i) and i != cur, locked)
+	_draw_pawns(pts, lengths, total)
+	if _unlock_t >= 0.0:
+		_draw_unlock(pts, lengths, total, dots)
+	for rp in _ripples:
+		var age: float = float(rp[1]) / 0.55
+		var at: Vector2 = dots[int(rp[0])]
+		draw_arc(at, 6.0 + 22.0 * age, 0, TAU, 32, Color(C_GOLD, 0.8 * (1.0 - age)), 2.0, true)
+	if show_title:
+		_draw_title(font)
+
+
+## Station state marks: gold outer frame on the current chip, a breathing green ring and 下一站 tag
+## on the next client station, a check on visited stations, a lock on stations beyond one roll
+func _draw_state(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, next: bool, done: bool, locked: bool) -> void:
+	if current:
+		var outer := StyleBoxFlat.new()
+		outer.draw_center = false
+		outer.set_border_width_all(1)
+		outer.border_color = Color(C_GOLD, 0.55)
+		outer.set_corner_radius_all(15)
+		draw_style_box(outer, chip.grow(4))
+		draw_arc(dot, 15.0, 0, TAU, 32, Color(C_GOLD, 0.9), 1.5, true)
+	if next:
+		var b := 0.5 + 0.5 * sin(_pulse * 2.4)
+		if UI.reduce_motion:
+			b = 0.6
+		draw_arc(dot, 8.0 + b * 4.0, 0, TAU, 28, Color(C_GREEN, 0.45 + 0.4 * b), 2.0, true)
+		var tag := "下一站"
+		var tw := font.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+		var r := Rect2(Vector2(chip.get_center().x - tw * 0.5 - 8, chip.position.y - 22), Vector2(tw + 16, 18))
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(C_GREEN, 0.9)
+		sb.set_corner_radius_all(9)
+		draw_style_box(sb, r)
+		draw_string(font, Vector2(r.position.x + 8, r.position.y + 14), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, C_TEXT)
+	if done:
+		var c := chip.end - Vector2(9, chip.size.y * 0.5)
+		draw_circle(c, 6.0, Color(C_GREEN, 0.95))
+		draw_polyline(PackedVector2Array([c + Vector2(-3, 0), c + Vector2(-1, 2.5), c + Vector2(3.5, -2.5)]), C_TEXT, 1.5, true)
+	elif locked:
+		var lc := chip.end - Vector2(9, chip.size.y * 0.5)
+		draw_rect(Rect2(lc + Vector2(-4, -1), Vector2(8, 6)), Color(C_TEXT, 0.55), false, 1.2)
+		draw_arc(lc + Vector2(0, -1), 2.8, PI, TAU, 8, Color(C_TEXT, 0.55), 1.2, true)
+
+
+## 解鎖金線：沿路線從目前位置畫到下一站，頭端一個亮點；播完後淡出，下一站外圈亮一下
+func _draw_unlock(pts: PackedVector2Array, lengths: PackedFloat32Array, total: float, dots: Array) -> void:
+	var span := float(posmod(_unlock_to - _unlock_from, 24))
+	if span <= 0.0:
+		span = 24.0
+	var a := float(_unlock_from) / 24.0
+	var reach := span / 24.0 * clampf(_unlock_t, 0.0, 1.0)
+	var fade := 1.0 - clampf(_unlock_fade / 0.6, 0.0, 1.0)
+	var line := PackedVector2Array()
+	var n := maxi(2, int(span * 6.0 * clampf(_unlock_t, 0.0, 1.0)) + 2)
+	for k in range(n):
+		line.append(_along(pts, lengths, total, a + reach * float(k) / float(n - 1)))
+	draw_polyline(line, Color(C_GOLD, 0.95 * fade), 3.0, true)
+	var head: Vector2 = line[line.size() - 1]
+	draw_circle(head, 5.0, Color(C_GOLD, fade))
+	draw_circle(head, 10.0, Color(C_GOLD, 0.25 * fade))
+	if _unlock_t >= 1.0 and _unlock_to < dots.size():
+		draw_arc(dots[_unlock_to], 14.0 + 10.0 * clampf(_unlock_fade / 0.6, 0.0, 1.0), 0, TAU, 32, Color(C_GOLD, fade), 2.0, true)
+
+
+## Title block drawn last, on a soft backdrop, so station chips never cover it
+func _draw_title(font: Font) -> void:
+	var t := "人生顧問局"
+	var fs := 26 if not _compact() else 20
+	var sub_w := font.get_string_size(title_sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	var back := StyleBoxFlat.new()
+	back.bg_color = Color(C_BG, 0.72)
+	back.set_corner_radius_all(12)
+	draw_style_box(back, Rect2(Vector2(8, 8), Vector2(maxf(sub_w, font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 20) + 36, fs + (60 if title_sub != "" else 32))))
+	draw_rect(Rect2(Vector2(18, 16), Vector2(2, fs + 14)), C_GOLD)
+	draw_string(font, Vector2(30, 16 + fs), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, C_TEXT)
+	var tw := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	draw_line(Vector2(18, 24 + fs + 6), Vector2(30 + tw + 20, 24 + fs + 6), Color(C_GOLD, 0.8), 1.0)
+	if title_sub != "":
+		draw_string(font, Vector2(30, 24 + fs + 26), title_sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, C_MUTED)
+
+
+func _draw_chip(font: Font, i: int, chip: Rect2, dot: Vector2, current: bool, upcoming: bool, alpha: float, compact: bool, named := true) -> void:
+	var tile: Dictionary = tiles[i]
+	var tname := str(tile.get("name", ""))
+	var kind := str(tile.get("type", ""))
+	# Connector from chip to its dot on the route
+	var anchor := Vector2(clampf(dot.x, chip.position.x + 8, chip.end.x - 8), clampf(dot.y, chip.position.y, chip.end.y))
+	draw_line(anchor, dot, Color(1, 1, 1, 0.45 * alpha), 1.0, true)
+	if current:
+		var halo := 0.5 + 0.5 * sin(_pulse * 2.6)
+		if UI.reduce_motion:
+			halo = 0.6
+		draw_circle(dot, 11.0 + halo * 3.0, Color(C_GOLD, 0.25))
+		draw_circle(dot, 6.0, C_GOLD)
+	else:
+		draw_circle(dot, 4.5, Color(C_GREEN if upcoming else C_TEXT, 0.9 * alpha))
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(C_CARD.darkened(0.15), 0.94 * alpha)
+	sb.set_corner_radius_all(10 if not current else 12)
+	sb.set_border_width_all(2 if current else 1)
+	sb.border_color = C_GREEN if current else (Color(C_GREEN, 0.9 * alpha) if upcoming else Color(1, 1, 1, 0.14 * alpha))
+	if current:
+		sb.shadow_color = Color(0, 0, 0, 0.35)
+		sb.shadow_size = 6
+	draw_style_box(sb, chip)
+	var icon := 18.0 if current else 14.0
+	var ic := chip.position + Vector2(12 + icon * 0.5, chip.size.y * 0.5)
+	var col := Color(C_TEXT, alpha)
+	_draw_icon(tname, kind, ic, icon * 0.5, col)
+	if kind in EVENT_KINDS:
+		# 紅色小警示標記（三角形＋驚嘆號）
+		var wc := chip.position + Vector2(chip.size.x - 6, 6)
+		draw_colored_polygon(PackedVector2Array([wc + Vector2(0, -6), wc + Vector2(6, 5), wc + Vector2(-6, 5)]), Color(C_RED, alpha))
+		draw_line(wc + Vector2(0, -2.5), wc + Vector2(0, 1.5), Color(C_TEXT, alpha), 1.4, true)
+		draw_circle(wc + Vector2(0, 3.4), 0.9, Color(C_TEXT, alpha))
+	var label := "%02d %s" % [i, tname] if (named and (not compact or current)) else "%02d" % i
+	var fs := 16 if current else (12 if not compact else 11)
+	draw_string(font, Vector2(chip.position.x + icon + 18, chip.position.y + chip.size.y * 0.5 + fs * 0.36), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(C_TEXT, alpha))
+	var owner: Variant = territory.get(str(i), territory.get(i, null))
+	if owner is Dictionary:
+		var oi := -1
+		for k in range(players.size()):
+			if str(players[k].get("id", "")) == str(owner.get("playerId", "")):
+				oi = k
+		draw_circle(chip.end - Vector2(6, chip.size.y - 6), 4.0, UI.PLAYER_COLORS[oi % 4] if oi >= 0 else C_GREEN)
+
+
+func _draw_pawns(pts: PackedVector2Array, lengths: PackedFloat32Array, total: float) -> void:
+	var font := get_theme_default_font()
+	var slots := {}
+	for idx in range(players.size()):
+		var p: Dictionary = players[idx]
+		var id := str(p.get("id", ""))
+		var t: float = _shown.get(id, float(p.get("pos", 0)))
+		var key := int(roundf(t)) % 24
+		var slot: int = slots.get(key, 0)
+		slots[key] = slot + 1
+		var at := _along(pts, lengths, total, t / 24.0) + Vector2(-9 + slot * 12, 12 + slot * 2)
+		# Token colour from 新人顧問報到 for the player, each sparring advisor's own colour for bots
+		var col: Color = UI.PLAYER_COLORS[idx % UI.PLAYER_COLORS.size()] if Engine.is_editor_hint() else PlayerProfile.player_color(p, idx)
+		var r := 9.0 if id == current_id else 7.0
+		draw_circle(at + Vector2(0, 2), r, Color(0, 0, 0, 0.35))
+		draw_circle(at, r, col)
+		draw_arc(at, r, 0, TAU, 24, C_TEXT, 2.0, true)
+		if id == current_id:
+			var fs := 11
+			var shown := str(p.get("name", "顧")) if Engine.is_editor_hint() else PlayerProfile.display_name(p)
+			draw_string(font, at + Vector2(-r, fs * 0.36), shown.substr(0, 1), HORIZONTAL_ALIGNMENT_CENTER, r * 2, fs, C_BG)
+
+
+## Flat 2px line icons, one symbol per station
+func _draw_icon(tname: String, kind: String, c: Vector2, r: float, col: Color) -> void:
+	var w := 2.0
+	if tname.contains("咖啡"):
+		draw_rect(Rect2(c + Vector2(-r * 0.8, -r * 0.5), Vector2(r * 1.3, r * 1.2)), col, false, w)
+		draw_arc(c + Vector2(r * 0.6, 0.05 * r), r * 0.32, -PI * 0.5, PI * 0.5, 8, col, w, true)
+		return
+	if tname.contains("說明會") or tname.contains("研討會"):
+		draw_rect(Rect2(c + Vector2(-r, -r * 0.8), Vector2(r * 2, r * 1.3)), col, false, w)
+		draw_line(c + Vector2(0, r * 0.5), c + Vector2(0, r), col, w, true)
+		draw_line(c + Vector2(-r * 0.5, r), c + Vector2(r * 0.5, r), col, w, true)
+		return
+	if tname.contains("聚餐"):
+		draw_line(c + Vector2(-r * 0.45, -r), c + Vector2(-r * 0.45, r), col, w, true)
+		draw_line(c + Vector2(-r * 0.75, -r), c + Vector2(-r * 0.75, -r * 0.3), col, w, true)
+		draw_line(c + Vector2(-r * 0.15, -r), c + Vector2(-r * 0.15, -r * 0.3), col, w, true)
+		draw_line(c + Vector2(r * 0.55, -r), c + Vector2(r * 0.55, r), col, w, true)
+		draw_arc(c + Vector2(r * 0.55, -r * 0.45), r * 0.3, PI * 0.5, PI * 1.5, 8, col, w, true)
+		return
+	if tname.contains("商圈"):
+		draw_rect(Rect2(c + Vector2(-r, -r * 0.45), Vector2(r * 2, r * 1.35)), col, false, w)
+		draw_rect(Rect2(c + Vector2(-r * 0.4, -r * 0.85), Vector2(r * 0.8, r * 0.4)), col, false, w)
+		return
+	if tname.contains("線上") or tname.contains("工作空間"):
+		draw_rect(Rect2(c + Vector2(-r, -r * 0.8), Vector2(r * 2, r * 1.25)), col, false, w)
+		draw_line(c + Vector2(-r * 1.15, r * 0.75), c + Vector2(r * 1.15, r * 0.75), col, w, true)
+		return
+	if tname.contains("市場") and kind == "client":
+		draw_polyline(PackedVector2Array([c + Vector2(-r, -r * 0.3), c + Vector2(r, -r * 0.3), c + Vector2(r * 0.7, r * 0.8), c + Vector2(-r * 0.7, r * 0.8), c + Vector2(-r, -r * 0.3)]), col, w, true)
+		draw_arc(c + Vector2(0, -r * 0.3), r * 0.55, PI, TAU, 10, col, w, true)
+		return
+	if tname.contains("親子"):
+		draw_arc(c + Vector2(-r * 0.4, -r * 0.5), r * 0.3, 0, TAU, 12, col, w, true)
+		draw_arc(c + Vector2(r * 0.45, -r * 0.2), r * 0.22, 0, TAU, 12, col, w, true)
+		draw_line(c + Vector2(-r * 0.4, -r * 0.1), c + Vector2(-r * 0.4, r), col, w, true)
+		draw_line(c + Vector2(r * 0.45, r * 0.1), c + Vector2(r * 0.45, r), col, w, true)
+		return
+	if tname.contains("醫院"):
+		draw_line(c + Vector2(0, -r * 0.85), c + Vector2(0, r * 0.85), col, w + 1, true)
+		draw_line(c + Vector2(-r * 0.85, 0), c + Vector2(r * 0.85, 0), col, w + 1, true)
+		return
+	match kind:
+		"start":
+			draw_line(c + Vector2(-r * 0.6, r), c + Vector2(-r * 0.6, -r), col, w, true)
+			draw_polyline(PackedVector2Array([c + Vector2(-r * 0.6, -r), c + Vector2(r * 0.8, -r * 0.55), c + Vector2(-r * 0.6, -r * 0.1)]), col, w, true)
+		"training":
+			draw_polyline(PackedVector2Array([c + Vector2(-r, -r * 0.2), c + Vector2(0, -r * 0.75), c + Vector2(r, -r * 0.2), c + Vector2(0, r * 0.3), c + Vector2(-r, -r * 0.2)]), col, w, true)
+			draw_line(c + Vector2(r * 0.55, 0), c + Vector2(r * 0.55, r * 0.7), col, w, true)
+		"market":
+			for k in range(3):
+				draw_line(c + Vector2(-r * 0.7 + k * r * 0.7, r * 0.85), c + Vector2(-r * 0.7 + k * r * 0.7, r * 0.85 - r * (0.6 + k * 0.5)), col, w + 1, true)
+		"life":
+			var pts := PackedVector2Array()
+			for k in range(17):
+				var a := PI * 2.0 * k / 16.0
+				var x := 16.0 * pow(sin(a), 3)
+				var y := -(13.0 * cos(a) - 5.0 * cos(2 * a) - 2.0 * cos(3 * a) - cos(4 * a))
+				pts.append(c + Vector2(x, y) * r / 17.0)
+			draw_polyline(pts, col, w, true)
+		"audit":
+			draw_rect(Rect2(c + Vector2(-r * 0.8, -r), Vector2(r * 1.3, r * 1.7)), col, false, w)
+			draw_arc(c + Vector2(r * 0.25, r * 0.2), r * 0.35, 0, TAU, 12, col, w, true)
+			draw_line(c + Vector2(r * 0.5, r * 0.45), c + Vector2(r * 0.9, r * 0.85), col, w, true)
+		"referral", "seminar":
+			draw_arc(c + Vector2(-r * 0.4, -r * 0.35), r * 0.3, 0, TAU, 12, col, w, true)
+			draw_arc(c + Vector2(r * 0.45, -r * 0.35), r * 0.3, 0, TAU, 12, col, w, true)
+			draw_arc(c + Vector2(-r * 0.4, r * 0.75), r * 0.55, PI * 1.1, PI * 1.9, 8, col, w, true)
+			draw_arc(c + Vector2(r * 0.45, r * 0.75), r * 0.55, PI * 1.1, PI * 1.9, 8, col, w, true)
+		_:
+			draw_arc(c + Vector2(0, -r * 0.4), r * 0.4, 0, TAU, 14, col, w, true)
+			draw_arc(c + Vector2(0, r * 0.95), r * 0.8, PI * 1.12, PI * 1.88, 12, col, w, true)

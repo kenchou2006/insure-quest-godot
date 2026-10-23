@@ -484,6 +484,8 @@ test('客戶版圖：簽約佔領格子、再次停格觸發保單健檢與轉�
   addPlayer(g, { id: 'p1', name: '顧問A' });
   addPlayer(g, { id: 'p2', name: '顧問B' });
   startGame(g, ctx);
+  // Territory and checkups belong to the open-case phase that follows the primary case
+  for (const p of g.players) p.mainCase = { clientId: 'boting', visits: 3, done: true, saved: null };
 
   assert.deepEqual(g.territory, {});
   const initialView = publicView(g) as { territory: Record<number, unknown> };

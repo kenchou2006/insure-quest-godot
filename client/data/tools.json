@@ -1,0 +1,53 @@
+{
+  "_about": "顧問公事包工具。id 對應遊戲伺服器的工具代號（效果由伺服器實際執行）；effect 與 chips 必須照實描述伺服器效果。matched_tags 和 customers.json 線索的 tags 做規則比對；unlock_condition.type 可用 none 或 served_at_least（完成會談的客戶數）。image 是工具插圖（res:// 路徑），留空或找不到時使用 icon 線條圖。",
+  "tools": [
+    {
+      "id": "needs_form", "name": "需求訪談冊", "category": "訪談", "icon": "book", "image": "res://assets/briefcase/tool_needs_form.webp",
+      "effect": "第一次需求訪談多 1 輪對話，可以多問一次客戶的目標與優先順序。",
+      "chips": [{"icon": "chat_user", "label": "對話 +1 輪"}, {"icon": "search", "label": "釐清目標"}],
+      "matched_tags": ["goal_saving"],
+      "usage_limit": "首次會談 1 次",
+      "unlock_condition": {"type": "none"}
+    },
+    {
+      "id": "cashflow", "name": "收支盤點器", "category": "財務盤點", "icon": "calculator", "image": "res://assets/briefcase/tool_cashflow.webp",
+      "effect": "會談開場直接標記 1 條真實需求線索，洞察立即提升。",
+      "chips": [{"icon": "search", "label": "洞察 +1"}, {"icon": "chart", "label": "真實需求線索"}],
+      "matched_tags": ["budget_limited", "income_volatile", "mortgage"],
+      "usage_limit": "會談開場 1 次",
+      "unlock_condition": {"type": "none"}
+    },
+    {
+      "id": "family_map", "name": "家庭責任圖", "category": "家庭", "icon": "users", "image": "res://assets/briefcase/tool_family_map.webp",
+      "effect": "會談中多 1 次自由提問，適合追問扶養關係與家庭責任。",
+      "chips": [{"icon": "chat_user", "label": "自由提問 +1"}, {"icon": "users", "label": "扶養關係"}],
+      "matched_tags": ["family_duty", "dependents"],
+      "usage_limit": "自由提問 1 次",
+      "unlock_condition": {"type": "none"}
+    },
+    {
+      "id": "gap_sheet", "name": "保障缺口鏡", "category": "保障分析", "icon": "shield", "image": "res://assets/briefcase/tool_gap_sheet.webp",
+      "effect": "方案設計時顯示最該優先處理的保障卡。",
+      "chips": [{"icon": "shield", "label": "優先保障卡"}],
+      "matched_tags": ["protection_gap", "single_point"],
+      "usage_limit": "方案設計時",
+      "unlock_condition": {"type": "none"}
+    },
+    {
+      "id": "risk_survey", "name": "風險羅盤", "category": "風險評估", "icon": "gauge", "image": "res://assets/briefcase/tool_risk_survey.webp",
+      "effect": "方案設計時顯示合理的配置區間，避免超出客戶的承受度。",
+      "chips": [{"icon": "gauge", "label": "配置區間"}],
+      "matched_tags": ["risk_awareness", "liquidity"],
+      "usage_limit": "方案設計時",
+      "unlock_condition": {"type": "none"}
+    },
+    {
+      "id": "compliance_check", "name": "合規印章", "category": "合規", "icon": "stamp", "image": "res://assets/briefcase/tool_compliance_check.webp",
+      "effect": "整個案件中，對話裡的合規扣分減半。",
+      "chips": [{"icon": "doc_check", "label": "合規扣分減半"}],
+      "matched_tags": ["compliance"],
+      "usage_limit": "整個案件",
+      "unlock_condition": {"type": "none"}
+    }
+  ]
+}

@@ -3,7 +3,7 @@
  */
 import type {
   Action, Alloc, Announcement, BookEntry, BotLevel, CardId, ClientProfile, Decision, FinalRow, GameState, LogLine,
-  MarketEvent, Metrics, PendingEvent, PlayerState, Quality, QuestionId, SessionLog, SessionState,
+  MainCase, MarketEvent, Metrics, PendingEvent, PlayerState, Quality, QuestionId, SessionLog, SessionState, ToolId,
 } from './types.ts';
 import { apply, clamp, commissionFor, evaluatePlan, finalScore, marketOne, METRICS, runStress, START, STEP, stressOne, validPlan } from './engine.ts';
 import { BOARD, CLIENTS, DECOYS, MARKET_EVENTS, QUESTIONS, QUIZ } from './data.ts';
@@ -35,6 +35,22 @@ export interface Ctx {
 }
 
 export const MAX_PLAYERS = 4;
+
+/** Primary-case options: the five original clients with full scenes, clues and handwritten endings */
+export const CASE_OPTIONS = ['yuqing', 'boting', 'wanting', 'ziyuan', 'zhiming'];
+/** Advisor briefcase: pick BRIEFCASE_SIZE tools before the first meeting; each one changes how the case plays */
+export const BRIEFCASE_SIZE = 3;
+export const TOOLS: { id: ToolId; name: string; effect: string }[] = [
+  { id: 'needs_form', name: '客戶需求訪談表', effect: '需求訪談多 1 輪對話' },
+  { id: 'cashflow', name: '收支盤點表', effect: '開場直接掌握 1 條真實需求線索' },
+  { id: 'family_map', name: '家庭責任圖', effect: '多 1 次自由提問' },
+  { id: 'gap_sheet', name: '保障缺口分析表', effect: '方案設計時顯示優先保障卡' },
+  { id: 'risk_survey', name: '風險承受度問卷', effect: '方案設計時顯示合理配置區間' },
+  { id: 'compliance_check', name: '合規檢核表', effect: '對話中的合規扣分減半' },
+];
+const DEFAULT_TOOLS: ToolId[] = ['needs_form', 'gap_sheet', 'compliance_check'];
+/** Meetings needed to finish a primary case: needs interview, plan design, objection + result */
+const CASE_MEETINGS = 3;
 const STANDARD_ASKS = 3;
 const SIGN_TRUST = 50;
 
@@ -92,6 +108,7 @@ export function startGame(s: GameState, ctx: Ctx): string | null {
   s.quizDeck = shuffle(QUIZ.map(q => q.id), ctx.rng);
   s.quests = rollQuests(ctx.rng);
   s.awards = null;
+  for (const p of s.players) if (p.isBot) autoSetup(s, p);
   updateQuests(s);
   s.turn = 0; s.round = 1; s.turnStage = 'roll';
   log(s, `遊戲開始！共 ${s.settings.rounds} 回合。目標不是賣最多，而是把客戶服務好。`, 'info', ctx.now());
@@ -100,6 +117,77 @@ export function startGame(s: GameState, ctx: Ctx): string | null {
 
 export const current = (s: GameState): PlayerState => s.players[s.turn];
 const playerById = (s: GameState, id: string) => s.players.find(p => p.id === id);
+
+/** Chooses the primary client and packs the briefcase. Returns error message or null. */
+export function setupCase(s: GameState, p: PlayerState, clientId: string, tools: ToolId[], anyClient = false): string | null {
+  if (p.mainCase) return '已經選好主要客戶';
+  if (!(anyClient || CASE_OPTIONS.includes(clientId)) || !s.clients[clientId]) return '請選擇一位主要客戶';
+  const valid = new Set(TOOLS.map(t => t.id));
+  const picked = [...new Set((Array.isArray(tools) ? tools : []).map(String))].filter(t => valid.has(t as ToolId)) as ToolId[];
+  if (picked.length !== BRIEFCASE_SIZE) return `顧問公事包請選擇 ${BRIEFCASE_SIZE} 樣工具`;
+  p.mainCase = { clientId, visits: 0, done: false, saved: null };
+  p.briefcase = picked;
+  p.contacts = [];
+  // The primary client is no longer drawn as a stranger
+  s.deck = s.deck.filter(id => id !== clientId);
+  log(s, `${p.name} 接下主要案件：${s.clients[clientId].name}（${s.clients[clientId].job}）`, 'info');
+  return null;
+}
+
+/** Bots, and players who skip the setup screen: deterministic pick (no rng, so seeded runs stay reproducible); demo runs use the demo client */
+function autoSetup(s: GameState, p: PlayerState) {
+  const demoId = s.demo ? (s.demo === '1' ? 'jiahao' : s.demo) : '';
+  if (demoId && s.clients[demoId]) return setupCase(s, p, demoId, DEFAULT_TOOLS, true);
+  setupCase(s, p, CASE_OPTIONS[Math.max(0, s.players.indexOf(p)) % CASE_OPTIONS.length], DEFAULT_TOOLS);
+}
+
+const activeCase = (p: PlayerState): MainCase | null => (p.mainCase && !p.mainCase.done ? p.mainCase : null);
+
+/** Turns this player has left including the current one (used so the case can always finish) */
+function turnsLeft(s: GameState): number {
+  return s.settings.rounds - s.round + 1;
+}
+
+/** Holds the next meeting with the primary client: starts the interview or resumes the paused stage */
+function caseMeeting(s: GameState, p: PlayerState, mc: MainCase, ctx: Ctx, passLines: PendingEvent['lines'], invited: boolean) {
+  if (passLines.length) log(s, `${p.name} 經過起點：${passLines.map(l => l.text).join('；')}`, 'info', ctx.now());
+  const c = s.clients[mc.clientId];
+  mc.visits++;
+  if (!mc.saved) {
+    startSession(s, p, c, false, ctx);
+    const sess = s.session!;
+    const tools = new Set(p.briefcase ?? []);
+    if (tools.has('needs_form')) sess.talkLeft = (sess.talkLeft ?? 3) + 1;
+    if (tools.has('family_map')) sess.freeLeft += 1;
+    if (tools.has('cashflow')) {
+      const idx = sess.clues.findIndex(cl => cl.real);
+      if (idx >= 0) { sess.observed.push(idx); apply(sess.m, STEP.clueFound); }
+    }
+    const hints: SessionState['toolHints'] = {};
+    if (tools.has('gap_sheet')) {
+      hints.coreCards = (Object.entries(c.plan.cards) as [CardId, number][]).filter(([, w]) => w >= 2).sort((a, b) => b[1] - a[1]).map(([id]) => id).slice(0, 3);
+    }
+    if (tools.has('risk_survey')) hints.ideal = c.plan.ideal;
+    if (hints.coreCards || hints.ideal) sess.toolHints = hints;
+  } else {
+    s.session = mc.saved;
+    mc.saved = null;
+    s.session.tileIndex = p.pos;
+    s.session.predictions = {};
+    s.turnStage = 'session';
+  }
+  // A paused meeting only makes sense if another turn is left to continue it
+  s.session!.staged = turnsLeft(s) > 1;
+  const stage = { discover: '需求訪談', plan: '方案設計', objection: '異議處理' }[s.session!.step as 'discover' | 'plan' | 'objection'] ?? '會談';
+  log(s, `${p.name} 與主要客戶 ${c.name} 進行第 ${mc.visits} 次會談：${stage}${invited ? '（客戶主動約見）' : ''}${s.session!.staged ? '' : '，本次一次完成剩餘流程'}`, 'info', ctx.now());
+}
+
+/** Ends this meeting after a stage: keeps the interview for the next client-tile visit */
+function pauseCase(s: GameState, p: PlayerState, sess: SessionState, title: string, lines: PendingEvent['lines']) {
+  if (p.mainCase) p.mainCase.saved = sess;
+  s.session = null;
+  setEvent(s, { kind: 'info', playerId: p.id, title, body: '這次會談告一段落。下次抵達客戶節點時，會繼續和同一位客戶往下談。', lines });
+}
 
 /** Injects AI-generated client at front of draw deck */
 export function injectClient(s: GameState, c: ClientProfile) {
@@ -177,6 +265,31 @@ async function resolveTile(s: GameState, p: PlayerState, ctx: Ctx, passLines: Pe
   const tile = BOARD[p.pos];
   const ev = (kind: PendingEvent['kind'], title: string, body: string, lines: PendingEvent['lines']) =>
     setEvent(s, { kind, playerId: p.id, title, body, lines: [...passLines, ...lines] });
+
+  const mc = activeCase(p);
+  if (mc) {
+    // Client tiles advance the primary case; when turns run short the client asks to meet wherever the advisor is
+    const invited = tile.type !== 'client' && CASE_MEETINGS - mc.visits >= turnsLeft(s);
+    if (tile.type === 'client' || invited) return caseMeeting(s, p, mc, ctx, passLines, invited);
+    const main = s.clients[mc.clientId];
+    if (tile.type === 'referral') {
+      // Networking: other clients become contacts now and unlockable cases after the primary case
+      const name = s.deck.map(id => s.clients[id]).find(c => c && !(p.contacts ?? []).includes(c.name))?.name;
+      if (name) p.contacts = [...(p.contacts ?? []), name];
+      p.reputation = clamp(p.reputation + 1);
+      log(s, `${p.name} 拓展人脈${name ? `，認識了 ${name}` : ''}`, 'good', ctx.now());
+      return ev('info', '人脈事件', name ? `透過朋友介紹，你認識了 ${name}。` : '你在活動中交換了名片。', [
+        { text: '拓展人脈，聲望 +1', tone: 'good' },
+        { text: `完成 ${main.name} 的案件後，新的客戶案件會陸續解鎖。`, tone: 'info' },
+      ]);
+    }
+    if (tile.type === 'life' && !p.book.length) {
+      const twist = mc.saved?.twist;
+      return ev('life', `人生事件｜${main.name}`, twist ? `${main.name}：${twist.title}` : `${main.name} 最近的生活有些變化。`, [
+        { text: twist ? twist.hint : '下次會談時，多留意客戶生活與財務上的改變。', tone: 'info' },
+      ]);
+    }
+  }
 
   switch (tile.type) {
     case 'client': {
@@ -465,6 +578,11 @@ function finishSession(s: GameState, p: PlayerState, sess: SessionState, ctx: Ct
     timeline,
   };
   sess.step = 'result';
+  if (p.mainCase && !p.mainCase.done && p.mainCase.clientId === c.id) {
+    p.mainCase.done = true;
+    p.mainCase.saved = null;
+    log(s, `${p.name} 完成主要案件「${c.name}」，新的客戶案件已解鎖`, 'good', ctx.now());
+  }
   p.sessionLogs = [...(p.sessionLogs ?? []), buildSessionLog(s, c, sess, pe, st.events, fs, signed)];
   // Quest stats and compliance streak: 3+ consecutive games with 100 compliance grants +2 extra reputation per game
   const covered = coveredQuestions(sess);
@@ -616,11 +734,17 @@ export async function applyAction(s: GameState, playerId: string, a: Action, ctx
 async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: Ctx): Promise<string | null> {
   if (!a || typeof a !== 'object' || typeof a.type !== 'string') return '無效的操作';
   if (s.phase !== 'playing') return '遊戲尚未進行中';
+  if (a.type === 'setup') {
+    const me = playerById(s, playerId);
+    if (!me) return '找不到玩家';
+    return setupCase(s, me, String(a.clientId), a.tools);
+  }
   const p = current(s);
   if (!p || p.id !== playerId) return '還沒輪到你';
 
   if (a.type === 'roll') {
     if (s.turnStage !== 'roll') return '現在不能擲骰';
+    if (!p.mainCase) autoSetup(s, p);
     let roll = 1 + Math.floor(ctx.rng() * 6);
     if (s.demo && !p.isBot && s.demoFirstRoll) {
       let dist = 1;
@@ -782,7 +906,8 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       // 4. Clamp metrics
       const trustDelta = Math.max(-15, Math.min(12, dialogue.trustDelta));
       const insightDelta = Math.max(0, Math.min(15, dialogue.insightDelta));
-      const penalty = Math.max(-25, Math.min(0, mergedComp.penalty));
+      const rawPenalty = Math.max(-25, Math.min(0, mergedComp.penalty));
+      const penalty = p.briefcase?.includes('compliance_check') ? Math.round(rawPenalty / 2) : rawPenalty;
       apply(sess.m, { trust: trustDelta, insight: insightDelta, compliance: penalty });
 
       // 5. Whitelist filter revealedFacts
@@ -841,6 +966,13 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
         keyHit >= 2 ? '問到了關鍵需求' : keyHit === 1 ? '只問到部分關鍵需求' : '沒有問到關鍵需求',
         `${c.short}的關鍵問題：${c.keyQuestions.map(k => QUESTIONS.find(q => q.id === k)!.text).join('／')}`);
       sess.step = 'plan';
+      if (sess.staged) {
+        pauseCase(s, p, sess, `第一次會談完成｜${c.name}`, [
+          { text: keyHit >= 2 ? '問到了關鍵需求' : keyHit === 1 ? '只問到部分關鍵需求' : '沒有問到關鍵需求', tone: keyHit >= 2 ? 'good' : keyHit === 1 ? 'ok' : 'bad' },
+          { text: `目前信任 ${sess.m.trust}、需求掌握 ${sess.m.insight}`, tone: 'info' },
+          { text: '下一次會談：方案設計（資產配置與保障卡）', tone: 'info' },
+        ]);
+      }
       return null;
     }
     case 'plan': {
@@ -857,6 +989,13 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
         pe.quality === 'good' ? '配置與需求相符' : pe.quality === 'ok' ? '配置大致合理' : '配置與需求落差大',
         pe.notes.join(' ') || '預備、保障與成長都在合理區間，核心保障卡到位。');
       sess.step = 'objection';
+      if (sess.staged) {
+        pauseCase(s, p, sess, `方案已提交｜${c.name}`, [
+          { text: pe.quality === 'good' ? '配置與需求相符' : pe.quality === 'ok' ? '配置大致合理' : '配置與需求落差大', tone: pe.quality === 'good' ? 'good' : pe.quality === 'ok' ? 'ok' : 'bad' },
+          { text: `${c.name} 帶著方案回家考慮。`, tone: 'info' },
+          { text: '下一次會談：回應客戶疑慮並等待決定', tone: 'info' },
+        ]);
+      }
       return null;
     }
     case 'objection': {
@@ -1044,10 +1183,23 @@ export async function enrichCoach(s: GameState, aiFor: (p: PlayerState) => AISer
 
 /** Public state transmitted to client: hides client answers, ideal allocations, question bank answers */
 /** viewerId: field personalized for this connection (currently only one's own prediction) */
+/** Primary-case progress for the task panel: stage of the live or paused interview plus the client's latest metrics */
+function caseView(s: GameState, p: PlayerState, mc: MainCase) {
+  const c = s.clients[mc.clientId];
+  const live = s.session && s.session.playerId === p.id && s.session.clientId === mc.clientId ? s.session : null;
+  const sess = live ?? mc.saved ?? null;
+  return {
+    clientId: mc.clientId, clientName: c?.name ?? '', job: c?.job ?? '', amount: c?.amount ?? '',
+    visits: mc.visits, meetings: CASE_MEETINGS, done: mc.done, inMeeting: !!live, step: sess?.step ?? null,
+    metrics: sess ? { trust: sess.m.trust, insight: sess.m.insight, compliance: sess.m.compliance } : null,
+  };
+}
+
 export function publicView(s: GameState, viewerId: string | null = null) {
   const sess = s.session;
   const c = sess ? s.clients[sess.clientId] : null;
   return {
+    trainingAttemptId: s.trainingAttemptId && viewerId ? `${s.trainingAttemptId}:${viewerId}` : null, trainingStartedAt: s.trainingStartedAt ?? null,
     code: s.code, phase: s.phase, hostId: s.hostId, settings: s.settings,
     territory: s.territory ?? {},
     // AI-generated clients share generic portraits: clientId -> portrait key (built-in clients use their own id)
@@ -1062,7 +1214,17 @@ export function publicView(s: GameState, viewerId: string | null = null) {
       })),
       decisions: p.decisions.slice(-12),
       quizCorrect: p.quizCorrect, quizTotal: p.quizTotal,
+      mainCase: p.mainCase ? caseView(s, p, p.mainCase) : null,
+      briefcase: p.briefcase ?? [],
+      contacts: p.contacts ?? [],
     })),
+    caseOptions: CASE_OPTIONS.map(id => s.clients[id]).filter(Boolean).map(c => ({
+      id: c.id, name: c.name, age: c.age, gender: c.gender, job: c.job, tag: c.tag, difficulty: c.difficulty, goal: c.goal, family: c.family, intro: c.intro,
+      amount: c.amount, incomeInfo: c.incomeInfo,
+    })),
+    // Client codex roster (names only) so the case screen can show unlock progress without a hardcoded total
+    codex: CLIENTS.map(c => ({ id: c.id, name: c.name, job: c.job })),
+    tools: TOOLS, briefcaseSize: BRIEFCASE_SIZE,
     turn: s.turn, round: s.round, turnStage: s.turnStage, lastRoll: s.lastRoll,
     deckLeft: s.deck.length,
     session: sess && c ? {
@@ -1089,6 +1251,8 @@ export function publicView(s: GameState, viewerId: string | null = null) {
       objectionReply: sess.objectionReply ?? null,
       hintUsed: !!sess.hintUsed,
       hint: sess.hint ?? null,
+      staged: !!sess.staged,
+      toolHints: sess.toolHints ?? null,
       plan: sess.plan ?? null,
       result: sess.result ?? null,
     } : null,
