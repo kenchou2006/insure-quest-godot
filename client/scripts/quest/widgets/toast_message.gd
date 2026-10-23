@@ -7,7 +7,7 @@ var _panel: PanelContainer
 var _icon: Control
 var _label: Label
 var _tween: Tween
-var top_offset := 84.0
+var top_offset := 26.0
 
 
 func _init() -> void:
@@ -44,7 +44,7 @@ func show_message(text: String, kind := "info", secs := 3.6) -> void:
 			col = QuestUI.RED
 			icon_kind = "alert"
 	var s := StyleBoxFlat.new()
-	s.bg_color = Color(QuestUI.INK, 0.94)
+	s.bg_color = Color(QuestUI.INK, 1.0)
 	s.set_corner_radius_all(12)
 	s.set_border_width_all(1)
 	s.border_color = Color(col, 0.85)
@@ -55,10 +55,11 @@ func show_message(text: String, kind := "info", secs := 3.6) -> void:
 	_panel.add_theme_stylebox_override("panel", s)
 	_icon.set("kind", icon_kind)
 	_icon.call("set_color", col)
+	_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_label.custom_minimum_size.x = 0
 	_label.text = text
 	_label.add_theme_color_override("font_color", QuestUI.TEXT)
 	_panel.visible = true
-	_panel.reset_size()
 	_place()
 	if kind in ["warning", "danger"]:
 		AudioManager.play("toast")
@@ -76,7 +77,14 @@ func _place() -> void:
 	if _panel == null:
 		return
 	_panel.reset_size()
-	_panel.position = Vector2((size.x - _panel.size.x) * 0.5, top_offset)
+	if size.x > 0.0:
+		var max_w := size.x - 32.0
+		if _panel.size.x > max_w:
+			_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			_label.custom_minimum_size.x = maxf(120.0, max_w - 48.0)
+			_panel.reset_size()
+	var x := maxf(8.0, (size.x - _panel.size.x) * 0.5)
+	_panel.position = Vector2(x, top_offset)
 
 
 func hide_now() -> void:

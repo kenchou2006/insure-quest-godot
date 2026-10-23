@@ -16,6 +16,7 @@ var _cards: Dictionary = {}
 var _detail: VBoxContainer
 var _count: Label
 var _confirm: Button
+var _clear: Button
 var _reason: Label
 var _status: Control
 var _selected := -1
@@ -87,7 +88,8 @@ func build() -> void:
 		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		bins_row.add_child(b)
 		_bins[spec[0]] = b
-	center.add_child(bins_row)
+	var bins_scroll: Control = QuestUI.scroll(bins_row) if not narrow() else bins_row
+	center.add_child(bins_scroll)
 	var bar := QuestUI.card(null, 0.95)
 	var bh := QuestUI.hbox(12 if not narrow() else 6)
 	bar.add_child(bh)
@@ -95,9 +97,9 @@ func build() -> void:
 	_count = QuestUI.label("已分類 0 / 0", 18, QuestUI.TEXT, false, true)
 	bh.add_child(_count)
 	bh.add_child(QuestUI.spacer())
-	var clear: Button = QuestUI.button("清除", _clear_unjudged, "secondary", "trash")
-	clear.name = "ClearButton"
-	bh.add_child(clear)
+	_clear = QuestUI.button("清除", _clear_unjudged, "secondary", "trash")
+	_clear.name = "ClearButton"
+	bh.add_child(_clear)
 	_confirm = QuestUI.button("確認需求判斷", _on_confirm, "primary", "check")
 	_confirm.name = "ConfirmClues"
 	bh.add_child(_confirm)
@@ -157,6 +159,8 @@ func server_error(_msg: String) -> void:
 	_observing.clear()
 	_confirm.call("set_loading", false)
 	_submitted = false
+	if is_instance_valid(_clear):
+		_clear.disabled = false
 	_sync()
 
 
@@ -232,6 +236,8 @@ func _unplace(i: int) -> void:
 
 
 func _clear_unjudged() -> void:
+	if _submitted:
+		return
 	# Judged cards keep their verdict; only cards not yet judged go back
 	var res: Dictionary = GameState.record.get("clue_results", {})
 	for i in _cards:
@@ -308,6 +314,8 @@ func _sync() -> void:
 		reason = "客戶還在回應中"
 	if not _submitted:
 		_confirm.call("set_reason", reason)
+	elif is_instance_valid(_clear):
+		_clear.disabled = true
 
 
 func _show_detail(i: int) -> void:
@@ -325,7 +333,10 @@ func _show_detail(i: int) -> void:
 	var cl: Dictionary = (_cards[i] as ClueCard).data
 	_detail.add_child(QuestUI.title(str(cl.get("title", "")), 19))
 	if not bool(cl.get("observed", false)):
-		_detail.add_child(QuestUI.label("尚未調查。放進「必要需求」或「潛在風險」就會調查並翻開（最多 3 張）；確定和財務無關就放「暫時無關」。", 14, QuestUI.MUTED, true))
+		if _observed_count() + _observing.size() >= 3:
+			_detail.add_child(QuestUI.label("調查次數已用完（3/3）。這張線索請放進「暫時無關」，或先把需求區的一張線索移回。", 14, QuestUI.MUTED, true))
+		else:
+			_detail.add_child(QuestUI.label("尚未調查。放進「必要需求」或「潛在風險」就會調查並翻開（最多 3 張）；確定和財務無關就放「暫時無關」。", 14, QuestUI.MUTED, true))
 		return
 	if str(cl.get("detail", "")) != "":
 		_detail.add_child(QuestUI.label(str(cl.detail), 15, QuestUI.TEXT, true))
@@ -345,6 +356,8 @@ func _on_confirm() -> void:
 	if _submitted:
 		return
 	_submitted = true
+	if is_instance_valid(_clear):
+		_clear.disabled = true
 	_confirm.call("set_loading", true, "整理需求")
 	var sess := GameState.my_session()
 	var clues: Array = sess.get("clues", [])
@@ -394,6 +407,7 @@ class ClueCard extends Button:
 	var index := 0
 	var data: Dictionary = {}
 	var view: Control
+	var _content: VBoxContainer
 	var _title: Label
 	var _body: Label
 	var _badge: Label
@@ -406,24 +420,24 @@ class ClueCard extends Button:
 		data = cl
 		view = owner_view
 		name = "Clue_%d" % i
-		custom_minimum_size = Vector2(150, 96 if not UI.is_phone() else 80)
+		custom_minimum_size = Vector2(150, 0)
 		size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		focus_mode = Control.FOCUS_ALL
-		clip_contents = true
-		var v := QuestUI.vbox(4)
-		v.set_anchors_preset(Control.PRESET_FULL_RECT)
-		v.offset_left = 12
-		v.offset_right = -12
-		v.offset_top = 10
-		v.offset_bottom = -8
-		add_child(v)
+		clip_contents = false
+		_content = QuestUI.vbox(4)
+		_content.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_content.offset_left = 12
+		_content.offset_right = -12
+		_content.offset_top = 10
+		_content.offset_bottom = -8
+		add_child(_content)
 		_badge = QuestUI.label("", 11, QuestUI.GOLD)
-		v.add_child(_badge)
+		_content.add_child(_badge)
 		_title = QuestUI.label(str(cl.get("title", "")), 16, QuestUI.TEXT, true, true)
-		v.add_child(_title)
+		_content.add_child(_title)
 		_body = QuestUI.label("", 12, QuestUI.MUTED, true)
-		v.add_child(_body)
+		_content.add_child(_body)
 		_scan = ColorRect.new()
 		_scan.color = Color(QuestUI.GOLD, 0.85)
 		_scan.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -434,6 +448,11 @@ class ClueCard extends Button:
 		_face_up = bool(cl.get("observed", false))
 		_style()
 		_fill()
+
+	func _get_minimum_size() -> Vector2:
+		var base_h: float = 96.0 if not UI.is_phone() else 80.0
+		var content_h := _content.get_combined_minimum_size().y if _content else 0.0
+		return Vector2(150.0, maxf(base_h, content_h + 18.0))
 
 	func _style(verdict := "") -> void:
 		for st in ["normal", "hover", "pressed", "focus", "disabled"]:
@@ -463,6 +482,7 @@ class ClueCard extends Button:
 			_badge.text = "？ 線索"
 		if _verdict != "":
 			_badge.text = {"correct": "判斷正確", "fixed": "已修正", "wrong": "判斷有誤"}.get(_verdict, _badge.text)
+		update_minimum_size()
 
 	func flip(up: bool) -> void:
 		AudioManager.play("card_flip")
@@ -470,6 +490,7 @@ class ClueCard extends Button:
 			_face_up = up
 			_style()
 			_fill()
+			update_minimum_size()
 			return
 		pivot_offset = size * 0.5
 		var tw := create_tween()
@@ -478,12 +499,14 @@ class ClueCard extends Button:
 			_face_up = up
 			_style()
 			_fill()
+			update_minimum_size()
 		)
 		tw.tween_property(self, "scale:x", 1.0, 0.14)
 
 	func set_busy(on: bool) -> void:
 		if on:
 			_badge.text = "調查中…"
+			update_minimum_size()
 		else:
 			_fill()
 
@@ -498,6 +521,7 @@ class ClueCard extends Button:
 		_style(v)
 		_badge.text = {"correct": "判斷正確", "fixed": "已修正", "wrong": "判斷有誤"}.get(v, _badge.text)
 		_badge.add_theme_color_override("font_color", QuestUI.RED.lightened(0.2) if v == "wrong" else QuestUI.GOLD)
+		update_minimum_size()
 
 	## One gold scan line sweeping down the card (correct key clue), never repeated
 	func gold_scan() -> void:

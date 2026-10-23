@@ -238,7 +238,7 @@ func _swap(want: String, s: Dictionary) -> void:
 	_pages_root.add_child(p)
 	page = p
 	p.visible = true
-	toast.set("top_offset", 12.0 if _is_modal(want) else 84.0)
+	toast.set("top_offset", _toast_top(want))
 	p.call("build")
 	p.call("refresh", s)
 	GameState.timed_page = want in TIMED
@@ -328,6 +328,8 @@ func _go(target: String, data: Dictionary) -> void:
 		"map":
 			pass
 	if data.has("toast"):
+		if toast:
+			toast.set("top_offset", _toast_top(target))
 		toast.call("show_message", str(data.toast), str(data.get("kind", "info")))
 	route(Net.state)
 
@@ -365,7 +367,16 @@ func open_settings() -> void:
 
 
 func show_toast(text: String, kind := "info") -> void:
+	if toast:
+		toast.set("top_offset", _toast_top())
 	toast.call("show_message", text, kind)
+
+
+func _toast_top(want := "") -> float:
+	var target := want if want != "" else current
+	if _is_modal(target):
+		return 12.0
+	return 86.0 if UI.is_phone() else 26.0
 
 
 ## 離開培訓 from the settings: 繼續培訓 / 儲存並返回主畫面 / 放棄本次培訓
