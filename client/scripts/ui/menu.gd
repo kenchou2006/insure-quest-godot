@@ -12,6 +12,7 @@ const ModeCard := preload("res://scripts/ui/mode_card.gd")
 const HallSecretary := preload("res://scripts/ui/hall_secretary.gd")
 const LineIcon := preload("res://scripts/ui/line_icon.gd")
 const BackButton := preload("res://scripts/ui/back_button.gd")
+const DemoCodeDialog := preload("res://scripts/ui/demo_code_dialog.gd")
 ## 本局對練配置 (shown under the cards once 單人實戰 is chosen)
 const SparringSetup := preload("res://scripts/ui/sparring_setup.gd")
 const HALL_BG := preload("res://assets/startup/loading.png")
@@ -782,7 +783,9 @@ func _update_auth_card() -> void:
 		if h.get_child_count() > 0:
 			_auth_card_container.add_child(h)
 		var guest_note := "登入 Google 後，培訓紀錄保存到你的帳號，換裝置也能查看，並可使用 AI 功能；訪客紀錄只保存在此裝置。"
-		_auth_card_container.add_child(UI.label(guest_note, 12, UI.MUTED, true))
+		var guest_note_lbl := UI.label(guest_note, 12, UI.MUTED, true)
+		guest_note_lbl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+		_auth_card_container.add_child(guest_note_lbl)
 
 
 func _load_avatar() -> void:
@@ -930,66 +933,10 @@ func _check_url_demo_code() -> void:
 
 
 func _open_demo_dialog() -> void:
-	for c in get_children():
-		if c.name == "DemoCodeDialog":
-			return
-	var dim := ColorRect.new()
-	dim.name = "DemoCodeDialog"
-	dim.color = Color(0, 0, 0, 0.75)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_STOP
-
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	dim.add_child(center)
-
-	var p := UI.panel(UI.PANEL, 14, 18)
-	var max_w: float = 340.0 if UI.is_phone_portrait() else 420.0
-	p.custom_minimum_size = Vector2(max_w, 0)
-	var v := UI.vbox(10)
-	p.add_child(v)
-
-	var head := UI.hbox(8)
-	head.add_child(UI.label("輸入評審體驗碼", 18, UI.ACCENT_2))
-	head.add_child(UI.spacer())
-	var close_btn := UI.button("×", func(): dim.queue_free(), 16, UI.PANEL_2)
-	close_btn.custom_minimum_size = Vector2(36, 36)
-	head.add_child(close_btn)
-	v.add_child(head)
-
-	v.add_child(UI.label("輸入評審體驗碼即可啟用完整 AI 功能。", 13, UI.MUTED, true))
-
-	var err_lbl := UI.label("", 13, UI.BAD, true)
-	err_lbl.visible = false
-	v.add_child(err_lbl)
-
-	var submitting := false
-	var on_submit := func(code_text: String):
-		if submitting:
-			return
-		submitting = true
-		err_lbl.visible = false
-		var res: Array = await Net.submit_demo_code(code_text)
-		submitting = false
-		if not is_instance_valid(dim):
-			return
-		if bool(res[0]):
-			dim.queue_free()
-			if main:
-				main.toast("已啟用 AI 體驗模式", UI.GOOD)
-		else:
-			err_lbl.text = str(res[1])
-			err_lbl.visible = true
-
-	var input_row := UI.text_input("輸入體驗碼（如 CARDIF-DEMO-2026）", on_submit, 40)
-	var submit_btn = input_row.get_child(1) as Button
-	if submit_btn:
-		submit_btn.text = "進入"
-	v.add_child(input_row)
-
-	center.add_child(p)
-	add_child(dim)
+	DemoCodeDialog.open(self, func():
+		if main:
+			main.toast("已啟用 AI 體驗模式", UI.GOOD)
+	)
 
 
 func _save() -> void:

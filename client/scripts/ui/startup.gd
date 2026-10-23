@@ -5,6 +5,7 @@ extends Control
 
 signal entered
 
+const DemoCodeDialog := preload("res://scripts/ui/demo_code_dialog.gd")
 const BACKGROUND := preload("res://assets/startup/loading.png")
 const TITLE := preload("res://assets/startup/title.png")
 const FEMALE := preload("res://assets/startup/advisor_f.png")
@@ -20,6 +21,11 @@ var _male: TextureRect
 var _title: TextureRect
 var _enter: Button
 var _button_material: ShaderMaterial
+var _account_area: PanelContainer
+var account_area: PanelContainer:
+	get:
+		return _account_area
+var _buttons_ready: bool = false
 var _intro: Tween
 
 func _ready() -> void:
@@ -68,6 +74,14 @@ func _ready() -> void:
 	_enter.tooltip_text = "進入顧問培訓（Enter／空白鍵）"
 	_enter.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	_stage.add_child(_enter)
+
+	_build_account_area()
+	if not Net.auth_changed.is_connected(_on_auth_changed):
+		Net.auth_changed.connect(_on_auth_changed)
+	if Net.has_signal("avatar_loaded") and not Net.avatar_loaded.is_connected(_on_avatar_loaded):
+		Net.avatar_loaded.connect(_on_avatar_loaded)
+	_refresh_account()
+
 	resized.connect(_layout_cover)
 	_layout_cover()
 	_play_intro.call_deferred()
@@ -85,6 +99,113 @@ func _add_art(texture: Texture2D, origin: Vector2, extent: Vector2) -> TextureRe
 	_stage.add_child(art)
 	return art
 
+func _build_account_area() -> void:
+	var bg_col := Color("0d231e")
+	bg_col.a = 0.72
+	_account_area = UI.panel(bg_col, 10, 8)
+	_account_area.name = "AccountArea"
+	_account_area.modulate.a = 0.0
+	_account_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_stage.add_child(_account_area)
+
+func _on_auth_changed() -> void:
+	if not is_inside_tree():
+		return
+	_refresh_account()
+
+func _on_avatar_loaded(_tex: Texture2D) -> void:
+	if not is_inside_tree():
+		return
+	_refresh_account()
+
+func refresh_account() -> void:
+	_refresh_account()
+
+func _refresh_account() -> void:
+	if not is_inside_tree() or _account_area == null:
+		return
+	UI.clear(_account_area)
+
+	var v := UI.vbox(5)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	_account_area.add_child(v)
+
+	var stage_y: float = _stage.size.y if _stage != null and _stage.size.y > 0.0 else (size.y if size.y > 0.0 else 720.0)
+	var btn_fs := maxi(13, int(stage_y * 0.021))
+	var sub_fs := maxi(13, int(stage_y * 0.019))
+	var note_fs := maxi(12, int(stage_y * 0.017))
+
+	if Net.is_logged_in():
+		var h := UI.hbox(8)
+		h.alignment = BoxContainer.ALIGNMENT_CENTER
+		var user_name := str(Net.get_user().get("name", Net.player_name)).strip_edges()
+		if user_name == "":
+			user_name = "顧問"
+		if Net.avatar_tex != null:
+			var av := UI.avatar(Net.avatar_tex, user_name, btn_fs * 2)
+			h.add_child(av)
+		var name_lbl := UI.label("已登入：" + user_name, btn_fs, UI.TEXT)
+		h.add_child(name_lbl)
+		var logout_btn := UI.button("登出", func():
+			await Net.logout()
+			if is_inside_tree():
+				_refresh_account()
+		, sub_fs, UI.BAD.darkened(0.4))
+		logout_btn.focus_mode = Control.FOCUS_NONE
+		h.add_child(logout_btn)
+		v.add_child(h)
+	else:
+		var stage_x: float = _stage.size.x if _stage != null and _stage.size.x > 0.0 else (size.x if size.x > 0.0 else 1280.0)
+		var init_content_w := maxf(0.0, stage_x * 0.30 - 16.0)
+		var has_config: bool = not Net.auth_config.is_empty()
+		var google_enabled: bool = bool(Net.auth_config.get("google", true))
+		if google_enabled:
+			var google_btn := UI.button("使用 Google 登入", func():
+				Net.google_sign_in()
+			, btn_fs, UI.ACCENT)
+			google_btn.focus_mode = Control.FOCUS_NONE
+			google_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			v.add_child(google_btn)
+		else:
+			var no_google_lbl := UI.label("此伺服器尚未設定 Google 登入", btn_fs, UI.MUTED, true)
+			no_google_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			no_google_lbl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+			no_google_lbl.custom_minimum_size.x = init_content_w
+			v.add_child(no_google_lbl)
+
+		var sub_row := UI.hbox(8)
+		sub_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		if has_config and bool(Net.auth_config.get("demo", false)):
+			var demo_btn := UI.button("評審體驗碼", func():
+				DemoCodeDialog.open(self, func():
+					if is_inside_tree():
+						_refresh_account()
+				)
+			, sub_fs, UI.GOLD)
+			demo_btn.focus_mode = Control.FOCUS_NONE
+			sub_row.add_child(demo_btn)
+		if has_config and bool(Net.auth_config.get("dev", false)):
+			var dev_btn := UI.button("測試登入", func():
+				Net.login_dev()
+			, sub_fs, UI.GOLD.darkened(0.3))
+			dev_btn.focus_mode = Control.FOCUS_NONE
+			sub_row.add_child(dev_btn)
+		if sub_row.get_child_count() > 0:
+			v.add_child(sub_row)
+
+		var note_lbl := UI.label("登入後培訓紀錄會保存到帳號，並可使用 AI 功能", note_fs, UI.MUTED, true)
+		note_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		note_lbl.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+		note_lbl.custom_minimum_size.x = init_content_w
+		v.add_child(note_lbl)
+
+	for btn: Button in _account_area.find_children("*", "Button", true, false):
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.disabled = not _buttons_ready
+		btn.mouse_filter = Control.MOUSE_FILTER_STOP if _buttons_ready else Control.MOUSE_FILTER_IGNORE
+
+	_layout_cover()
+
 func _layout_cover() -> void:
 	var image_size := BACKGROUND.get_size()
 	# Cover the screen like the backdrop, but on narrow (portrait) screens shrink just enough
@@ -100,6 +221,33 @@ func _layout_cover() -> void:
 	_enter.size = Vector2(_stage.size.x * 0.30, maxf(44.0, _stage.size.y * 0.11))
 	_enter.pivot_offset = _enter.size * 0.5
 	_button_material.set_shader_parameter("button_size", _enter.size)
+
+	if _account_area:
+		var enter_bottom := _enter.position.y + _enter.size.y
+		var area_w := _stage.size.x * 0.30
+		var area_x := (_stage.size.x - area_w) * 0.5
+		var sb := _account_area.get_theme_stylebox("panel")
+		var pad_h: float = (sb.content_margin_left + sb.content_margin_right) if sb else 16.0
+		var content_w := maxf(0.0, area_w - pad_h)
+		for lbl: Label in _account_area.find_children("*", "Label", true, false):
+			if lbl.autowrap_mode != TextServer.AUTOWRAP_OFF:
+				lbl.custom_minimum_size.x = content_w
+		_account_area.custom_minimum_size = Vector2(area_w, 0)
+		_account_area.size = Vector2(area_w, 0)
+		var min_h := _account_area.get_combined_minimum_size().y
+		var visible_bottom: float = -_stage.position.y + size.y
+		var rem_h := maxf(0.0, visible_bottom - 8.0 - enter_bottom)
+		var gap := maxf(6.0, _stage.size.y * 0.015)
+		var area_y: float
+		if rem_h > min_h and min_h > 0.0:
+			area_y = enter_bottom + (rem_h - min_h) * 0.4
+		else:
+			area_y = enter_bottom + gap
+		if area_y + min_h > visible_bottom - 8.0:
+			area_y = visible_bottom - 8.0 - min_h
+		area_y = maxf(area_y, enter_bottom + 6.0)
+		_account_area.position = Vector2(area_x, area_y)
+		_account_area.size = Vector2(area_w, min_h)
 
 func _play_intro() -> void:
 	_set_button_ready(false)
@@ -119,6 +267,8 @@ func _play_intro() -> void:
 	_title.modulate.a = 0.0
 	_enter.modulate.a = 0.0
 	_enter.scale = Vector2(0.85, 0.85)
+	if _account_area:
+		_account_area.modulate.a = 0.0
 
 	_intro = create_tween().set_parallel(true)
 	# 1. Advisors enter from left and right
@@ -133,11 +283,21 @@ func _play_intro() -> void:
 	# 3. Entry button appears last
 	_intro.tween_property(_enter, "modulate:a", 1.0, 0.4).set_delay(1.35)
 	_intro.tween_property(_enter, "scale", Vector2.ONE, 0.45).set_delay(1.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if _account_area:
+		_intro.tween_property(_account_area, "modulate:a", 1.0, 0.4).set_delay(1.35)
 	_intro.chain().tween_callback(_set_button_ready.bind(true))
 
 func _set_button_ready(is_ready: bool) -> void:
+	_buttons_ready = is_ready
 	_enter.disabled = not is_ready
 	_enter.mouse_filter = Control.MOUSE_FILTER_STOP if is_ready else Control.MOUSE_FILTER_IGNORE
+	if _account_area:
+		_account_area.modulate.a = 1.0 if is_ready else 0.0
+		_account_area.mouse_filter = Control.MOUSE_FILTER_PASS if is_ready else Control.MOUSE_FILTER_IGNORE
+		for btn: Button in _account_area.find_children("*", "Button", true, false):
+			btn.disabled = not is_ready
+			btn.mouse_filter = Control.MOUSE_FILTER_STOP if is_ready else Control.MOUSE_FILTER_IGNORE
+			btn.focus_mode = Control.FOCUS_NONE
 	if is_ready:
 		_enter.grab_focus()
 
@@ -153,6 +313,10 @@ func _input(event: InputEvent) -> void:
 
 func _on_entered() -> void:
 	_enter.disabled = true
+	if _account_area:
+		_account_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for btn: Button in _account_area.find_children("*", "Button", true, false):
+			btn.disabled = true
 	# First user gesture: the web build may start audio only now (no autoplay on page load)
 	MusicManager.play_music()
 	entered.emit()
