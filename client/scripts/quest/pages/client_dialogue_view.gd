@@ -46,6 +46,7 @@ var _stream_label: Label = null
 var _last_adv: Label = null
 var _mood_tween: Tween
 var _last_hint := ""
+var _hint_pending := false
 
 
 func guide_lines() -> Array:
@@ -118,6 +119,9 @@ func build() -> void:
 	_log_scroll = QuestUI.scroll(_log)
 	_log_scroll.custom_minimum_size = Vector2(0, 110 if not compact() else 80)
 	_log_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var log_sb := StyleBoxEmpty.new()
+	log_sb.content_margin_top = 8
+	_log_scroll.add_theme_stylebox_override("panel", log_sb)
 	talk.add_child(_log_scroll)
 	stage.add_child(talk)
 	sv.add_child(stage)
@@ -186,7 +190,7 @@ func build() -> void:
 	tv.add_child(_clue_row)
 	_known = QuestUI.vbox(4)
 	tv.add_child(_known)
-	_hint_btn = QuestUI.button("請秘書給一次提示（−0:30）", _ask_hint, "quiet", "bulb")
+	_hint_btn = QuestUI.button("請秘書給一次提示（-0:30）", _ask_hint, "quiet", "bulb")
 	_hint_btn.name = "HintButton"
 	_hint_box = QuestUI.label("", 14, QuestUI.TEXT, true)
 	_hint_box.visible = false
@@ -273,6 +277,8 @@ func _open_briefcase() -> void:
 		return
 	var d: Control = BriefcaseDrawer.new()
 	d.connect("free_question_requested", _focus_free)
+	d.tree_exited.connect(func(): GameState.hold("briefcase", false))
+	GameState.hold("briefcase", true)
 	add_child(d)
 
 
@@ -316,6 +322,8 @@ func on_open() -> void:
 
 
 func on_close() -> void:
+	GameState.hold("briefcase", false)
+	GameState.hold("review", false)
 	if Net.stream_text.is_connected(_on_stream):
 		Net.stream_text.disconnect(_on_stream)
 
@@ -349,8 +357,10 @@ func refresh(s: Dictionary) -> void:
 
 func server_error(_msg: String) -> void:
 	_pending = false
+	_hint_pending = false
 	_send.call("set_loading", false)
 	_hint_btn.call("set_loading", false)
+	_hint_btn.disabled = bool(GameState.my_session().get("hintUsed", false))
 	_build_options(GameState.my_session())
 
 
@@ -458,9 +468,12 @@ func _type(lbl: Label, text: String) -> void:
 
 
 func _scroll_down() -> void:
+	if not is_inside_tree():
+		return
 	await get_tree().process_frame
 	if is_instance_valid(_log_scroll):
-		_log_scroll.scroll_vertical = int(_log_scroll.get_v_scroll_bar().max_value)
+		var vsb := _log_scroll.get_v_scroll_bar()
+		_log_scroll.scroll_vertical = int(maxf(0.0, vsb.max_value - vsb.page))
 
 
 # --- Options ----------------------------------------------------------------------------------
@@ -496,6 +509,7 @@ func _build_options(sess: Dictionary) -> void:
 			b.pressed.connect(func(): _ask(qid))
 			b.disabled = busy
 			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.size_flags_vertical = Control.SIZE_FILL
 			_options.add_child(b)
 	# Follow-up on the life change, when the advisor chose to clarify it
 	var tw: Variant = sess.get("twist")
@@ -504,6 +518,7 @@ func _build_options(sess: Dictionary) -> void:
 		var tb: Button = OptionCard.new(_options.get_child_count() + 1, "info", line, narrow() or compact())
 		tb.name = "Option_twist"
 		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tb.size_flags_vertical = Control.SIZE_FILL
 		tb.pressed.connect(func():
 			GameState.set_flag("twist_clarified", true)
 			_talk(line)
@@ -516,7 +531,7 @@ func _build_options(sess: Dictionary) -> void:
 	_input_row.visible = talk_left > 0 or free_left > 0
 	_send.call("set_reason", "客戶正在回應" if busy else "")
 	_input.editable = not busy
-	_talk_note.text = ("對話剩 %d 輪" % talk_left) if talk_left > 0 else ("自由提問剩 %d 次" % free_left)
+	_talk_note.text = ("自由對話剩 %d 輪" % talk_left) if talk_left > 0 else ("自由提問剩 %d 次" % free_left)
 	if not QuestUI.motion_off():
 		for i in range(_options.get_child_count()):
 			QuestUI.fade_in(_options.get_child(i), i * 0.05, 0.2, 0.0)
@@ -549,6 +564,10 @@ func _talk(t: String) -> void:
 	_pending = true
 	_before = GameState.metrics().duplicate()
 	_reaction.visible = false
+	for b in _options.get_children():
+		if b is Button:
+			(b as Button).disabled = true
+	_input.editable = false
 	_send.call("set_loading", true, "客戶回應中")
 	_last_adv = _bubble(t, false)
 	_stream_label = _bubble("……", true)
@@ -589,7 +608,7 @@ func _react(a: Dictionary, before: Dictionary, after: Dictionary) -> void:
 		quality = "bad" if dt < 0 else "ok"
 		if qid != "free":
 			GameState.spend_time(NO_KEY_COST, "問題沒有帶出線索")
-			reason += "（會談時間 −0:%02d）" % int(NO_KEY_COST)
+			reason += "（會談時間 -0:%02d）" % int(NO_KEY_COST)
 	var comp := str(a.get("compliance", ""))
 	if comp == "violation" or dc <= -10:
 		quality = "bad"
@@ -698,11 +717,17 @@ func _refresh_side(sess: Dictionary) -> void:
 		_known.add_child(r)
 	var used := bool(sess.get("hintUsed", false))
 	_hint_btn.call("set_reason", "這次會談已用過提示" if used else "")
+	if _hint_pending or used:
+		_hint_btn.disabled = true
 
 
 func _ask_hint() -> void:
+	if _hint_pending or _pending or bool(_hint_btn.get("loading")) or _hint_btn.disabled:
+		return
 	if bool(GameState.my_session().get("hintUsed", false)):
 		return
+	_hint_pending = true
+	_hint_btn.disabled = true
 	_hint_btn.call("set_loading", true, "秘書整理中")
 	GameState.spend_time(HINT_COST, "向秘書請求提示")
 	GameState.record["hints"] = int(GameState.record.get("hints", 0)) + 1
@@ -710,7 +735,9 @@ func _ask_hint() -> void:
 
 
 func _show_hint(text: String) -> void:
+	_hint_pending = false
 	_hint_btn.call("set_loading", false)
+	_hint_btn.disabled = true
 	_hint_btn.call("set_reason", "這次會談已用過提示")
 	GameState.add_decision("需求訪談", "請秘書提示", text, "ok")
 	if not TutorialManager.explain("hint", [text]):
@@ -735,13 +762,21 @@ class OptionCard extends Button:
 	var visual: PanelContainer
 	var _sb: StyleBoxFlat
 	var _tw: Tween
+	var _label: Label
+	var _pick: PanelContainer
+	var _min_h := 122.0
+	var _small := false
+	var _last_width := 0.0
 
 	func _init(no: int, icon_kind: String, line: String, small: bool) -> void:
 		text = ""
 		focus_mode = Control.FOCUS_ALL
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		tooltip_text = line
-		custom_minimum_size = Vector2(0, 122 if not small else 84)
+		_small = small
+		_min_h = 122.0 if not small else 84.0
+		custom_minimum_size = Vector2(0, _min_h)
+		size_flags_vertical = Control.SIZE_FILL
 		for st in ["normal", "hover", "pressed", "disabled"]:
 			add_theme_stylebox_override(st, StyleBoxEmpty.new())
 		var focus := StyleBoxFlat.new()
@@ -774,34 +809,63 @@ class OptionCard extends Button:
 		top.add_child(n)
 		top.add_child(QuestUI.icon(icon_kind, 22.0, QuestUI.GOLD))
 		v.add_child(top)
-		var l := QuestUI.label(line, 15 if not small else 14, QuestUI.TEXT, true)
-		l.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		v.add_child(l)
-		var pick := PanelContainer.new()
-		pick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_label = QuestUI.label(line, 15 if not small else 14, QuestUI.TEXT, true)
+		_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		v.add_child(_label)
+		_pick = PanelContainer.new()
+		_pick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_pick.size_flags_vertical = Control.SIZE_SHRINK_END
 		var ps := StyleBoxFlat.new()
 		ps.bg_color = Color(QuestUI.GOLD, 0.85)
 		ps.set_corner_radius_all(10)
 		ps.content_margin_top = 4
 		ps.content_margin_bottom = 4
-		pick.add_theme_stylebox_override("panel", ps)
+		_pick.add_theme_stylebox_override("panel", ps)
 		var pl := QuestUI.label("選擇此回應　→", 13, QuestUI.INK, false, true)
 		pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		pick.add_child(pl)
-		v.add_child(pick)
+		_pick.add_child(pl)
+		v.add_child(_pick)
 		mouse_entered.connect(_hover.bind(true))
 		mouse_exited.connect(_hover.bind(false))
 		button_down.connect(func(): _scale(0.96))
 		button_up.connect(func(): _scale(1.0))
 		pressed.connect(func(): AudioManager.play("ui_click"))
+		_update_content_height(200.0 if not small else 150.0)
+
+	func _update_content_height(w: float) -> void:
+		_last_width = w
+		if _label and is_instance_valid(_label):
+			var avail_w := maxf(40.0, w - 24.0)
+			var font := _label.get_theme_font("font")
+			if font == null:
+				font = ThemeDB.fallback_font
+			var font_size := _label.get_theme_font_size("font_size")
+			if font_size <= 0:
+				font_size = QuestUI.fs(15 if not _small else 14)
+			if font:
+				var s := font.get_multiline_string_size(_label.text, HORIZONTAL_ALIGNMENT_LEFT, avail_w, font_size)
+				_label.custom_minimum_size.y = s.y
+		update_minimum_size()
+
+	func set_line(line: String) -> void:
+		tooltip_text = line
+		if _label and is_instance_valid(_label):
+			_label.text = line
+		_update_content_height(_last_width if _last_width > 0.0 else (200.0 if not _small else 150.0))
 
 	func _get_minimum_size() -> Vector2:
-		return visual.get_combined_minimum_size() if visual else Vector2.ZERO
+		if visual:
+			var ms := visual.get_combined_minimum_size()
+			return Vector2(ms.x, maxf(_min_h, ms.y))
+		return Vector2(0, _min_h)
 
 	func _notification(what: int) -> void:
-		if what == NOTIFICATION_RESIZED and visual:
-			visual.size = size
-			visual.pivot_offset = size * 0.5
+		if what == NOTIFICATION_RESIZED:
+			if size.x > 0.0 and not is_equal_approx(size.x, _last_width):
+				_update_content_height(size.x)
+			if visual:
+				visual.size = size
+				visual.pivot_offset = size * 0.5
 		elif what == NOTIFICATION_DISABLED or what == NOTIFICATION_ENABLED:
 			modulate.a = 0.45 if disabled else 1.0
 

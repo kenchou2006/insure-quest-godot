@@ -106,7 +106,7 @@ func set_value(v: int, animate := true) -> void:
 	_tween.tween_property(_num, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	# +n／−n：好的變化綠色，壞的變化紅色（反向數值上升算壞）
 	var good := (d > 0) != inverted
-	_delta.text = ("+%d" % d) if d > 0 else ("−%d" % absi(d))
+	_delta.text = ("+%d" % d) if d > 0 else ("-%d" % absi(d))
 	_delta.add_theme_color_override("font_color", QuestUI.GREEN if good else QuestUI.RED)
 	_delta.modulate.a = 1.0
 	var fade := create_tween()

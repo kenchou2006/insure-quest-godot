@@ -389,7 +389,7 @@ func _pick_twist(o: Dictionary) -> void:
 			GameState.set_flag("twist_note", tw_title)
 	if float(o.cost) > 0:
 		GameState.spend_time(float(o.cost), "人生事件：" + str(o.title))
-	GameState.add_decision("人生事件", "%s：%s" % [tw_title, o.title], str(o.desc) + ("（會談時間 −%s）" % QuestUI.mmss(float(o.cost)) if float(o.cost) > 0 else ""), "good" if str(o.id) != "note" else "ok", {"time": -float(o.cost)})
+	GameState.add_decision("人生事件", "%s：%s" % [tw_title, o.title], str(o.desc) + ("（會談時間 -%s）" % QuestUI.mmss(float(o.cost)) if float(o.cost) > 0 else ""), "good" if str(o.id) != "note" else "ok", {"time": -float(o.cost)})
 	GameState.set_value("events", (GameState.record.get("events", []) as Array) + [{"event": tw_title, "choice": str(o.title)}])
 	_render_choices()
 	UI.clear(_outcome)

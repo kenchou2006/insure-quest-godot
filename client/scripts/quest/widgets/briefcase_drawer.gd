@@ -44,6 +44,8 @@ func _init() -> void:
 
 
 func _ready() -> void:
+	GameState.hold("briefcase", true)
+	tree_exited.connect(func(): GameState.hold("briefcase", false))
 	_dim = ColorRect.new()
 	_dim.color = Color(QuestUI.INK, 0.0)
 	_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -110,6 +112,7 @@ func close() -> void:
 	if _closing:
 		return
 	_closing = true
+	GameState.hold("briefcase", false)
 	AudioManager.play("ui_back")
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE

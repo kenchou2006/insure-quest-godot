@@ -269,7 +269,7 @@ func _judge(i: int) -> void:
 		AudioManager.play("trust_down")
 		var why := ("這不是需求線索：%s" % str(cl.get("detail", ""))) if not real else ("這是需求線索：%s，不該放在暫時無關。" % str(cl.get("fact", "")))
 		GameState.spend_time(WRONG_COST, "線索誤判")
-		GameState.add_decision("線索分類", "誤判「%s」" % str(cl.get("title", "")), why + "（會談時間 −0:20）", "bad")
+		GameState.add_decision("線索分類", "誤判「%s」" % str(cl.get("title", "")), why + "（會談時間 -0:20）", "bad")
 		layer.call("show_toast", why, "warning")
 	GameState.set_value("clue_results", res)
 	if i == _selected or _selected < 0:
@@ -362,7 +362,7 @@ func _on_confirm() -> void:
 	var missed := hidden_none.size() if decoy_seen else maxi(0, hidden_none.size() - 1)
 	if missed > 0:
 		GameState.spend_time(WRONG_COST * missed, "漏判需求線索")
-		GameState.add_decision("線索分類", "漏判 %d 張需求線索" % missed, "放進「暫時無關」的線索裡有真正的需求；方案可能因此少承接一項風險。（會談時間 −0:%02d）" % int(WRONG_COST * missed), "bad")
+		GameState.add_decision("線索分類", "漏判 %d 張需求線索" % missed, "放進「暫時無關」的線索裡有真正的需求；方案可能因此少承接一項風險。（會談時間 -0:%02d）" % int(WRONG_COST * missed), "bad")
 		layer.call("show_toast", "有 %d 張被放進「暫時無關」的線索其實是需求" % missed, "warning")
 	elif hidden_none.size() == 1 and not decoy_seen:
 		res[str(hidden_none[0])] = "correct"

@@ -160,11 +160,13 @@ func review_button(label_text: String, stages: Array) -> Button:
 func _open_review(title_text: String, stages: Array) -> void:
 	var old := find_child("ReviewModal", false, false)
 	if old:
-		old.queue_free()
+		old.free()
+	GameState.hold("review", true)
 	var m := Control.new()
 	m.name = "ReviewModal"
 	m.set_anchors_preset(Control.PRESET_FULL_RECT)
 	m.mouse_filter = Control.MOUSE_FILTER_STOP
+	m.tree_exited.connect(func(): GameState.hold("review", false))
 	add_child(m)
 	var dim := ColorRect.new()
 	dim.color = Color(QuestUI.INK, 0.6)
