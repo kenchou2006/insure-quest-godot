@@ -614,7 +614,7 @@ export class NvidiaNimAI extends LLMAI {
   private longTimeoutMs: number;
   private gateway?: NimGateway;
 
-  constructor(apiKey: string, model = 'nvidia/nemotron-3-super-120b-a12b', baseUrl = 'https://integrate.api.nvidia.com/v1', opts: NimOptions = {}) {
+  constructor(apiKey: string, model = 'nvidia/nemotron-3.5-super-vl-120b-a12b', baseUrl = 'https://integrate.api.nvidia.com/v1', opts: NimOptions = {}) {
     super();
     this.apiKey = apiKey;
     this.model = model;
@@ -890,7 +890,7 @@ export function makeAI(env: AIEnv): RawAI | null {
   const gateway = nimGateway(env);
   const nimKey = env.NVIDIA_API_KEY ?? '';
   const nvidia = nimEnabled(env)
-    ? new NvidiaNimAI(nimKey, env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b', env.NVIDIA_BASE_URL, { gateway })
+    ? new NvidiaNimAI(nimKey, env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b', env.NVIDIA_BASE_URL, { gateway })
     : null;
   // NIM fallback model (same key, unmetered): deepseek-v4.1-flash format is stable but slower (dialogue 22-37s), relaxed timeout
   // Comma-separated list, tried in order before Workers AI; 'none' disables
