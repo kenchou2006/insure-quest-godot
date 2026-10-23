@@ -15,11 +15,7 @@ config/description="保險顧問銷售訓練桌遊（多人／單人對電腦，
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 boot_splash/bg_color=Color(0.05098, 0.137255, 0.117647, 1)
-<<<<<<< Updated upstream
 boot_splash/image="res://assets/startup/loading.png"
-=======
-boot_splash/show_image=false
->>>>>>> Stashed changes
 config/icon="res://icon.svg"
 
 [autoload]
