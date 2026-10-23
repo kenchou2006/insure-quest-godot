@@ -36,7 +36,7 @@ var game: Control
 var current := ""
 var page: Control = null
 var dice: Control
-var toast: Control
+var toast: ToastMessage
 var focus: Control
 var settings: Control
 var _pages_root: Control
@@ -219,6 +219,9 @@ func _swap(want: String, s: Dictionary) -> void:
 	_close_page()
 	current = want
 	if want == "":
+		if toast:
+			toast.header = null
+			toast.modal_page = false
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		if game and game.has_method("on_map_shown"):
 			game.on_map_shown()
@@ -238,8 +241,11 @@ func _swap(want: String, s: Dictionary) -> void:
 	_pages_root.add_child(p)
 	page = p
 	p.visible = true
-	toast.set("top_offset", _toast_top(want))
+	if toast:
+		toast.modal_page = _is_modal(want)
 	p.call("build")
+	if toast:
+		toast.header = _get_header()
 	p.call("refresh", s)
 	GameState.timed_page = want in TIMED
 	TensionManager.set_active(want in TIMED or want == "event")
@@ -292,7 +298,9 @@ func _process(_delta: float) -> void:
 
 func _close_page() -> void:
 	if toast:
-		toast.call("hide_now")
+		toast.hide_now()
+		toast.header = null
+		toast.modal_page = false
 	if page != null and is_instance_valid(page):
 		page.call("on_close")
 		page.queue_free()
@@ -329,8 +337,7 @@ func _go(target: String, data: Dictionary) -> void:
 			pass
 	if data.has("toast"):
 		if toast:
-			toast.set("top_offset", _toast_top(target))
-		toast.call("show_message", str(data.toast), str(data.get("kind", "info")))
+			toast.show_message(str(data.toast), str(data.get("kind", "info")))
 	route(Net.state)
 
 
@@ -338,7 +345,8 @@ func _on_server_error(msg: String) -> void:
 	if not has_page():
 		return
 	_awaiting = false
-	toast.call("show_message", msg, "error", 4.0)
+	if toast:
+		toast.show_message(msg, "error", 4.0)
 	page.call("server_error", msg)
 
 
@@ -368,15 +376,16 @@ func open_settings() -> void:
 
 func show_toast(text: String, kind := "info") -> void:
 	if toast:
-		toast.set("top_offset", _toast_top())
-	toast.call("show_message", text, kind)
+		toast.show_message(text, kind)
 
 
-func _toast_top(want := "") -> float:
-	var target := want if want != "" else current
-	if _is_modal(target):
-		return 12.0
-	return 86.0 if UI.is_phone() else 26.0
+func _get_header() -> Control:
+	if page != null and is_instance_valid(page):
+		var h: Variant = page.get("header")
+		if h is Control and is_instance_valid(h):
+			return h
+		return page.find_child("GameHeader", true, false)
+	return null
 
 
 ## 離開培訓 from the settings: 繼續培訓 / 儲存並返回主畫面 / 放棄本次培訓

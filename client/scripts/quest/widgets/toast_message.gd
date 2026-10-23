@@ -3,11 +3,30 @@ extends Control
 ## (gold for 注意, red for 危機, always with an icon and words, so they read with sound off),
 ## server errors and confirmations. One at a time, newest wins, never blinking.
 
+var header: Control = null:
+	set(h):
+		if header == h:
+			return
+		if header != null and is_instance_valid(header) and header.resized.is_connected(_place):
+			header.resized.disconnect(_place)
+		header = h
+		if header != null and is_instance_valid(header):
+			if not header.resized.is_connected(_place):
+				header.resized.connect(_place)
+		if is_inside_tree() and _panel != null and _panel.visible:
+			_place()
+
+var modal_page := false:
+	set(m):
+		modal_page = m
+		if is_inside_tree() and _panel != null and _panel.visible:
+			_place()
+
+var top_offset := 26.0
 var _panel: PanelContainer
 var _icon: Control
 var _label: Label
 var _tween: Tween
-var top_offset := 26.0
 
 
 func _init() -> void:
@@ -50,8 +69,8 @@ func show_message(text: String, kind := "info", secs := 3.6) -> void:
 	s.border_color = Color(col, 0.85)
 	s.content_margin_left = 16
 	s.content_margin_right = 18
-	s.content_margin_top = 8
-	s.content_margin_bottom = 8
+	s.content_margin_top = 6
+	s.content_margin_bottom = 6
 	_panel.add_theme_stylebox_override("panel", s)
 	_icon.set("kind", icon_kind)
 	_icon.call("set_color", col)
@@ -61,6 +80,7 @@ func show_message(text: String, kind := "info", secs := 3.6) -> void:
 	_label.add_theme_color_override("font_color", QuestUI.TEXT)
 	_panel.visible = true
 	_place()
+	call_deferred("_place")
 	if kind in ["warning", "danger"]:
 		AudioManager.play("toast")
 	if _tween and _tween.is_valid():
@@ -73,18 +93,85 @@ func show_message(text: String, kind := "info", secs := 3.6) -> void:
 	_tween.tween_callback(func(): _panel.visible = false)
 
 
+func _get_header() -> Control:
+	var p := get_parent()
+	if p != null and is_instance_valid(p):
+		if p.has_method("_get_header"):
+			return p.call("_get_header") as Control
+		var pg: Variant = p.get("page")
+		if pg is Control and is_instance_valid(pg):
+			var h: Variant = pg.get("header")
+			if h is Control and is_instance_valid(h):
+				return h
+			return pg.find_child("GameHeader", true, false)
+	return null
+
+
+func _is_modal_page() -> bool:
+	var p := get_parent()
+	if p != null and is_instance_valid(p):
+		var cur: String = str(p.get("current"))
+		if p.has_method("_is_modal"):
+			return bool(p.call("_is_modal", cur))
+	return false
+
+
 func _place() -> void:
 	if _panel == null:
 		return
-	_panel.reset_size()
-	if size.x > 0.0:
-		var max_w := size.x - 32.0
+	var is_modal := modal_page or _is_modal_page()
+	var h := header if (header != null and is_instance_valid(header)) else _get_header()
+
+	if is_modal or h == null or not is_instance_valid(h) or not h.is_inside_tree() or not h.is_visible_in_tree():
+		# Modal pages or fallback: keep current top offset
+		_label.add_theme_font_size_override("font_size", QuestUI.fs(15))
+		_label.max_lines_visible = -1
+		_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		_label.custom_minimum_size.x = 0
+		_panel.reset_size()
+		if size.x > 0.0:
+			var max_w := size.x - 32.0
+			if _panel.size.x > max_w:
+				_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				_label.custom_minimum_size.x = maxf(120.0, max_w - 48.0)
+				_panel.reset_size()
+		var x := maxf(8.0, (size.x - _panel.size.x) * 0.5)
+		var y := 12.0 if is_modal else (86.0 if UI.is_phone() and top_offset == 26.0 else top_offset)
+		_panel.position = Vector2(x, y)
+		return
+
+	var gap: Rect2 = h.call("middle_gap")
+	if gap.size.x >= 360.0:
+		# Desktop / wide screens: inside the gap, centred, max width = gap width - 16, wrapping to at most 2 lines with a smaller font (13), vertically centred in the header
+		var max_w := gap.size.x - 16.0
+		_label.add_theme_font_size_override("font_size", QuestUI.fs(13))
+		_label.max_lines_visible = 2
+		_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		_label.custom_minimum_size.x = 0
+		_panel.reset_size()
 		if _panel.size.x > max_w:
 			_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			_label.custom_minimum_size.x = maxf(120.0, max_w - 48.0)
 			_panel.reset_size()
-	var x := maxf(8.0, (size.x - _panel.size.x) * 0.5)
-	_panel.position = Vector2(x, top_offset)
+		var x := gap.position.x + (gap.size.x - _panel.size.x) * 0.5
+		var y := gap.position.y + (gap.size.y - _panel.size.y) * 0.5
+		_panel.position = Vector2(x, y)
+	else:
+		# Narrow screens / phones: directly below the header bar
+		_label.add_theme_font_size_override("font_size", QuestUI.fs(14 if UI.is_phone() else 15))
+		_label.max_lines_visible = -1
+		_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		_label.custom_minimum_size.x = 0
+		_panel.reset_size()
+		if size.x > 0.0:
+			var max_w := size.x - 32.0
+			if _panel.size.x > max_w:
+				_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				_label.custom_minimum_size.x = maxf(120.0, max_w - 48.0)
+				_panel.reset_size()
+		var x := maxf(8.0, (size.x - _panel.size.x) * 0.5)
+		var y := h.get_global_rect().end.y + 6.0
+		_panel.position = Vector2(x, y)
 
 
 func hide_now() -> void:

@@ -154,6 +154,7 @@ func build() -> void:
 	# 三張回應卡
 	_options = QuestUI.hbox(10) if not (narrow() or compact()) else QuestUI.vbox(8)
 	_options.name = "Options"
+	_options.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sv.add_child(_options)
 	_input_row = QuestUI.vbox(4)
 	var ir := QuestUI.hbox(8)
@@ -209,6 +210,7 @@ func build() -> void:
 	nav.add_child(home)
 	var right := side([task_card, _hint_btn, _hint_box, _bag_btn], [secretary_button(), _next, nav])
 	# 桌機約 70% / 30%；矮螢幕右欄放寬，讓下一步按鈕放得下
+	scene.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_scene_scroll = null if narrow() else QuestUI.scroll(scene)
 	v.add_child(columns([scene if narrow() else _scene_scroll, right], [2.3, 1.0] if not compact() else [1.6, 1.0]))
 	_set_mood("calm")
@@ -504,27 +506,29 @@ func _build_options(sess: Dictionary) -> void:
 		for k in range(shown.size()):
 			var qd: Dictionary = shown[k]
 			var qid := str(qd.get("id", ""))
-			var b: Button = OptionCard.new(k + 1, str(OPTION_ICONS.get(qid, "chat")), str(qd.get("text", "")), narrow() or compact())
-			b.name = "Option_" + qid
-			b.pressed.connect(func(): _ask(qid))
-			b.disabled = busy
-			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			b.size_flags_vertical = Control.SIZE_FILL
-			_options.add_child(b)
+			var card := OptionCard.new(k + 1, str(OPTION_ICONS.get(qid, "chat")), str(qd.get("text", "")), narrow() or compact())
+			card.name = "Option_" + qid + "Card"
+			card.btn.name = "Option_" + qid
+			card.pressed.connect(func(): _ask(qid))
+			card.disabled = busy
+			card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			card.size_flags_vertical = Control.SIZE_FILL
+			_options.add_child(card)
 	# Follow-up on the life change, when the advisor chose to clarify it
 	var tw: Variant = sess.get("twist")
 	if bool(GameState.flag("twist_clarify", false)) and not bool(GameState.flag("twist_clarified", false)) and tw is Dictionary and int(sess.get("talkLeft", 0)) > 0:
 		var line := "關於「%s」，最近對您的生活影響大嗎？" % str(tw.get("title", "最近的變化"))
-		var tb: Button = OptionCard.new(_options.get_child_count() + 1, "info", line, narrow() or compact())
-		tb.name = "Option_twist"
-		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tb.size_flags_vertical = Control.SIZE_FILL
-		tb.pressed.connect(func():
+		var tcard := OptionCard.new(_options.get_child_count() + 1, "info", line, narrow() or compact())
+		tcard.name = "Option_twistCard"
+		tcard.btn.name = "Option_twist"
+		tcard.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tcard.size_flags_vertical = Control.SIZE_FILL
+		tcard.pressed.connect(func():
 			GameState.set_flag("twist_clarified", true)
 			_talk(line)
 		)
-		tb.disabled = busy
-		_options.add_child(tb)
+		tcard.disabled = busy
+		_options.add_child(tcard)
 	# Free line through the AI client
 	var talk_left := int(sess.get("talkLeft", 0))
 	var free_left := int(sess.get("freeLeft", 0))
@@ -544,7 +548,7 @@ func _ask(qid: String) -> void:
 	_before = GameState.metrics().duplicate()
 	_reaction.visible = false
 	for b in _options.get_children():
-		(b as Button).disabled = true
+		b.set("disabled", true)
 	send({"type": "ask", "qid": qid})
 
 
@@ -565,8 +569,7 @@ func _talk(t: String) -> void:
 	_before = GameState.metrics().duplicate()
 	_reaction.visible = false
 	for b in _options.get_children():
-		if b is Button:
-			(b as Button).disabled = true
+		b.set("disabled", true)
 	_input.editable = false
 	_send.call("set_loading", true, "客戶回應中")
 	_last_adv = _bubble(t, false)
@@ -756,52 +759,54 @@ func _impact(quality: String, comp: String, found_key: bool) -> String:
 	return "真實會談中，每一個問題都要能幫你更了解客戶；問到線索才會讓方案更貼近需求。"
 
 
-## 顧問回應卡：編號、圖示、回應內容、「選擇此回應」。整張卡是一個按鈕；滑過時亮度提高、
-## 上移 2px，按下縮放 0.96；不顯示分數或好壞傾向。
-class OptionCard extends Button:
-	var visual: PanelContainer
+## 顧問回應卡：編號、圖示、回應內容、「選擇此回應」。整張卡為容器結構；滑過時邊框提亮，
+## 按下縮放 0.96；底部的覆蓋按鈕接收點擊並轉發。
+class OptionCard extends PanelContainer:
+	signal pressed
+
+	var btn: Button
+	var visual: Control:
+		get:
+			return self
 	var _sb: StyleBoxFlat
-	var _tw: Tween
 	var _label: Label
 	var _pick: PanelContainer
-	var _min_h := 122.0
 	var _small := false
-	var _last_width := 0.0
+	var _hovered := false
+	var _focused := false
+
+	var disabled: bool:
+		set(val):
+			disabled = val
+			if btn and is_instance_valid(btn):
+				btn.disabled = val
+			modulate.a = 0.45 if val else 1.0
+			_update_style()
+		get:
+			if btn and is_instance_valid(btn):
+				return btn.disabled
+			return disabled
 
 	func _init(no: int, icon_kind: String, line: String, small: bool) -> void:
-		text = ""
-		focus_mode = Control.FOCUS_ALL
-		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		tooltip_text = line
 		_small = small
-		_min_h = 122.0 if not small else 84.0
-		custom_minimum_size = Vector2(0, _min_h)
+		custom_minimum_size = Vector2(0, 122.0 if not small else 84.0)
+		size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		size_flags_vertical = Control.SIZE_FILL
-		for st in ["normal", "hover", "pressed", "disabled"]:
-			add_theme_stylebox_override(st, StyleBoxEmpty.new())
-		var focus := StyleBoxFlat.new()
-		focus.draw_center = false
-		focus.set_border_width_all(2)
-		focus.border_color = Color(QuestUI.GOLD, 0.8)
-		focus.set_corner_radius_all(14)
-		add_theme_stylebox_override("focus", focus)
-		visual = PanelContainer.new()
-		visual.name = "Visual"
-		visual.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mouse_filter = Control.MOUSE_FILTER_PASS
+
 		_sb = StyleBoxFlat.new()
 		_sb.bg_color = Color("#0D4038", 0.96)
 		_sb.set_corner_radius_all(14)
 		_sb.set_border_width_all(1)
 		_sb.border_color = Color(1, 1, 1, 0.14)
 		_sb.set_content_margin_all(12)
-		visual.add_theme_stylebox_override("panel", _sb)
-		add_child(visual)
-		# 內文換行後卡片變高：通知外層重新排版，不讓下一列蓋住「選擇此回應」
-		visual.minimum_size_changed.connect(update_minimum_size)
+		add_theme_stylebox_override("panel", _sb)
+
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 6)
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		visual.add_child(v)
+		add_child(v)
+
 		var top := HBoxContainer.new()
 		top.add_theme_constant_override("separation", 8)
 		top.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -809,9 +814,16 @@ class OptionCard extends Button:
 		top.add_child(n)
 		top.add_child(QuestUI.icon(icon_kind, 22.0, QuestUI.GOLD))
 		v.add_child(top)
+
 		_label = QuestUI.label(line, 15 if not small else 14, QuestUI.TEXT, true)
-		_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		v.add_child(_label)
+
+		var spacer := Control.new()
+		spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(spacer)
+
 		_pick = PanelContainer.new()
 		_pick.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_pick.size_flags_vertical = Control.SIZE_SHRINK_END
@@ -825,66 +837,66 @@ class OptionCard extends Button:
 		pl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_pick.add_child(pl)
 		v.add_child(_pick)
-		mouse_entered.connect(_hover.bind(true))
-		mouse_exited.connect(_hover.bind(false))
-		button_down.connect(func(): _scale(0.96))
-		button_up.connect(func(): _scale(1.0))
-		pressed.connect(func(): AudioManager.play("ui_click"))
-		_update_content_height(200.0 if not small else 150.0)
 
-	func _update_content_height(w: float) -> void:
-		_last_width = w
-		if _label and is_instance_valid(_label):
-			var avail_w := maxf(40.0, w - 24.0)
-			var font := _label.get_theme_font("font")
-			if font == null:
-				font = ThemeDB.fallback_font
-			var font_size := _label.get_theme_font_size("font_size")
-			if font_size <= 0:
-				font_size = QuestUI.fs(15 if not _small else 14)
-			if font:
-				var s := font.get_multiline_string_size(_label.text, HORIZONTAL_ALIGNMENT_LEFT, avail_w, font_size)
-				_label.custom_minimum_size.y = s.y
-		update_minimum_size()
+		btn = Button.new()
+		btn.flat = true
+		btn.text = ""
+		btn.focus_mode = Control.FOCUS_ALL
+		btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		btn.mouse_filter = Control.MOUSE_FILTER_STOP
+		btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+		btn.tooltip_text = line
+		for st in ["normal", "hover", "pressed", "disabled", "focus"]:
+			btn.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+		add_child(btn)
+
+		btn.pressed.connect(func():
+			AudioManager.play("ui_click")
+			pressed.emit()
+		)
+		btn.mouse_entered.connect(_on_hover.bind(true))
+		btn.mouse_exited.connect(_on_hover.bind(false))
+		btn.button_down.connect(func(): _scale(0.96))
+		btn.button_up.connect(func(): _scale(1.0))
+		btn.focus_entered.connect(_on_focus.bind(true))
+		btn.focus_exited.connect(_on_focus.bind(false))
 
 	func set_line(line: String) -> void:
 		tooltip_text = line
+		if btn and is_instance_valid(btn):
+			btn.tooltip_text = line
 		if _label and is_instance_valid(_label):
 			_label.text = line
-		_update_content_height(_last_width if _last_width > 0.0 else (200.0 if not _small else 150.0))
 
-	func _get_minimum_size() -> Vector2:
-		if visual:
-			var ms := visual.get_combined_minimum_size()
-			return Vector2(ms.x, maxf(_min_h, ms.y))
-		return Vector2(0, _min_h)
-
-	func _notification(what: int) -> void:
-		if what == NOTIFICATION_RESIZED:
-			if size.x > 0.0 and not is_equal_approx(size.x, _last_width):
-				_update_content_height(size.x)
-			if visual:
-				visual.size = size
-				visual.pivot_offset = size * 0.5
-		elif what == NOTIFICATION_DISABLED or what == NOTIFICATION_ENABLED:
-			modulate.a = 0.45 if disabled else 1.0
-
-	func _hover(on: bool) -> void:
+	func _on_hover(on: bool) -> void:
+		_hovered = on
 		if disabled and on:
 			return
-		_sb.border_color = QuestUI.GOLD if on else Color(1, 1, 1, 0.14)
-		_sb.bg_color = Color("#0D4038", 0.96).lightened(0.08 if on else 0.0)
+		_update_style()
 		if on:
 			AudioManager.play("ui_hover")
-		if QuestUI.motion_off():
+
+	func _on_focus(on: bool) -> void:
+		_focused = on
+		_update_style()
+
+	func _update_style() -> void:
+		if _sb == null:
 			return
-		if _tw and _tw.is_valid():
-			_tw.kill()
-		_tw = create_tween()
-		_tw.tween_property(visual, "position:y", -2.0 if on else 0.0, 0.15)
+		if _focused:
+			_sb.border_color = Color(QuestUI.GOLD, 0.8)
+			_sb.set_border_width_all(2)
+		elif _hovered and not disabled:
+			_sb.border_color = QuestUI.GOLD
+			_sb.set_border_width_all(1)
+		else:
+			_sb.border_color = Color(1, 1, 1, 0.14)
+			_sb.set_border_width_all(1)
+		_sb.bg_color = Color("#0D4038", 0.96).lightened(0.08 if (_hovered and not disabled) else 0.0)
 
 	func _scale(to: float) -> void:
 		if QuestUI.motion_off():
 			return
+		pivot_offset = size * 0.5
 		var tw := create_tween()
-		tw.tween_property(visual, "scale", Vector2.ONE * to, 0.07 if to < 1.0 else 0.12)
+		tw.tween_property(self, "scale", Vector2.ONE * to, 0.07 if to < 1.0 else 0.12)

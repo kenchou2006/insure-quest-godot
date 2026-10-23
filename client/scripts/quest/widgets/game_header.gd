@@ -16,6 +16,7 @@ var settings_btn: Button
 var player_chip: Control
 var _level_label: Label
 var _xp_bar: ProgressBar
+var _left_controls: Array = []
 var compact := false
 
 
@@ -51,6 +52,7 @@ func _init(is_compact := false) -> void:
 	timer = TimerBadge.new(compact)
 	timer.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(timer)
+	_left_controls = [logo, sep, progress, timer]
 	h.add_child(QuestUI.spacer())
 	extra = QuestUI.hbox(8)
 	h.add_child(extra)
@@ -64,6 +66,26 @@ func _init(is_compact := false) -> void:
 	settings_btn.name = "SettingsButton"
 	settings_btn.pressed.connect(func(): settings_requested.emit())
 	h.add_child(settings_btn)
+
+
+## Free middle gap between the left group (logo, progress, timer) and right group (extra, player, sound, settings)
+func middle_gap() -> Rect2:
+	if not is_inside_tree() or not is_visible_in_tree():
+		return Rect2()
+	var left_end := get_global_rect().position.x
+	for c in _left_controls:
+		if c is Control and (c as Control).is_inside_tree() and (c as Control).is_visible_in_tree() and (c as Control).size.x > 0.0:
+			left_end = maxf(left_end, (c as Control).get_global_rect().end.x)
+	var right_start := get_global_rect().end.x
+	for c in [extra, player_chip, sound_btn, settings_btn]:
+		if c is Control and (c as Control).is_inside_tree() and (c as Control).is_visible_in_tree():
+			if c == extra and (extra.get_child_count() == 0 or extra.size.x <= 0.0):
+				continue
+			if (c as Control).size.x > 0.0:
+				right_start = minf(right_start, (c as Control).get_global_rect().position.x)
+	var gap_w := maxf(0.0, right_start - left_end)
+	var hr := get_global_rect()
+	return Rect2(left_end, hr.position.y, gap_w, hr.size.y)
 
 
 func _ready() -> void:

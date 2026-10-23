@@ -212,104 +212,154 @@ func _bump(key: String, d: int) -> void:
 	_sync()
 
 
-## 保障卡按鈕：依標題與詳細說明的換行高度回報真實最小高度，以 104（緊湊 84）為下限
-class CoverageCardButton extends Button:
+## 保障卡按鈕：容器結構，由 PanelContainer 自帶最小尺寸與外框樣式，內建覆蓋按鈕處理切換
+class CoverageCardButton extends PanelContainer:
+	signal toggled(on: bool)
+	signal pressed
+
+	var id := ""
+	var btn: Button
 	var is_compact := false
-	var content: Control = null
 	var title_lbl: Label = null
 	var detail_lbl: Label = null
-	var _last_w := 0.0
+	var _hover := false
+	var _focused := false
 
-	func _notification(what: int) -> void:
-		if what == NOTIFICATION_RESIZED:
-			if size.x > 0.0 and not is_equal_approx(size.x, _last_w):
-				_update_text_height(size.x)
+	var button_pressed: bool:
+		set(val):
+			if btn and is_instance_valid(btn):
+				btn.button_pressed = val
+			_style()
+		get:
+			if btn and is_instance_valid(btn):
+				return btn.button_pressed
+			return false
 
-	func _update_text_height(w: float) -> void:
-		_last_w = w
-		var avail_w := maxf(40.0, w - 20.0)
-		for lbl: Label in [title_lbl, detail_lbl]:
-			if lbl and is_instance_valid(lbl) and lbl.text != "":
-				var font: Font = lbl.get_theme_font("font")
-				if font == null:
-					font = ThemeDB.fallback_font
-				var font_size: int = lbl.get_theme_font_size("font_size")
-				if font_size <= 0:
-					font_size = QuestUI.fs(15 if lbl == title_lbl else 11)
-				if font:
-					var s: Vector2 = font.get_multiline_string_size(lbl.text, HORIZONTAL_ALIGNMENT_LEFT, avail_w, font_size)
-					lbl.custom_minimum_size.y = s.y
-		update_minimum_size()
+	var disabled: bool:
+		set(val):
+			disabled = val
+			if btn and is_instance_valid(btn):
+				btn.disabled = val
+			modulate.a = 0.45 if val else 1.0
+			_style()
+		get:
+			if btn and is_instance_valid(btn):
+				return btn.disabled
+			return false
 
-	func _get_minimum_size() -> Vector2:
+	func _init(card_id: String, cd: Dictionary, compact_mode: bool) -> void:
+		id = card_id
+		is_compact = compact_mode
+		name = "Card_" + id + "Card"
 		var base_h: float = 84.0 if is_compact else 104.0
-		if content and is_instance_valid(content):
-			var ch := content.get_combined_minimum_size().y + 14.0
-			return Vector2(0.0, maxf(base_h, ch))
-		return Vector2(0.0, base_h)
+		custom_minimum_size = Vector2(0.0, base_h)
+		size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mouse_filter = Control.MOUSE_FILTER_PASS
 
+		var v := QuestUI.vbox(4)
+		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(v)
 
-func _card_button(cd: Dictionary) -> Button:
-	var id := str(cd.get("id", ""))
-	var b := CoverageCardButton.new()
-	b.name = "Card_" + id
-	b.is_compact = compact()
-	b.toggle_mode = true
-	b.button_pressed = _cards.has(id)
-	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	b.tooltip_text = str(cd.get("detail", ""))
-	var v := QuestUI.vbox(4)
-	v.set_anchors_preset(Control.PRESET_FULL_RECT)
-	v.offset_left = 10
-	v.offset_right = -10
-	v.offset_top = 8
-	v.offset_bottom = -6
-	b.add_child(v)
-	b.content = v
-	v.minimum_size_changed.connect(b.update_minimum_size)
-	v.add_child(QuestUI.label(str(cd.get("tag", "")), 12, QuestUI.GOLD))
-	var tl := QuestUI.label(str(cd.get("title", "")), 15, QuestUI.TEXT, true, true)
-	v.add_child(tl)
-	b.title_lbl = tl
-	var dl := QuestUI.label(str(cd.get("detail", "")), 11, QuestUI.MUTED, true)
-	v.add_child(dl)
-	b.detail_lbl = dl
-	b._update_text_height(180.0 if not compact() else 140.0)
-	for st in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
+		var tag_l := QuestUI.label(str(cd.get("tag", "")), 12, QuestUI.GOLD)
+		tag_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(tag_l)
+
+		title_lbl = QuestUI.label(str(cd.get("title", "")), 15, QuestUI.TEXT, true, true)
+		title_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(title_lbl)
+
+		detail_lbl = QuestUI.label(str(cd.get("detail", "")), 11, QuestUI.MUTED, true)
+		detail_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(detail_lbl)
+
+		btn = Button.new()
+		btn.name = "Card_" + id
+		btn.toggle_mode = true
+		btn.flat = true
+		btn.text = ""
+		btn.focus_mode = Control.FOCUS_ALL
+		btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		btn.mouse_filter = Control.MOUSE_FILTER_STOP
+		btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+		btn.tooltip_text = str(cd.get("detail", ""))
+		for st in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
+			btn.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+		add_child(btn)
+
+		btn.toggled.connect(func(on: bool):
+			_style()
+			toggled.emit(on)
+		)
+		btn.pressed.connect(func():
+			pressed.emit()
+		)
+		btn.mouse_entered.connect(func():
+			_hover = true
+			_style()
+			AudioManager.play("ui_hover")
+		)
+		btn.mouse_exited.connect(func():
+			_hover = false
+			_style()
+		)
+		btn.focus_entered.connect(func():
+			_focused = true
+			_style()
+		)
+		btn.focus_exited.connect(func():
+			_focused = false
+			_style()
+		)
+		_style()
+
+	func set_pressed_no_signal(on: bool) -> void:
+		if btn and is_instance_valid(btn):
+			btn.set_pressed_no_signal(on)
+		_style()
+
+	func _style() -> void:
+		var is_on := btn.button_pressed if (btn and is_instance_valid(btn)) else false
+		var is_dis := btn.disabled if (btn and is_instance_valid(btn)) else false
 		var s := StyleBoxFlat.new()
 		s.set_corner_radius_all(12)
-		s.set_border_width_all(1)
-		s.bg_color = Color(QuestUI.CARD.lightened(0.04), 0.95)
-		s.border_color = Color(1, 1, 1, 0.14)
-		match st:
-			"hover":
-				s.border_color = QuestUI.GOLD
-			"pressed", "hover_pressed":
-				s.bg_color = Color(QuestUI.GREEN, 0.22)
-				s.border_color = QuestUI.GREEN
-				s.set_border_width_all(2)
-			"focus":
-				s.bg_color = Color(0, 0, 0, 0)
-				s.border_color = Color(QuestUI.GOLD, 0.8)
-			"disabled":
-				s.bg_color = Color(QuestUI.CARD, 0.4)
-		b.add_theme_stylebox_override(st, s)
-	b.toggled.connect(func(on: bool): _toggle_card(id, on, b))
-	b.mouse_entered.connect(func(): AudioManager.play("ui_hover"))
-	_card_btns[id] = b
-	return b
+		s.set_border_width_all(2 if is_on else 1)
+		s.content_margin_left = 10
+		s.content_margin_right = 10
+		s.content_margin_top = 8
+		s.content_margin_bottom = 6
+		if is_dis:
+			s.bg_color = Color(QuestUI.CARD, 0.4)
+			s.border_color = Color(1, 1, 1, 0.1)
+		elif is_on:
+			s.bg_color = Color(QuestUI.GREEN, 0.22)
+			s.border_color = QuestUI.GREEN
+		else:
+			s.bg_color = Color(QuestUI.CARD.lightened(0.04), 0.95)
+			s.border_color = QuestUI.GOLD if _hover else Color(1, 1, 1, 0.14)
+		if _focused and not is_on and not is_dis:
+			s.border_color = Color(QuestUI.GOLD, 0.8)
+			s.set_border_width_all(2)
+		add_theme_stylebox_override("panel", s)
 
 
-func _toggle_card(id: String, on: bool, b: Button) -> void:
+func _card_button(cd: Dictionary) -> Control:
+	var id := str(cd.get("id", ""))
+	var card := CoverageCardButton.new(id, cd, compact())
+	card.button_pressed = _cards.has(id)
+	card.toggled.connect(func(on: bool): _toggle_card(id, on, card))
+	_card_btns[id] = card
+	return card
+
+
+func _toggle_card(id: String, on: bool, card: Control) -> void:
 	if _sending:
 		return
 	AudioManager.play("ui_click")
 	if on and not _cards.has(id):
 		if _cards.size() >= 3:
-			b.set_pressed_no_signal(false)
+			card.call("set_pressed_no_signal", false)
 			layer.call("show_toast", "最多選 3 張保障卡；先取消一張再選", "warning")
-			QuestUI.shake(b)
+			QuestUI.shake(card)
 			return
 		_cards.append(id)
 	elif not on:
@@ -536,7 +586,7 @@ func _sync() -> void:
 	_eval.add_child(QuestUI.metric_bar("保障完整度", ratio * 100.0, QuestUI.GREEN if ratio >= 1.0 else QuestUI.GOLD))
 	var fit_val := 100.0 if total == TOTAL else maxf(0.0, 100.0 - absf(total - TOTAL) * 25.0)
 	_eval.add_child(QuestUI.metric_bar("預算適配", fit_val, QuestUI.RED if over else (QuestUI.GREEN if total == TOTAL else QuestUI.GOLD)))
-	_eval.add_child(QuestUI.metric_bar("合規", GameState.compliance()))
+	_eval.add_child(QuestUI.metric_bar("合規表現", GameState.compliance()))
 	if int(_alloc.growth) >= 6:
 		_eval.add_child(QuestUI.label("提醒：成長部位較高，說明時要講清楚波動，不能暗示保證報酬。", 12, QuestUI.GOLD, true))
 	var reason := ""

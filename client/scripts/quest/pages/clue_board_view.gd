@@ -403,10 +403,22 @@ func _on_confirm() -> void:
 
 # --- Card and box ------------------------------------------------------------------------------
 
-class ClueCard extends Button:
+class ClueButton extends Button:
+	var card: Control = null
+
+	func _get_drag_data(at: Vector2) -> Variant:
+		if card and card.has_method("_get_drag_data"):
+			return card.call("_get_drag_data", at)
+		return null
+
+
+class ClueCard extends PanelContainer:
+	signal pressed
+
 	var index := 0
 	var data: Dictionary = {}
 	var view: Control
+	var btn: Button
 	var _content: VBoxContainer
 	var _title: Label
 	var _body: Label
@@ -414,63 +426,103 @@ class ClueCard extends Button:
 	var _scan: ColorRect
 	var _face_up := false
 	var _verdict := ""
+	var _selected := false
+	var _hover := false
+
+	var disabled: bool:
+		set(val):
+			disabled = val
+			if btn and is_instance_valid(btn):
+				btn.disabled = val
+			modulate.a = 0.45 if val else 1.0
+		get:
+			if btn and is_instance_valid(btn):
+				return btn.disabled
+			return disabled
 
 	func _init(i: int, cl: Dictionary, owner_view: Control) -> void:
 		index = i
 		data = cl
 		view = owner_view
-		name = "Clue_%d" % i
-		custom_minimum_size = Vector2(150, 0)
+		name = "Clue_%dCard" % i
+		var base_h: float = 96.0 if not UI.is_phone() else 80.0
+		custom_minimum_size = Vector2(150.0, base_h)
 		size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		focus_mode = Control.FOCUS_ALL
-		clip_contents = false
+		mouse_filter = Control.MOUSE_FILTER_PASS
+
 		_content = QuestUI.vbox(4)
-		_content.set_anchors_preset(Control.PRESET_FULL_RECT)
-		_content.offset_left = 12
-		_content.offset_right = -12
-		_content.offset_top = 10
-		_content.offset_bottom = -8
+		_content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(_content)
+
 		_badge = QuestUI.label("", 11, QuestUI.GOLD)
+		_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_content.add_child(_badge)
+
 		_title = QuestUI.label(str(cl.get("title", "")), 16, QuestUI.TEXT, true, true)
+		_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_content.add_child(_title)
+
 		_body = QuestUI.label("", 12, QuestUI.MUTED, true)
+		_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_content.add_child(_body)
+
+		btn = ClueButton.new()
+		btn.card = self
+		btn.name = "Clue_%d" % i
+		btn.flat = true
+		btn.text = ""
+		btn.focus_mode = Control.FOCUS_ALL
+		btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		btn.mouse_filter = Control.MOUSE_FILTER_STOP
+		btn.set_anchors_preset(Control.PRESET_FULL_RECT)
+		for st in ["normal", "hover", "pressed", "disabled", "focus"]:
+			btn.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+		add_child(btn)
+
 		_scan = ColorRect.new()
 		_scan.color = Color(QuestUI.GOLD, 0.85)
 		_scan.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_scan.visible = false
-		add_child(_scan)
-		pressed.connect(func(): view.call("select", index))
-		mouse_entered.connect(func(): AudioManager.play("ui_hover"))
+		btn.add_child(_scan)
+
+		btn.pressed.connect(func():
+			view.call("select", index)
+			pressed.emit()
+		)
+		btn.mouse_entered.connect(func():
+			_hover = true
+			_style()
+			AudioManager.play("ui_hover")
+		)
+		btn.mouse_exited.connect(func():
+			_hover = false
+			_style()
+		)
+
 		_face_up = bool(cl.get("observed", false))
 		_style()
 		_fill()
 
-	func _get_minimum_size() -> Vector2:
-		var base_h: float = 96.0 if not UI.is_phone() else 80.0
-		var content_h := _content.get_combined_minimum_size().y if _content else 0.0
-		return Vector2(150.0, maxf(base_h, content_h + 18.0))
-
 	func _style(verdict := "") -> void:
-		for st in ["normal", "hover", "pressed", "focus", "disabled"]:
-			var s := StyleBoxFlat.new()
-			s.set_corner_radius_all(12)
-			s.set_border_width_all(1)
-			s.bg_color = Color(QuestUI.CARD.lightened(0.05), 0.96) if _face_up else Color(QuestUI.INK, 0.95)
-			s.border_color = Color(1, 1, 1, 0.14)
-			if verdict == "wrong":
-				s.border_color = Color(QuestUI.RED, 0.8)
-			elif verdict in ["correct", "fixed"]:
-				s.border_color = Color(QuestUI.GOLD, 0.7)
-			if st == "hover":
-				s.border_color = QuestUI.GOLD
-			elif st == "focus":
-				s.bg_color = Color(0, 0, 0, 0)
-				s.border_color = Color(QuestUI.GOLD, 0.8)
-			add_theme_stylebox_override(st, s)
+		var v := verdict if verdict != "" else _verdict
+		var s := StyleBoxFlat.new()
+		s.set_corner_radius_all(12)
+		s.set_border_width_all(2 if _selected else 1)
+		s.bg_color = Color(QuestUI.CARD.lightened(0.05), 0.96) if _face_up else Color(QuestUI.INK, 0.95)
+		s.border_color = Color(1, 1, 1, 0.14)
+		if v == "wrong":
+			s.border_color = Color(QuestUI.RED, 0.8)
+		elif v in ["correct", "fixed"]:
+			s.border_color = Color(QuestUI.GOLD, 0.7)
+		elif _selected:
+			s.border_color = QuestUI.GOLD
+		elif _hover:
+			s.border_color = QuestUI.GOLD
+		s.content_margin_left = 12
+		s.content_margin_right = 12
+		s.content_margin_top = 10
+		s.content_margin_bottom = 8
+		add_theme_stylebox_override("panel", s)
 
 	func _fill() -> void:
 		_title.text = str(data.get("title", ""))
@@ -482,7 +534,6 @@ class ClueCard extends Button:
 			_badge.text = "？ 線索"
 		if _verdict != "":
 			_badge.text = {"correct": "判斷正確", "fixed": "已修正", "wrong": "判斷有誤"}.get(_verdict, _badge.text)
-		update_minimum_size()
 
 	func flip(up: bool) -> void:
 		AudioManager.play("card_flip")
@@ -490,7 +541,6 @@ class ClueCard extends Button:
 			_face_up = up
 			_style()
 			_fill()
-			update_minimum_size()
 			return
 		pivot_offset = size * 0.5
 		var tw := create_tween()
@@ -499,39 +549,34 @@ class ClueCard extends Button:
 			_face_up = up
 			_style()
 			_fill()
-			update_minimum_size()
 		)
 		tw.tween_property(self, "scale:x", 1.0, 0.14)
 
 	func set_busy(on: bool) -> void:
 		if on:
 			_badge.text = "調查中…"
-			update_minimum_size()
 		else:
 			_fill()
 
 	func set_selected(on: bool) -> void:
-		var s := get_theme_stylebox("normal").duplicate() as StyleBoxFlat
-		s.border_color = QuestUI.GOLD if on else Color(1, 1, 1, 0.14)
-		s.set_border_width_all(2 if on else 1)
-		add_theme_stylebox_override("normal", s)
+		_selected = on
+		_style()
 
 	func set_verdict(v: String) -> void:
 		_verdict = v
 		_style(v)
 		_badge.text = {"correct": "判斷正確", "fixed": "已修正", "wrong": "判斷有誤"}.get(v, _badge.text)
 		_badge.add_theme_color_override("font_color", QuestUI.RED.lightened(0.2) if v == "wrong" else QuestUI.GOLD)
-		update_minimum_size()
 
 	## One gold scan line sweeping down the card (correct key clue), never repeated
 	func gold_scan() -> void:
 		if QuestUI.motion_off():
 			return
 		_scan.visible = true
-		_scan.size = Vector2(size.x, 2)
+		_scan.size = Vector2(btn.size.x if btn.size.x > 0 else size.x, 2)
 		_scan.position = Vector2(0, 0)
 		var tw := create_tween()
-		tw.tween_property(_scan, "position:y", size.y - 2, 0.5).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(_scan, "position:y", (btn.size.y if btn.size.y > 0 else size.y) - 2, 0.5).set_trans(Tween.TRANS_SINE)
 		tw.tween_callback(func(): _scan.visible = false)
 
 	func _get_drag_data(_at: Vector2) -> Variant:
