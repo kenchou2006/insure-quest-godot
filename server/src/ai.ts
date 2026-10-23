@@ -11,7 +11,8 @@ import { financeFor } from './game/finance.ts';
 import type { LifeTwist } from './game/twists.ts';
 import type { LetterFacts } from './game/letters.ts';
 import { generateTemplateLetter, validateLetterContent } from './game/letters.ts';
-import { ruleCompliance, RULE_BY_CODE } from './game/compliance.ts';
+import { ruleCompliance, RULE_BY_CODE, type ComplianceCode } from './game/compliance.ts';
+import { refsForCode, mergeRefs, type LegalRef } from './game/legal-refs.ts';
 import { CODE_LABEL, RuleAI, ruleFreeQuestion, ruleGrade, ruleHint, ruleTalk } from './rule-ai.ts';
 import type { AIService, CombinedDialogue, FreeAnswer, Grade, RawAI } from './rule-ai.ts';
 import { s2t, normalizeStrings } from './s2t.ts';
@@ -848,6 +849,7 @@ export class MockAI implements RawAI {
   async hint(c: ClientProfile, sess: SessionState, _onStream?: (text: string, done?: boolean) => void) { return ruleHint(c, sess); }
   async debrief(_p?: PlayerState, _row?: Omit<FinalRow, 'coach'>, _onStream?: (text: string, done?: boolean) => void) { return '整體表現穩定，下次試著更早問出客戶的人生目標。'; }
   async generateClient(_seed: number) { return null; }
+  async lawRefs(_query: string, code: ComplianceCode) { return refsForCode(code); }
 }
 
 export interface AIEnv {
@@ -954,9 +956,11 @@ export class MeteredAI implements AIService {
   readonly enabled: boolean;
   private raw: RawAI | null;
   private meter: Meter | null;
-  constructor(raw: RawAI | null, meter: Meter | null) {
+  private lawRetriever?: (query: string) => Promise<LegalRef[]>;
+  constructor(raw: RawAI | null, meter: Meter | null, lawRetriever?: (query: string) => Promise<LegalRef[]>) {
     this.raw = raw;
     this.meter = meter;
+    this.lawRetriever = lawRetriever;
     this.enabled = !!raw && !!meter;
   }
 
@@ -1012,4 +1016,20 @@ export class MeteredAI implements AIService {
   hint(c: ClientProfile, sess: SessionState, onStream?: (text: string, done?: boolean) => void) { return this.run(r => r.hint(c, sess, onStream), () => ruleHint(c, sess)); }
   debrief(p: PlayerState, row: Omit<FinalRow, 'coach'>, onStream?: (text: string, done?: boolean) => void) { return this.run<string | null>(r => r.debrief(p, row, onStream), () => null); }
   generateClient(seed: number) { return this.run<ClientProfile | null>(r => r.generateClient(seed), () => null); }
+  async lawRefs(query: string, code: ComplianceCode): Promise<LegalRef[]> {
+    const staticRefs = refsForCode(code);
+    // Guests and bot advisors never call AI (same rule as the dialogue calls)
+    if (!this.enabled || !this.lawRetriever) {
+      return staticRefs;
+    }
+    try {
+      const retrieved = await this.lawRetriever(query);
+      if (!retrieved || retrieved.length === 0) return staticRefs;
+      // The curated article for a detected code leads; retrieval fills the next places (the UI shows two)
+      return mergeRefs(staticRefs.slice(0, 1), retrieved, 3);
+    } catch (err) {
+      console.warn('[RAG] lawRetriever failed, falling back to static refs:', err);
+      return staticRefs;
+    }
+  }
 }

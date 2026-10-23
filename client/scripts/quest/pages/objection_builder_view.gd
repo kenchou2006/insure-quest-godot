@@ -481,6 +481,26 @@ func _reveal(sess: Dictionary) -> void:
 		dv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		dv.add_child(QuestUI.label(str(d[0]), 14, QuestUI.TEXT, false, true))
 		dv.add_child(QuestUI.label(str(d[2]), 13, QuestUI.MUTED, true))
+		if str(d[0]) == "合規風險" and not bool(d[1]):
+			var obj_refs: Array = reply.get("refs", [])
+			if obj_refs.is_empty():
+				var chk := Compliance.check(_composed())
+				for iss in chk.get("issues", []):
+					for r in (iss as Dictionary).get("refs", []):
+						if obj_refs.size() < 2:
+							obj_refs.append(r)
+			for r in obj_refs.slice(0, 2):
+				var rd := r as Dictionary
+				var cite := str(rd.get("cite", ""))
+				var txt := str(rd.get("text", "")).replace("\n", " ")
+				if cite != "":
+					var cl := QuestUI.label("依據：" + cite, 13, QuestUI.MUTED, true)
+					cl.name = "EvalRefCite"
+					dv.add_child(cl)
+				if txt != "":
+					var tl := QuestUI.label(txt, 12, QuestUI.MUTED, true)
+					tl.name = "EvalRefText"
+					dv.add_child(tl)
 		h.add_child(dv)
 		_eval.add_child(h)
 		QuestUI.fade_in(h, 0.0, 0.25, 0.0)

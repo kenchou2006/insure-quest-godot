@@ -10,7 +10,8 @@
     "test": "node --import ./test/helpers/register-cf.mjs --test test/*.test.ts",
     "check": "npm run typecheck && npm test",
     "build:web": "bash tools/build-web.sh",
-    "dev:remote-ai": "wrangler dev"
+    "dev:remote-ai": "wrangler dev",
+    "rag:index": "node tools/rag-build-index.mjs"
   },
   "dependencies": {
     "zod": "^4.6.5"

@@ -9,6 +9,7 @@ import { addPlayer, applyAction, createGame, enrichCoach, injectClient, log, mul
 import { botAction } from './game/bots.ts';
 import { BOARD, CARDS, QUESTIONS } from './game/data.ts';
 import { makeAI, MeteredAI, s2t, type AIService, type Meter, type RawAI } from './ai.ts';
+import { makeLawRetriever } from './rag.ts';
 import { globalRecords, userRecords, type RecordInput, type TrainingAttempt } from './records.ts';
 import type { Env } from './index.ts';
 
@@ -96,7 +97,8 @@ export class Room extends DurableObject<Env> {
 
   /** Human players use their own account quota; bot advisors and guests always use rule-based */
   private aiFor(p: PlayerState | null | undefined): AIService {
-    return new MeteredAI(this.raw, p && !p.isBot ? this.meterFor(p.accountId) : null);
+    const retriever = makeLawRetriever(this.env.AI, this.env.CF_AIG_GATEWAY_ID);
+    return new MeteredAI(this.raw, p && !p.isBot ? this.meterFor(p.accountId) : null, retriever);
   }
 
   private makeCtx(actor?: PlayerState | null): Ctx {

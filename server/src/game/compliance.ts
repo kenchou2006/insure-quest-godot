@@ -1,6 +1,7 @@
 /* INSURE QUEST | Compliance radar rule engine.
  * Real-time detection of violations or flaws in advisor pitches based on Taiwan insurance solicitation regulations and the Financial Consumer Protection Act.
  */
+import { type LegalRef, refsForCode, mergeRefs } from './legal-refs.ts';
 
 export type ComplianceLevel = 'pass' | 'warning' | 'violation';
 
@@ -17,6 +18,7 @@ export interface ComplianceIssue {
   quote: string;
   rule: string;
   suggestion: string;
+  refs?: LegalRef[];
 }
 
 export interface ComplianceData {
@@ -92,6 +94,7 @@ export function ruleCompliance(text: string): ComplianceData {
         quote: match[0].slice(0, 15),
         rule: item.rule,
         suggestion: item.suggestion,
+        refs: refsForCode(item.code),
       });
 
       if (item.level === 'violation') {
@@ -127,14 +130,24 @@ export function mergeCompliance(ruleComp: ComplianceData, aiComp?: ComplianceDat
 
   const penalty = Math.min(ruleComp.penalty, aiComp.penalty);
 
-  // Merge issues, deduplicating by code
-  const seenCodes = new Set<string>();
+  // Merge issues, deduplicating by code and preserving/enhancing legal refs
+  const ruleByCode = new Map<ComplianceCode, ComplianceIssue>(ruleComp.issues.map(i => [i.code, i]));
+  const aiByCode = new Map<ComplianceCode, ComplianceIssue>((aiComp.issues || []).map(i => [i.code, i]));
+  const allCodes = Array.from(new Set([...ruleComp.issues.map(i => i.code), ...(aiComp.issues || []).map(i => i.code)]));
+
   const mergedIssues: ComplianceIssue[] = [];
-  for (const issue of [...ruleComp.issues, ...aiComp.issues]) {
-    if (!seenCodes.has(issue.code)) {
-      seenCodes.add(issue.code);
-      mergedIssues.push(issue);
-    }
+  for (const code of allCodes) {
+    const rIssue = ruleByCode.get(code);
+    const aIssue = aiByCode.get(code);
+    const base = aIssue ?? rIssue!;
+    const staticRefs = refsForCode(code);
+    const aiRefs = aIssue?.refs;
+    const ruleRefs = rIssue?.refs;
+    const combinedRefs = mergeRefs(aiRefs, ruleRefs && ruleRefs.length > 0 ? ruleRefs : staticRefs);
+    mergedIssues.push({
+      ...base,
+      refs: combinedRefs.length > 0 ? combinedRefs : (staticRefs.length > 0 ? staticRefs : undefined),
+    });
   }
 
   return {
@@ -144,7 +157,7 @@ export function mergeCompliance(ruleComp: ComplianceData, aiComp?: ComplianceDat
   };
 }
 
-/** AI can only reference these real regulatory names (omitting article numbers to avoid erroneous citations) */
+/** 規範依據名稱與摘要（具體條號與依據條文原文來自 server/rag/law-chunks.json） */
 export const RULE_BY_CODE: Record<ComplianceCode, string> = {
   PROMISE_RETURN: '保險業招攬廣告自律規範：不得為保證獲利或保本之宣傳',
   FEAR_MONGERING: '金融消費者保護法：不得以誇大、恐嚇方式招攬',

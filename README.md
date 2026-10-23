@@ -156,6 +156,7 @@ Material the proposal team can lift directly. Everything here is true of the cur
 ### AI usage (for the "applied technology" section)
 - **AI client** (persona + hidden needs + dynamic life twist injected into the prompt), **compliance auditor** and **coach** in a single structured call per dialogue round (≤ 3 calls per interview), validated with zod; failures refund quota and fall back to rules.
 - AI objection grading, coach hints, settlement critique, AI-generated new clients, and AI-written letters from ten years later.
+- **Regulation RAG**: compliance issues cite verbatim articles; for logged-in learners the offending line is embedded with Workers AI `bge-m3` (through the AI Gateway) and matched against pre-built vectors inside the Worker (see Compliance references).
 - **Guardrails**: outcomes, scores, money amounts and letter outcomes are decided only by the deterministic rule engine; AI only writes text. Player text is wrapped as untrusted data (prompt-injection defense, also detected as a compliance issue). Letters are validated so a "thanks" letter cannot contain regret wording and vice versa.
 - Providers: NVIDIA NIM (primary) → NIM fallback models → Workers AI (last resort, small free allowance) → rule engine. Guests and bots never call AI.
 
@@ -167,7 +168,11 @@ Material the proposal team can lift directly. Everything here is true of the cur
 - Teaching message: insurance does not make the client richer; it keeps the worst year from breaking the family. Unit test: for ≥ 15 of 18 built-in clients the senior plan's worst year is better than no plan, and it is never clearly worse.
 
 ### Compliance references
-The radar cites regulation **names** only (no article numbers, to avoid citing wrong articles): 《金融消費者保護法》 (suitability and disclosure), 《保險業招攬廣告自律規範》, and the FSC Treating Customers Fairly principles. Verify any article numbers before putting them in the deck.
+Compliance issues cite the actual article text. `server/rag/law-chunks.json` holds 27 verbatim chunks (with source URL and amendment date) from 《金融消費者保護法》, 《保險業務員管理規則》, 《保險業招攬廣告自律規範》 and 《金融服務業公平待客原則》; `server/rag/law-map.json` maps each compliance code to its curated articles.
+- Every issue carries the curated articles (works everywhere, including guest play in the browser and bots).
+- For logged-in learners the Worker also embeds the offending line with Workers AI `@cf/baai/bge-m3` through the AI Gateway and ranks the pre-built vectors in `server/rag/law-index.json` in memory; the best match the curated list misses is shown second. No Vectorize, no extra binding; the call is not counted against the learner's AI quota and falls back quietly on any error.
+- Citations never change scores or outcomes.
+- Refresh: re-download the four sources and run `python3 -I server/tools/rag-extract-law.py` (usage in its header), then start the dev server with `DEV_LOGIN=1` and run `cd server && npm run rag:index` to rebuild the vectors and `client/data/law_refs.json`.
 
 ### Privacy and security design
 - Google OAuth handled in the Worker; session in an HttpOnly cookie; tokens never reach the client.

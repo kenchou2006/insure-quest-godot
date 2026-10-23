@@ -1,7 +1,8 @@
 import type { Award, QuestState, QuestStats } from './extras.ts';
 import type { LifeTwist } from './twists.ts';
 import type { ClientLetter } from './letters.ts';
-import type { ComplianceLevel } from './compliance.ts';
+import type { ComplianceLevel, ComplianceIssue } from './compliance.ts';
+import type { LegalRef } from './legal-refs.ts';
 import type { TimelineResult } from './finance.ts';
 /* INSURE QUEST | Shared types. Authoritative server state, client profiles, and message protocols are defined here. */
 
@@ -136,6 +137,7 @@ export interface SessionState {
     emotion?: string;
     coachTip?: string;
     source?: 'ai' | 'rule';
+    issues?: ComplianceIssue[];
   }[];
   freeLeft: number;
   talkLeft?: number;
@@ -149,7 +151,7 @@ export interface SessionState {
   observed: number[];
   m: Metrics;
   objectionOrder: number[];
-  objectionReply?: { text: string; title: string; body: string; quality: Quality };
+  objectionReply?: { text: string; title: string; body: string; quality: Quality; refs?: LegalRef[] };
   objectionMode?: 'choice' | 'free';
   objViolation?: boolean;
   violationQuote?: string;

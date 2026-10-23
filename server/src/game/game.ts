@@ -10,7 +10,8 @@ import { BOARD, CLIENTS, DECOYS, MARKET_EVENTS, QUESTIONS, QUIZ } from './data.t
 import { sanitizePlayerInput, type AIService } from '../ai.ts';
 import { computeAwards, DILEMMAS, DILEMMA_EFFECT, emptyStats, pickLifeChange, reviewOutcome, rollQuests, updateQuests, type ReviewPick } from './extras.ts';
 import { LIFE_TWISTS, applyTwist, type LifeTwist } from './twists.ts';
-import { ruleCompliance, mergeCompliance } from './compliance.ts';
+import { ruleCompliance, mergeCompliance, RULE_BY_CODE } from './compliance.ts';
+import { refsForCode, type LegalRef } from './legal-refs.ts';
 import { determineLetter, generateTemplateLetter, type LetterFacts, type ClientLetter } from './letters.ts';
 import { calculateClaim, formatWan, simulateTimeline } from './finance.ts';
 
@@ -956,6 +957,19 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       // 3. Merge compliance results (taking more severe level and larger penalty)
       const mergedComp = mergeCompliance(ruleComp, dialogue.compliance);
 
+      // 3.5 Strengthen refs with RAG if lawRefs is available
+      if (ctx.ai.lawRefs && mergedComp.issues.length > 0) {
+        for (const issue of mergedComp.issues) {
+          if (issue.code === 'INJECTION_ATTEMPT') continue;
+          const q = `${issue.quote} ${RULE_BY_CODE[issue.code] || issue.rule}`;
+          try {
+            issue.refs = await ctx.ai.lawRefs(q, issue.code);
+          } catch {
+            issue.refs = refsForCode(issue.code);
+          }
+        }
+      }
+
       // 4. Clamp metrics
       const trustDelta = Math.max(-15, Math.min(12, dialogue.trustDelta));
       const insightDelta = Math.max(0, Math.min(15, dialogue.insightDelta));
@@ -995,6 +1009,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
         emotion: dialogue.emotion,
         coachTip: dialogue.coachTip,
         source: ctx.ai.enabled ? 'ai' : 'rule',
+        issues: mergedComp.issues,
       });
 
       // 8. Log decision
@@ -1057,7 +1072,12 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       const opt = c.objection.options[sess.objectionOrder[a.index]];
       sess.objectionMode = 'choice';
       apply(sess.m, opt.changes);
-      sess.objectionReply = { text: opt.text, title: opt.title, body: opt.body, quality: opt.quality };
+      let objectionRefs: LegalRef[] | undefined;
+      const optComp = ruleCompliance(opt.text);
+      if (optComp.issues.length > 0) {
+        objectionRefs = optComp.issues[0].refs;
+      }
+      sess.objectionReply = { text: opt.text, title: opt.title, body: opt.body, quality: opt.quality, refs: objectionRefs };
       if (opt.changes.compliance !== undefined && opt.changes.compliance <= -15) {
         sess.objViolation = true;
         sess.violationQuote = quoteOf(opt.text);
@@ -1074,7 +1094,20 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       const g = await ctx.ai.gradeObjection(c, text, (part, done) => ctx.onStream?.('objection', part, done));
       sess.aiBusy = false;
       apply(sess.m, { trust: g.trust, fit: g.fit, risk: g.risk, compliance: g.compliance });
-      sess.objectionReply = { text, title: g.title, body: g.body, quality: g.quality };
+      let freeObjRefs: LegalRef[] | undefined;
+      const freeComp = ruleCompliance(text);
+      if (freeComp.issues.length > 0) {
+        if (ctx.ai.lawRefs) {
+          try {
+            freeObjRefs = await ctx.ai.lawRefs(`${freeComp.issues[0].quote} ${RULE_BY_CODE[freeComp.issues[0].code]}`, freeComp.issues[0].code);
+          } catch {
+            freeObjRefs = freeComp.issues[0].refs;
+          }
+        } else {
+          freeObjRefs = freeComp.issues[0].refs;
+        }
+      }
+      sess.objectionReply = { text, title: g.title, body: g.body, quality: g.quality, refs: freeObjRefs };
       sess.objectionMode = 'free';
       if (g.compliance <= -15) {
         sess.objViolation = true;

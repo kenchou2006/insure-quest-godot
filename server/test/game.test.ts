@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { LAW_CHUNKS_BY_ID, chunkToRef, refsForCode, type LegalRef } from '../src/game/legal-refs.ts';
 import { BOARD, CLIENTS } from '../src/game/data.ts';
 import { evaluatePlan, marketOne, runStress, TOTAL_COINS } from '../src/game/engine.ts';
 import { addPlayer, applyAction, createGame, endGame, enrichCoach, fallbackTip, FINALE, finale, publicView, scorePlayer, startGame, summarizeMarketResult, type Ctx } from '../src/game/game.ts';
@@ -979,5 +983,108 @@ test('終局大事件與市場事件：partial 客戶會被正確計入「勉強
   assert.equal(summarizeMarketResult('D', { held: 0, partial: 1, broken: 0 }).tone, 'ok');
 });
 
+test('local-room.ts 匯入圖不包含 rag.ts 或 law-index.json，且 ai.ts 不直接匯入 rag.ts', () => {
+  const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const entryFile = resolve(rootDir, 'src/local/local-room.ts');
+  const visited = new Set<string>();
 
+  function traverseImports(currentPath: string) {
+    if (visited.has(currentPath)) return;
+    visited.add(currentPath);
 
+    const content = readFileSync(currentPath, 'utf-8');
+    const importRegex = /(?:import|export)\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]/g;
+    let match: RegExpExecArray | null;
+    while ((match = importRegex.exec(content)) !== null) {
+      const specifier = match[1];
+      if (specifier.startsWith('.')) {
+        const dir = dirname(currentPath);
+        let resolved = resolve(dir, specifier);
+        if (!existsSync(resolved)) {
+          if (existsSync(resolved + '.ts')) resolved += '.ts';
+          else if (existsSync(resolved + '.js')) resolved += '.js';
+        }
+        traverseImports(resolved);
+      }
+    }
+  }
+
+  traverseImports(entryFile);
+
+  for (const path of visited) {
+    assert.ok(!path.endsWith('rag.ts'), `local-room.ts 匯入圖不應包含 rag.ts: ${path}`);
+    assert.ok(!path.endsWith('law-index.json'), `local-room.ts 匯入圖不應包含 law-index.json: ${path}`);
+  }
+
+  const aiContent = readFileSync(resolve(rootDir, 'src/ai.ts'), 'utf-8');
+  assert.ok(!aiContent.includes('./rag.ts') && !aiContent.includes('/rag.ts'), 'ai.ts 原始碼不得包含 rag.ts');
+});
+
+test('chunkToRef 對款級 chunk 的摘錄以款號開頭（取第一個換行之後內容）', () => {
+  // 款級 chunk：ref 含「款」
+  const c13 = LAW_CHUNKS_BY_ID.get('保險業務員管理規則|第19條第1項第13款');
+  assert.ok(c13, '應存在 第19條第1項第13款');
+  const ref13 = chunkToRef(c13);
+  assert.ok(ref13.text.startsWith('十三、'), `應以「十三、」開頭: ${ref13.text}`);
+  assert.ok(!ref13.text.includes('業務員有下列各款情事之一者'), '不應包含條文前言');
+
+  const c5 = LAW_CHUNKS_BY_ID.get('保險業務員管理規則|第19條第1項第5款');
+  assert.ok(c5, '應存在 第19條第1項第5款');
+  const ref5 = chunkToRef(c5);
+  assert.ok(ref5.text.startsWith('五、'), `應以「五、」開頭: ${ref5.text}`);
+
+  const c2 = LAW_CHUNKS_BY_ID.get('保險業招攬廣告自律規範|第4條第2款');
+  assert.ok(c2, '應存在 第4條第2款');
+  const ref2 = chunkToRef(c2);
+  assert.ok(ref2.text.startsWith('二、'), `應以「二、」開頭: ${ref2.text}`);
+
+  // 非款級條文維持前 120 字
+  const nonClause = LAW_CHUNKS_BY_ID.get('金融消費者保護法|第8條');
+  assert.ok(nonClause, '應存在 金融消費者保護法 第8條');
+  const refNonClause = chunkToRef(nonClause);
+  assert.ok(refNonClause.text.startsWith('金融服務業刊登'), `非款級應維持開頭: ${refNonClause.text}`);
+});
+
+test('MeteredAI.lawRefs：retriever 丟錯 → 回靜態；retriever 回空 → 回靜態；retriever 回結果 → 合併去重 ≤ 3', async () => {
+  const staticExpected = refsForCode('PROMISE_RETURN');
+  assert.ok(staticExpected.length >= 2, 'PROMISE_RETURN 應有至少 2 筆靜態法規');
+
+  // 1. retriever 丟錯 → 回靜態
+  const meter = { consume: async () => true, refund: async () => {} };
+  const errorRetriever = async () => { throw new Error('Worker AI / network failure'); };
+  const aiWithError = new MeteredAI(new MockAI(), meter, errorRetriever);
+  const resultOnError = await aiWithError.lawRefs('穩賺不賠保證獲利', 'PROMISE_RETURN');
+  assert.deepEqual(resultOnError, staticExpected);
+
+  // 2. retriever 回空 → 回靜態
+  const emptyRetriever = async () => [];
+  const aiWithEmpty = new MeteredAI(new MockAI(), meter, emptyRetriever);
+  const resultOnEmpty = await aiWithEmpty.lawRefs('穩賺不賠保證獲利', 'PROMISE_RETURN');
+  assert.deepEqual(resultOnEmpty, staticExpected);
+
+  // 3. retriever 回結果 → 合併去重 ≤ 3
+  const mockRetrieved: LegalRef[] = [
+    { cite: '《專屬法規》第1條', text: '專屬條文內容', url: 'https://example.com/1', revised: '民國 114 年' },
+    // 與 PROMISE_RETURN 靜態條文重複的 cite，用於測試去重
+    { cite: staticExpected[0].cite, text: '重複的條文摘錄', url: staticExpected[0].url, revised: staticExpected[0].revised },
+  ];
+  const successRetriever = async () => mockRetrieved;
+  const aiWithSuccess = new MeteredAI(new MockAI(), meter, successRetriever);
+  const resultOnSuccess = await aiWithSuccess.lawRefs('穩賺不賠保證獲利', 'PROMISE_RETURN');
+
+  assert.ok(resultOnSuccess.length <= 3, `結果長度應 ≤ 3: ${resultOnSuccess.length}`);
+  // 第一條是靜態精選條文，第二條起是檢索結果（畫面顯示前兩條）
+  assert.equal(resultOnSuccess[0].cite, staticExpected[0].cite);
+  assert.equal(resultOnSuccess[1].cite, '《專屬法規》第1條', '檢索到的條文應排第二');
+  // 去重：重複的 staticExpected[0].cite 只會出現一次
+  const cites = resultOnSuccess.map(r => r.cite);
+  assert.equal(new Set(cites).size, cites.length, 'cite 不得重複');
+});
+
+test('MeteredAI.lawRefs：訪客／機器人（沒有 meter）不呼叫 retriever', async () => {
+  let called = false;
+  const spy = async () => { called = true; return []; };
+  const refs = await new MeteredAI(new MockAI(), null, spy).lawRefs('保證獲利', 'PROMISE_RETURN');
+  assert.equal(called, false);
+  assert.deepEqual(refs, refsForCode('PROMISE_RETURN'));
+});
