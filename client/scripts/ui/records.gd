@@ -225,23 +225,12 @@ func _build_unauth_view() -> void:
 			if main:
 				main.toast("這台伺服器尚未設定 Google 登入（本機測試環境）；正式網址可使用 Google 登入。", UI.INFO, 4.0)
 			return
-		var login_url: String = Net.base_url + "/api/auth/google/start?return=/"
-		if OS.has_feature("web"):
-			JavaScriptBridge.eval("window.location.href='%s'" % login_url)
-		else:
-			OS.shell_open(login_url)
+		Net.google_sign_in()
 	, 16, UI.ACCENT))
 
 	if bool(Net.auth_config.get("dev", false)):
 		btns.add_child(UI.button("測試登入（本機開發）", func():
-			var name_encoded: String = Net.player_name.uri_encode()
-			if name_encoded == "":
-				name_encoded = "測試顧問".uri_encode()
-			var dev_url: String = Net.base_url + "/api/auth/dev-login?name=%s&return=/" % name_encoded
-			if OS.has_feature("web"):
-				JavaScriptBridge.eval("window.location.href='%s'" % dev_url)
-			else:
-				OS.shell_open(dev_url)
+			Net.login_dev()
 		, 15, UI.PANEL_2))
 
 	row.add_child(btns)

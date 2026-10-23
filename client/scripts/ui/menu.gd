@@ -810,13 +810,7 @@ func _login_google() -> void:
 
 func _login_dev() -> void:
 	_save()
-	var n: String = _name.text.strip_edges()
-	if n == "": n = "測試顧問"
-	var u: String = Net.base_url + "/api/auth/dev-login?name=" + n.uri_encode() + "&return=/"
-	if OS.has_feature("web"):
-		JavaScriptBridge.eval("window.location.href='" + u + "'")
-	else:
-		OS.shell_open(u)
+	Net.login_dev()
 
 
 func _logout() -> void:

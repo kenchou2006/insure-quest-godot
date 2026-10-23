@@ -365,6 +365,33 @@ func google_sign_in_redirect() -> void:
 	GoogleAuth.sign_in_redirect()
 
 
+## Name used for 測試登入: profile name → saved name → 測試顧問
+func dev_login_name() -> String:
+	var n: String = PlayerProfile.player_name.strip_edges() if PlayerProfile.player_profile_created else ""
+	if n == "":
+		n = player_name.strip_edges()
+	return n if n != "" else "測試顧問"
+
+
+## 測試登入 URL (local dev server only; the server answers 404 elsewhere)
+func dev_login_url(name := "") -> String:
+	var n := name.strip_edges() if name.strip_edges() != "" else dev_login_name()
+	return base_url + "/api/auth/dev-login?name=" + n.uri_encode() + "&return=/"
+
+
+## 測試登入: leaves the page for the dev-login redirect, which comes back logged in
+func login_dev(name := "") -> void:
+	open_url(dev_login_url(name))
+
+
+## Navigates the page on web (same tab), opens the system browser elsewhere
+func open_url(url: String) -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.location.href=%s" % JSON.stringify(url))
+	else:
+		OS.shell_open(url)
+
+
 func fetch_profile(user_id: String = "") -> Array:
 	var path := "/api/profile"
 	if user_id.strip_edges() != "":
