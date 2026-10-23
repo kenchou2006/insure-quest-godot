@@ -4,12 +4,14 @@ extends Control
 ## own training record (time management, composed replies, compliance scan); the AI only writes the
 ## coach text. Every section quotes this game's decisions (server decisions + GameState history):
 ## questions asked, needs missed, the plan, objection handling, budget / compliance slips, events.
+## A 10-year financial trajectory card visualizes the client's net worth with vs without the plan.
 ## While the coach text is still being written a progress bar runs; sections then open in order.
 
 const ReportScreen := preload("res://scripts/ui/report.gd")
 const GameHeader := preload("res://scripts/quest/widgets/game_header.gd")
 const BACKGROUND := preload("res://assets/unified/background.webp")
 const SettingsModal := preload("res://scripts/quest/widgets/settings_modal.gd")
+const TimelineChartClass := preload("res://scripts/ui/timeline_chart.gd")
 
 var main: Node
 var _built := false
@@ -24,6 +26,11 @@ var _state: Dictionary = {}
 var _settings: Control
 var _legacy: Control
 var _revealed := false
+var _finance_timeline_idx := -1
+var _finance_slot: VBoxContainer
+var _finance_card: Control
+var _finance_card_container: VBoxContainer
+var _finance_data_hash: int = 0
 
 
 func _ready() -> void:
@@ -84,10 +91,12 @@ func refresh(s: Dictionary) -> void:
 	if not _built:
 		_built = true
 		_build(pending)
-	elif _coach_label and is_instance_valid(_coach_label):
-		var coach := str(_mine.get("coach", ""))
-		if coach != "" and not pending:
-			_coach_label.text = coach
+	else:
+		if _coach_label and is_instance_valid(_coach_label):
+			var coach := str(_mine.get("coach", ""))
+			if coach != "" and not pending:
+				_coach_label.text = coach
+		_sync_finance_timeline_card(pending)
 	if _progress and is_instance_valid(_progress):
 		_progress.visible = pending
 	if not pending and not _revealed:
@@ -143,9 +152,17 @@ func _build(pending: bool) -> void:
 	var row1: Container = _row()
 	row1.add_child(_section(_grade_card(dims)))
 	row1.add_child(_section(_radar_card(dims)))
-	row1.add_child(_section(_timeline_card()))
+	row1.add_child(_section(_decisions_card()))
 	row1.add_child(_section(_growth_card()))
 	_body.add_child(row1)
+	_finance_slot = QuestUI.vbox(0)
+	_finance_slot.name = "FinanceTimelineSlot"
+	_finance_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(_finance_slot)
+	_finance_card = null
+	_finance_card_container = null
+	_finance_data_hash = 0
+	_sync_finance_timeline_card(pending)
 	# Row 2: done well, next practice, AI feedback, certificate
 	var row2: Container = _row()
 	row2.add_child(_section(_list_card("thumb", "做得好的地方", _best(3, "good"), "這局還沒有明顯的亮點，下一局從需求探索開始累積。")))
@@ -163,7 +180,8 @@ func _build(pending: bool) -> void:
 		_reveal()
 	else:
 		for s in _sections:
-			(s as Control).modulate.a = 0.25
+			if is_instance_valid(s):
+				(s as Control).modulate.a = 0.25
 
 
 func _row() -> Container:
@@ -182,6 +200,8 @@ func _section(c: Control) -> Control:
 func _reveal() -> void:
 	for i in range(_sections.size()):
 		var s: Control = _sections[i]
+		if not is_instance_valid(s):
+			continue
 		if QuestUI.motion_off():
 			s.modulate.a = 1.0
 			continue
@@ -318,8 +338,9 @@ func _radar_card(dims: Dictionary) -> Control:
 	return c
 
 
-func _timeline_card() -> Control:
+func _decisions_card() -> Control:
 	var c := QuestUI.card(null, 0.92)
+	c.name = "DecisionsCard"
 	var v := QuestUI.vbox(8)
 	c.add_child(v)
 	v.add_child(QuestUI.header("pin", "關鍵決策歷程"))
@@ -340,6 +361,233 @@ func _timeline_card() -> Control:
 		h.add_child(dv)
 		v.add_child(h)
 	return c
+
+
+func _get_all_timelines() -> Array:
+	var list: Array = []
+	var raw_timelines: Variant = _mine.get("timelines")
+	if raw_timelines is Array:
+		for item in (raw_timelines as Array):
+			if item is Dictionary and not (item as Dictionary).is_empty():
+				list.append(item as Dictionary)
+	if list.is_empty():
+		var raw_timeline: Variant = _mine.get("timeline")
+		if raw_timeline is Dictionary and not (raw_timeline as Dictionary).is_empty():
+			list.append(raw_timeline as Dictionary)
+	return list
+
+
+func _selected_timeline() -> Dictionary:
+	var list := _get_all_timelines()
+	if list.is_empty():
+		return {}
+	if _finance_timeline_idx < 0 or _finance_timeline_idx >= list.size():
+		_finance_timeline_idx = list.size() - 1
+	return list[_finance_timeline_idx] if list[_finance_timeline_idx] is Dictionary else {}
+
+
+static func _fmt_money(amount: int) -> String:
+	var neg: bool = amount < 0
+	var s: String = str(absi(amount))
+	var res: String = ""
+	var count: int = 0
+	for i in range(s.length() - 1, -1, -1):
+		res = s[i] + res
+		count += 1
+		if count % 3 == 0 and i > 0:
+			res = "," + res
+	if neg:
+		res = "-" + res
+	return res + " 元"
+
+
+func _find_letter_for(client_name: String) -> Dictionary:
+	var raw_letters: Variant = _mine.get("letters")
+	var letters: Array = raw_letters as Array if raw_letters is Array else []
+	var trimmed_target := client_name.strip_edges()
+	for item in letters:
+		if item is Dictionary:
+			var d: Dictionary = item as Dictionary
+			if trimmed_target != "" and str(d.get("clientName", "")).strip_edges() == trimmed_target:
+				return d
+	return {}
+
+
+func _outcome_name(outcome: String) -> String:
+	match outcome:
+		"thanks":
+			return "感謝"
+		"regret":
+			return "後悔"
+		"mixed":
+			return "五味雜陳"
+		"complaint":
+			return "客訴副本"
+		_:
+			return outcome
+
+
+func _outcome_color(outcome: String) -> Color:
+	match outcome:
+		"thanks":
+			return QuestUI.GREEN
+		"regret", "complaint":
+			return QuestUI.RED
+		"mixed":
+			return QuestUI.GOLD
+		_:
+			return QuestUI.MUTED
+
+
+func _calc_finance_hash() -> int:
+	var raw_timelines: Variant = _mine.get("timelines")
+	var raw_timeline: Variant = _mine.get("timeline")
+	var raw_letters: Variant = _mine.get("letters")
+	return hash([raw_timelines, raw_timeline, raw_letters])
+
+
+func _sync_finance_timeline_card(pending: bool = false) -> void:
+	if _finance_slot == null or not is_instance_valid(_finance_slot):
+		return
+	var list := _get_all_timelines()
+	if list.is_empty():
+		if _finance_card != null and is_instance_valid(_finance_card):
+			_sections.erase(_finance_card)
+			_finance_card.queue_free()
+			_finance_card = null
+			_finance_card_container = null
+		_finance_data_hash = 0
+		return
+
+	var h := _calc_finance_hash()
+	if _finance_card == null or not is_instance_valid(_finance_card):
+		var c := QuestUI.card(null, 0.92)
+		c.name = "FinanceTimelineCard"
+		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var v := QuestUI.vbox(10)
+		c.add_child(v)
+		_finance_card = c
+		_finance_card_container = v
+		_finance_slot.add_child(c)
+		if not _sections.has(c):
+			_sections.append(c)
+		if pending and not _revealed:
+			c.modulate.a = 0.25
+		else:
+			c.modulate.a = 1.0
+		_finance_data_hash = h
+		_render_finance_timeline_card_content()
+	elif h != _finance_data_hash:
+		_finance_data_hash = h
+		_render_finance_timeline_card_content()
+
+
+func _render_finance_timeline_card_content() -> void:
+	if _finance_card_container == null or not is_instance_valid(_finance_card_container):
+		return
+	UI.clear(_finance_card_container)
+	var list := _get_all_timelines()
+	if list.is_empty():
+		return
+	if _finance_timeline_idx < 0 or _finance_timeline_idx >= list.size():
+		_finance_timeline_idx = list.size() - 1
+	var cur_timeline: Dictionary = list[_finance_timeline_idx] if list[_finance_timeline_idx] is Dictionary else {}
+
+	_finance_card_container.add_child(QuestUI.header("chart", "十年財務人生軌跡"))
+
+	if list.size() > 1:
+		var switch_row := QuestUI.hbox(8)
+		switch_row.name = "TimelineSwitcher"
+		var on_switch := func(idx: int) -> void:
+			_finance_timeline_idx = idx
+			_render_finance_timeline_card_content()
+		for i in range(list.size()):
+			var tm_item: Dictionary = list[i] if list[i] is Dictionary else {}
+			var name_btn := str(tm_item.get("clientName", "客戶 %d" % (i + 1)))
+			var is_active := (i == _finance_timeline_idx)
+			var b: Button = QuestUI.button(name_btn, on_switch.bind(i), "primary" if is_active else "secondary")
+			b.name = "ClientTimelineBtn_%d" % i
+			b.custom_minimum_size = Vector2(0, 32)
+			b.add_theme_font_size_override("font_size", 13)
+			switch_row.add_child(b)
+		_finance_card_container.add_child(switch_row)
+
+	_finance_card_container.add_child(QuestUI.label("有你的規劃 vs 沒有規劃：同一個家庭十年後的淨資產", 13, QuestUI.MUTED, true))
+
+	var tc: Control = TimelineChartClass.new()
+	tc.name = "TimelineChart"
+	tc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_finance_card_container.add_child(tc)
+	var is_compact: bool = UI.is_phone_portrait()
+	tc.set_data(cur_timeline, is_compact)
+
+	var adopted: bool = bool(cur_timeline.get("adopted", true))
+	var worst_with: int = int(cur_timeline.get("worstWith", 0))
+	var worst_no: int = int(cur_timeline.get("worstNo", 0))
+	var premium_total: int = int(cur_timeline.get("premiumTotal", 0))
+
+	var stat_box: BoxContainer = QuestUI.hbox(14) if _wide() else QuestUI.vbox(4)
+	stat_box.name = "TimelineStats"
+	var worst_txt := ""
+	if adopted:
+		worst_txt = "最糟一年：有規劃 %s vs 沒規劃 %s" % [_fmt_money(worst_with), _fmt_money(worst_no)]
+	else:
+		worst_txt = "最糟一年：客戶沒有採用這份規劃 vs 沒規劃 %s" % _fmt_money(worst_no)
+	if worst_with < 0 or worst_no < 0:
+		worst_txt += "（負數代表負債）"
+
+	var worst_lbl := QuestUI.label(worst_txt, 14, QuestUI.TEXT, true)
+	worst_lbl.name = "WorstYearLabel"
+	if _wide():
+		worst_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stat_box.add_child(worst_lbl)
+
+	if adopted:
+		var prem_lbl := QuestUI.label("十年保費合計：%s" % _fmt_money(premium_total), 14, QuestUI.GOLD, not _wide())
+		prem_lbl.name = "PremiumTotalLabel"
+		if _wide():
+			prem_lbl.size_flags_horizontal = Control.SIZE_SHRINK_END
+		stat_box.add_child(prem_lbl)
+
+	_finance_card_container.add_child(stat_box)
+
+	var c_name := str(cur_timeline.get("clientName", ""))
+	if c_name == "":
+		c_name = GameState.client_name()
+	var letter := _find_letter_for(c_name)
+	if not letter.is_empty():
+		var outcome := str(letter.get("outcome", ""))
+		var raw_content := str(letter.get("content", "")).strip_edges()
+		var excerpt := raw_content.substr(0, 60) + ("…" if raw_content.length() > 60 else "")
+		var tag_name := _outcome_name(outcome)
+		var tag_col := _outcome_color(outcome)
+
+		var letter_box := PanelContainer.new()
+		letter_box.name = "LetterExcerptBox"
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(QuestUI.CARD, 0.6)
+		sb.set_corner_radius_all(10)
+		sb.set_border_width_all(1)
+		sb.border_color = Color(1, 1, 1, 0.08)
+		sb.content_margin_left = 12
+		sb.content_margin_right = 12
+		sb.content_margin_top = 8
+		sb.content_margin_bottom = 8
+		letter_box.add_theme_stylebox_override("panel", sb)
+
+		var lh := QuestUI.vbox(4)
+		var l_top := QuestUI.hbox(8)
+		l_top.add_child(QuestUI.icon("doc", 16.0, QuestUI.MUTED))
+		l_top.add_child(QuestUI.label("十年後的信", 13, QuestUI.MUTED, false, true))
+		l_top.add_child(QuestUI.chip(tag_name, tag_col))
+		lh.add_child(l_top)
+
+		var l_text := QuestUI.label("「%s」" % excerpt, 13, QuestUI.TEXT, true)
+		l_text.name = "LetterExcerptLabel"
+		lh.add_child(l_text)
+
+		letter_box.add_child(lh)
+		_finance_card_container.add_child(letter_box)
 
 
 func _growth_card() -> Control:
@@ -633,6 +881,13 @@ func report_text() -> String:
 	lines.append("綜合評級：%s（%d / 100）" % [_mine.get("grade", "—"), int(_mine.get("score", 0))])
 	for k in dims:
 		lines.append("%s：%d" % [k, int(dims[k])])
+	var tm := _selected_timeline()
+	if not tm.is_empty():
+		var adopted: bool = bool(tm.get("adopted", true))
+		var worst_no := int(tm.get("worstNo", 0))
+		var worst_with := int(tm.get("worstWith", 0))
+		var x_val := _fmt_money(worst_with) if adopted else "客戶未採用"
+		lines.append("十年最糟一年：有規劃 %s／沒規劃 %s" % [x_val, _fmt_money(worst_no)])
 	lines.append("")
 	lines.append("關鍵決策：")
 	for d in _key_decisions(8):
