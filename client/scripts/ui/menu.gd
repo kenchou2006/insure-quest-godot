@@ -578,6 +578,7 @@ func _layout() -> void:
 	var ph := 38.0 * k
 	_id_pill.size = Vector2(12 * k + pi + 10 * k + _id_label.size.x + 10 * k + 14 * k + 14 * k, ph)
 	_id_pill.position = Vector2(_rec_btn.position.x - 16 * k - _id_pill.size.x, (top_h - ph) * 0.5)
+	_id_icon.custom_minimum_size = Vector2(pi, pi)
 	_id_icon.size = Vector2(pi, pi)
 	_id_icon.position = Vector2(12 * k, (ph - pi) * 0.5)
 	_id_label.position = Vector2(_id_icon.position.x + pi + 10 * k, (ph - _id_label.size.y) * 0.5)
