@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOARD, CLIENTS } from '../src/game/data.ts';
-import { evaluatePlan, runStress, TOTAL_COINS } from '../src/game/engine.ts';
-import { addPlayer, applyAction, createGame, endGame, enrichCoach, fallbackTip, publicView, scorePlayer, startGame, type Ctx } from '../src/game/game.ts';
+import { evaluatePlan, marketOne, runStress, TOTAL_COINS } from '../src/game/engine.ts';
+import { addPlayer, applyAction, createGame, endGame, enrichCoach, fallbackTip, FINALE, finale, publicView, scorePlayer, startGame, summarizeMarketResult, type Ctx } from '../src/game/game.ts';
 import { botAction } from '../src/game/bots.ts';
 import { RuleAI, ruleGrade, buildGeneratedClient, MeteredAI, MockAI, extractJson, FallbackRawAI, makeAI, detectProvider, partialJsonStringDone, type AIService, type RawAI } from '../src/ai.ts';
 import { buildProfile } from '../src/game/profile.ts';
@@ -916,6 +916,67 @@ test('非 talk AI 功能（hint / debrief / letter）串流測試：接收漸進
   assert.equal(letterChunks.length, 2);
   assert.equal(letterChunks[0].text, '親愛的');
   assert.equal(letterChunks[1].text, '親愛的顧問，謝謝你');
+});
+
+test('終局大事件與市場事件：partial 客戶會被正確計入「勉強撐住」，且三個數字加總等於客戶數', () => {
+  // 1. 驗證 FINALE 下特定配置會被判定為 partial
+  // FINALE: absorb = { cash: 1.6, growth: -0.8 }, need: 3.5
+  // alloc: { cash: 2, protect: 8, growth: 0 } -> defense = 2 * 1.6 - 0 = 3.2
+  // ratio = 3.2 / 3.5 = 0.914... (0.55 <= ratio < 1) -> partial
+  const partialAlloc: Alloc = { cash: 2, protect: 8, growth: 0 };
+  const partialResult = marketOne(FINALE, partialAlloc);
+  assert.equal(partialResult, 'partial');
+
+  // 2. 測試 finale 執行路徑
+  const g = createGame('TESTFINALE');
+  addPlayer(g, { id: 'p_test', name: '測試顧問', isBot: false });
+  startGame(g, ctxFor(42));
+  const p = g.players[0];
+  p.book.push({
+    clientId: 'yuqing',
+    name: '林雨晴',
+    alloc: partialAlloc,
+    cards: ['income', 'medical'],
+    satisfaction: 70,
+    planQuality: 'good',
+    compliance: 100,
+    stressUsed: 0,
+    signedRound: 1,
+    mis: false,
+  });
+
+  finale(g, ctxFor(42));
+  assert.ok(g.announcement, '應有 announcement');
+  assert.doesNotThrow(() => structuredClone(g.announcement));
+  const line = g.announcement.lines[0];
+  assert.ok(line, '應有宣佈內容');
+  assert.ok(line.text.includes('勉強撐住'), `文字應包含「勉強撐住」: ${line.text}`);
+  assert.equal(line.tone, 'ok', '只有 partial 時 tone 應為 ok');
+
+  // 斷言三個數字加總等於客戶數 (p.book.length)
+  const numbers = [...line.text.matchAll(/(\d+)\s*位/g)].map(m => Number(m[1]));
+  assert.equal(numbers.length, 3, `應提取出三個數字: ${line.text}`);
+  const sum = numbers.reduce((a, b) => a + b, 0);
+  assert.equal(sum, p.book.length, `三個數字加總 (${sum}) 應等於客戶數 (${p.book.length})`);
+
+  // 3. 測試共用函式 summarizeMarketResult
+  const counts = { held: 1, partial: 2, broken: 0 };
+  const summary = summarizeMarketResult('王顧問', counts);
+  assert.doesNotThrow(() => structuredClone(summary));
+  assert.ok(summary.text.includes('勉強撐住'));
+  assert.equal(summary.tone, 'ok'); // partial > 0, broken == 0 -> ok
+  const sumNumbers = [...summary.text.matchAll(/(\d+)\s*位/g)].map(m => Number(m[1]));
+  assert.equal(sumNumbers.length, 3);
+  assert.equal(sumNumbers.reduce((a, b) => a + b, 0), 3);
+
+  // 驗證 tone 判斷規則：
+  // 全部 held 為 good
+  assert.equal(summarizeMarketResult('A', { held: 2, partial: 0, broken: 0 }).tone, 'good');
+  // 有 broken 且 broken > held 為 bad
+  assert.equal(summarizeMarketResult('B', { held: 1, partial: 0, broken: 2 }).tone, 'bad');
+  // 其餘為 ok (例如 broken <= held，或有 partial)
+  assert.equal(summarizeMarketResult('C', { held: 1, partial: 1, broken: 1 }).tone, 'ok');
+  assert.equal(summarizeMarketResult('D', { held: 0, partial: 1, broken: 0 }).tone, 'ok');
 });
 
 

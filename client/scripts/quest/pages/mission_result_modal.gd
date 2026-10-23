@@ -289,14 +289,14 @@ func _build_reasons(wv: VBoxContainer, sess: Dictionary, result: Dictionary) -> 
 	if _final:
 		var epi: Variant = result.get("epilogue")
 		if epi is Dictionary:
-			reaction = str(epi.get("headline", ""))
+			reaction = _clean_breaks(str(epi.get("headline", "")))
 		var letter: Variant = result.get("letter")
 		if reaction == "" and letter is Dictionary:
-			reaction = str(letter.get("content", "")).substr(0, 80)
+			reaction = _clean_breaks(str(letter.get("content", "")).substr(0, 80))
 	else:
 		for l in _ev.get("lines", []):
 			if str((l as Dictionary).get("tone", "")) == "info":
-				reaction = str(l.get("text", ""))
+				reaction = _clean_breaks(str(l.get("text", "")))
 				break
 	if reaction != "":
 		wv.add_child(QuestUI.label("客戶反應", 14, QuestUI.GOLD, false, true))
@@ -427,12 +427,16 @@ func _feedback(result: Dictionary) -> String:
 	if _final:
 		var letter: Variant = result.get("letter")
 		if letter is Dictionary and str(letter.get("content", "")) != "":
-			return str(letter.content).strip_edges().substr(0, 90)
-		return str(result.get("summary", ""))
+			return _clean_breaks(str(letter.content).strip_edges().substr(0, 90))
+		return _clean_breaks(str(result.get("summary", "")))
 	for l in _ev.get("lines", []):
 		if str((l as Dictionary).get("tone", "")) in ["good", "info"]:
-			return str(l.get("text", ""))
-	return str(_ev.get("body", ""))
+			return _clean_breaks(str(l.get("text", "")))
+	return _clean_breaks(str(_ev.get("body", "")))
+
+
+static func _clean_breaks(s: String) -> String:
+	return s.replace("<br/>", "\n").replace("<br />", "\n").replace("<br>", "\n").replace("<BR/>", "\n").replace("<BR />", "\n").replace("<BR>", "\n")
 
 
 ## A few quiet gold sparks rising behind the heading (about 1 s, once)
