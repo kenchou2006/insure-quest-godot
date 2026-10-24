@@ -3,7 +3,7 @@ extends Control
 ## 2px rounded line icons for the training hall (drawn, no image files).
 ## kind: user, users, chat_user, robot, doc, chart, chevron_r, chevron_l, chevron_d, speaker, speaker_off, question,
 ## replay, door, search, briefcase, doc_check, lock, unlock, gear, book, check, calculator,
-## shield, gauge, stamp, house, wallet
+## shield, gauge, stamp, house, wallet, expand, compress
 
 var kind := "user"
 var color := Color("#F3F0E7")
@@ -214,3 +214,13 @@ func _draw() -> void:
 			_l(o + Vector2(s * 0.22, s * 0.28), o + Vector2(s * 0.62, s * 0.16))
 			_round_rect(Rect2(o + Vector2(s * 0.56, s * 0.44), Vector2(s * 0.3, s * 0.18)), s * 0.05)
 			draw_circle(o + Vector2(s * 0.66, s * 0.53), width, color)
+		"expand", "compress":
+			# Four corner brackets: pointing out (enter fullscreen) or in (leave it)
+			var a := s * 0.34
+			var b := s * 0.14
+			for d: Vector2 in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+				var corner := c + d * (a if kind == "expand" else b)
+				var arm := -d.x * (a - b) if kind == "expand" else d.x * (a - b)
+				var arm_y := -d.y * (a - b) if kind == "expand" else d.y * (a - b)
+				_l(corner, corner + Vector2(arm, 0))
+				_l(corner, corner + Vector2(0, arm_y))

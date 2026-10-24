@@ -11,6 +11,7 @@ const AutomationBridge := preload("res://scripts/automation.gd")
 const ModeCard := preload("res://scripts/ui/mode_card.gd")
 const HallSecretary := preload("res://scripts/ui/hall_secretary.gd")
 const LineIcon := preload("res://scripts/ui/line_icon.gd")
+const Fullscreen := preload("res://scripts/fullscreen.gd")
 const BackButton := preload("res://scripts/ui/back_button.gd")
 const DemoCodeDialog := preload("res://scripts/ui/demo_code_dialog.gd")
 ## 本局對練配置 (shown under the cards once 單人實戰 is chosen)
@@ -46,6 +47,9 @@ var _id_chev: Control
 var _howto_btn: Button
 var _howto_icon: Control
 var _howto_label: Label
+## Top-bar 全螢幕 toggle (only where the browser supports fullscreen)
+var _full_btn: Button
+var _full_icon: Control
 var _rec_btn: Button
 var _rec_icon: Control
 var _rec_label: Label
@@ -355,6 +359,20 @@ func _build_topbar() -> void:
 	_howto_btn.mouse_entered.connect(func(): _howto_label.add_theme_color_override("font_color", UI.GOLD))
 	_howto_btn.mouse_exited.connect(func(): _howto_label.add_theme_color_override("font_color", UI.TEXT))
 
+	if Fullscreen.is_supported():
+		_full_btn = Button.new()
+		_full_btn.name = "FullscreenButton"
+		_full_btn.flat = true
+		_full_btn.focus_mode = Control.FOCUS_NONE
+		_full_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		_full_btn.pressed.connect(func(): Sound.play("click", self); Fullscreen.toggle())
+		_top.add_child(_full_btn)
+		_full_icon = LineIcon.new("expand", UI.GOLD, 1.8)
+		_full_btn.add_child(_full_icon)
+		_sync_fullscreen()
+		# Entering or leaving fullscreen (also by Esc) resizes the viewport
+		get_viewport().size_changed.connect(_sync_fullscreen)
+
 
 ## 本局對練配置 (shown after 單人實戰 is picked): the player plus 1–3 named sparring advisors
 func _build_solo_options() -> void:
@@ -578,8 +596,16 @@ func _layout() -> void:
 	_howto_label.reset_size()
 	var hi := 24.0 * k
 	_howto_icon.size = Vector2(hi, hi)
+	var right_edge := view.x - side
+	if _full_btn:
+		_full_icon.size = Vector2(hi, hi)
+		# Icon-only: a full 40 × 40 hit area, not just the drawn corners
+		_full_btn.size = Vector2(40 * k, 40 * k)
+		_full_btn.position = Vector2(right_edge - _full_btn.size.x + 8 * k, (top_h - _full_btn.size.y) * 0.5)
+		_full_icon.position = (_full_btn.size - _full_icon.size) * 0.5
+		right_edge = _full_btn.position.x - 6 * k
 	_howto_btn.size = Vector2(hi + 8 * k + _howto_label.size.x + 8 * k, 40 * k)
-	_howto_btn.position = Vector2(view.x - side - _howto_btn.size.x, (top_h - _howto_btn.size.y) * 0.5)
+	_howto_btn.position = Vector2(right_edge - _howto_btn.size.x, (top_h - _howto_btn.size.y) * 0.5)
 	_howto_icon.position = Vector2(4 * k, (_howto_btn.size.y - hi) * 0.5)
 	_howto_label.position = Vector2(hi + 12 * k, (_howto_btn.size.y - _howto_label.size.y) * 0.5)
 	_rec_label.add_theme_font_size_override("font_size", roundi(15 * k))
@@ -983,6 +1009,16 @@ func _on_judge_btn_pressed() -> void:
 		while _demo_code_task_running:
 			await get_tree().process_frame
 	_start_solo()
+
+
+## Top-bar fullscreen icon follows the real state (the player may leave with Esc)
+func _sync_fullscreen() -> void:
+	if not is_instance_valid(_full_btn):
+		return
+	var on := Fullscreen.is_on()
+	_full_icon.set("kind", "compress" if on else "expand")
+	_full_icon.queue_redraw()
+	_full_btn.tooltip_text = "離開全螢幕" if on else "全螢幕"
 
 
 func _open_demo_dialog() -> void:
