@@ -331,9 +331,14 @@ func _run() -> void:
 	await push(s)
 	# Three investigations are used up: the fourth card cannot be investigated, only set aside
 	var n_obs := actions.size()
+	var stuck_reason := btn("ConfirmClues").tooltip_text
+	check(stuck_reason.contains("調查次數已用完") and stuck_reason.contains("「工作室紙箱」") and stuck_reason.contains("暫時無關"), "the confirm reason names the card left and where it goes (%s)" % stuck_reason)
 	await _click((page().find_child("Clue_2", true, false) as Button).get_global_rect().get_center())
-	await press("PlaceHere_need")
+	check(btn("PlaceHere_need") == null and btn("PlaceHere_risk") == null, "out of investigations: the need boxes do not offer the face-down card")
+	check(btn("PlaceHere_none") != null and btn("PlaceHere_none").text.contains("調查已用完"), "out of investigations: 暫時無關 is the marked way on")
+	page().call("place", 2, "need")
 	check(actions.size() == n_obs and not (gs.call("selected_clues") as Dictionary).has("2"), "a fourth investigation is refused")
+	await _click((page().find_child("Clue_2", true, false) as Button).get_global_rect().get_center())
 	await press("PlaceHere_none")
 	check(str((gs.call("selected_clues") as Dictionary).get("2", "")) == "none", "set aside in 暫時無關 without investigating")
 	var confirm_btn := btn("ConfirmClues")
