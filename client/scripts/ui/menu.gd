@@ -66,6 +66,8 @@ var _stack: VBoxContainer
 var _stack_spacer: Control
 var _auth_card_container: VBoxContainer
 var _back: Button
+var _judge_btn: Button
+var _demo_code_task_running := false
 var _last_account_id: String = ""
 var _avatar_loading: bool = false
 
@@ -181,6 +183,17 @@ func _build_ui() -> void:
 	_footer = _hall_label("情境與數值僅供教育訓練模擬；保障卡為功能概念，不對應任何實際保險商品，亦不構成保險或投資建議。", 11, Color(UI.MUTED, 0.75))
 	_footer.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 
+	_solo_opts.visible = false
+
+	if AutomationBridge.is_judge():
+		_judge_btn = UI.button("評審快速體驗（約 5 分鐘）", _on_judge_btn_pressed, 20, UI.GOLD)
+		_judge_btn.name = "JudgeQuickStartButton"
+		_judge_btn.add_theme_font_override("font", BOLD)
+		_judge_btn.add_theme_color_override("font_color", Color("#0e2b24"))
+		_judge_btn.add_theme_color_override("font_hover_color", Color("#001a14"))
+		_judge_btn.add_theme_color_override("font_pressed_color", Color("#000000"))
+		_judge_btn.add_theme_color_override("font_focus_color", Color("#0e2b24"))
+
 	if _portrait_mode:
 		# Phone / tablet portrait: everything stacks in a scroll area under the top bar
 		_scroll = ScrollContainer.new()
@@ -199,15 +212,20 @@ func _build_ui() -> void:
 		title_wrap.add_child(_ornament)
 		title_wrap.add_child(_subtitle)
 		_subtitle.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+		if _judge_btn:
+			title_wrap.add_child(_judge_btn)
 		_stack.add_child(title_wrap)
 		for n: Control in [_solo_card, _solo_opts, _multi_card, _footer]:
 			_stack.add_child(n)
 		_stack_spacer = Control.new()
 		_stack.add_child(_stack_spacer)
 	else:
-		for n: Control in [_back, _title_row, _ornament, _subtitle, _solo_card, _multi_card, _solo_opts, _footer]:
+		var regular_nodes: Array = [_back, _title_row, _ornament, _subtitle]
+		if _judge_btn:
+			regular_nodes.append(_judge_btn)
+		regular_nodes.append_array([_solo_card, _multi_card, _solo_opts, _footer])
+		for n: Control in regular_nodes:
 			add_child(n)
-	_solo_opts.visible = false
 
 	_secretary = HallSecretary.new()
 	add_child(_secretary)
@@ -218,10 +236,10 @@ func _build_ui() -> void:
 			sel = str(guide.selected_secretary())
 	# The hall greeting runs as the secretary's 強制聚焦導覽 (first time only); the corner keeps the
 	# round portrait (replays it) or, for 自行挑戰, the 「開啟引導」 pill
-	_secretary.use_tutorial = sel != "none"
+	_secretary.use_tutorial = sel != "none" and not AutomationBridge.is_tutorial_disabled()
 	_secretary.setup(sel, false)
 	_secretary.portrait_pressed.connect(func(): _hall_tutorial(true))
-	if sel != "none" and not Engine.is_editor_hint():
+	if sel != "none" and not Engine.is_editor_hint() and not AutomationBridge.is_tutorial_disabled():
 		# After the screen switch has finished (the switch dismisses any open dialog)
 		get_tree().create_timer(0.4).timeout.connect(func():
 			if is_instance_valid(self) and is_inside_tree():
@@ -391,7 +409,7 @@ func _build_identity_popup() -> void:
 	_pwa_btn = UI.button("★ 有新版本，點此更新", _on_pwa_btn_pressed, 14, UI.GOLD)
 	_pwa_btn.visible = false
 	v.add_child(_pwa_btn)
-	if OS.has_feature("web") and not AutomationBridge.is_active() and not Engine.is_editor_hint():
+	if OS.has_feature("web") and not AutomationBridge.is_active() and not AutomationBridge.is_judge() and not Engine.is_editor_hint():
 		_check_pwa_update()
 		if not JavaScriptBridge.pwa_update_available.is_connected(_on_pwa_update_avail):
 			JavaScriptBridge.pwa_update_available.connect(_on_pwa_update_avail)
@@ -607,6 +625,9 @@ func _layout() -> void:
 		for n: Control in [_solo_card, _multi_card]:
 			n.custom_minimum_size = Vector2(cw, cw * 292.0 / 406.0)
 			n.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		if _judge_btn:
+			_judge_btn.custom_minimum_size = Vector2(cw, 52 * k)
+			_judge_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		_solo_opts.custom_minimum_size = Vector2(cw, 0)
 		_solo_opts.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		_ornament.custom_minimum_size = Vector2(cw, 12 * k)
@@ -633,11 +654,20 @@ func _layout() -> void:
 	_subtitle.reset_size()
 	_subtitle.position = Vector2((view.x - _subtitle.size.x) * 0.5, _ornament.position.y + _ornament.size.y + 6 * k)
 
+	var prev_bottom := _subtitle.position.y + _subtitle.size.y
+	if _judge_btn:
+		_judge_btn.add_theme_font_size_override("font_size", roundi(20 * k))
+		var jw := minf(460.0 * k, view.x - 48 * k)
+		var jh := 52.0 * k
+		_judge_btn.size = Vector2(jw, jh)
+		_judge_btn.position = Vector2((view.x - jw) * 0.5, prev_bottom + (10.0 if cfg else 14.0) * k)
+		prev_bottom = _judge_btn.position.y + _judge_btn.size.y
+
 	var cw := (372.0 if cfg else 406.0) * k
 	var ch := (214.0 if cfg else 292.0) * k
 	var gap := 22.0 * k
 	var x0 := (view.x - (cw * 2 + gap)) * 0.5
-	var cy := _subtitle.position.y + _subtitle.size.y + (12.0 if cfg else 22.0) * k
+	var cy := prev_bottom + (10.0 if cfg else 18.0) * k
 	var sec_rect := _secretary.occupied_rect()
 	var sec_left := sec_rect.position.x
 	var px := 24.0 * k
@@ -655,6 +685,8 @@ func _layout() -> void:
 			ch = clampf(bottom - cy, 84.0 * k, ch)
 	_ornament.visible = not tight
 	_subtitle.visible = not tight
+	if _judge_btn:
+		_judge_btn.visible = not cfg
 	_solo_card.size = Vector2(cw, ch)
 	_solo_card.position = Vector2(x0, cy)
 	_multi_card.size = Vector2(cw, ch)
@@ -681,7 +713,14 @@ func _layout() -> void:
 func _intro() -> void:
 	if UI.is_animation_disabled():
 		return
-	var items: Array = [_title_row, _subtitle, _solo_card, _multi_card] if not _portrait_mode else [_stack]
+	var items: Array = []
+	if not _portrait_mode:
+		items = [_title_row, _subtitle]
+		if _judge_btn and _judge_btn.visible:
+			items.append(_judge_btn)
+		items.append_array([_solo_card, _multi_card])
+	else:
+		items = [_stack]
 	for i in range(items.size()):
 		var n: CanvasItem = items[i]
 		n.modulate.a = 0.0
@@ -692,6 +731,8 @@ func _intro() -> void:
 
 ## Hall greeting with both mode cards kept bright; replay=true from the corner portrait
 func _hall_tutorial(replay: bool) -> void:
+	if not replay and AutomationBridge.is_tutorial_disabled():
+		return
 	if main == null or not main.has_method("secretary_guide"):
 		return
 	var guide: Control = main.secretary_guide()
@@ -924,13 +965,24 @@ func _check_url_demo_code() -> void:
 		return
 	var code: String = Net.check_and_consume_url_demo_code()
 	if code != "":
+		_demo_code_task_running = true
 		var res: Array = await Net.submit_demo_code(code)
+		_demo_code_task_running = false
 		if bool(res[0]):
 			if main:
 				main.toast("已啟用 AI 體驗模式", UI.GOOD)
 		else:
 			if main:
 				main.toast(str(res[1]), UI.BAD)
+
+
+func _on_judge_btn_pressed() -> void:
+	if _judge_btn:
+		_judge_btn.disabled = true
+	if _demo_code_task_running:
+		while _demo_code_task_running:
+			await get_tree().process_frame
+	_start_solo()
 
 
 func _open_demo_dialog() -> void:
@@ -943,6 +995,8 @@ func _open_demo_dialog() -> void:
 func _save() -> void:
 	var n: String = PlayerProfile.player_name if PlayerProfile.player_profile_created else (_name.text.strip_edges() if _name else Net.player_name)
 	Net.player_name = n if n != "" else "顧問"
+	if AutomationBridge.is_judge():
+		return
 	if _server:
 		Net.base_url = _server.text.strip_edges().trim_suffix("/")
 	Net.save_prefs()
@@ -1145,12 +1199,12 @@ func _build_howto() -> Control:
 
 
 func _on_pwa_update_avail() -> void:
-	if not AutomationBridge.is_active():
+	if not AutomationBridge.is_active() and not AutomationBridge.is_judge():
 		_check_pwa_update()
 
 
 func _check_pwa_update() -> void:
-	if not OS.has_feature("web") or AutomationBridge.is_active() or Engine.is_editor_hint():
+	if not OS.has_feature("web") or AutomationBridge.is_active() or AutomationBridge.is_judge() or Engine.is_editor_hint():
 		return
 	_pwa_cb = JavaScriptBridge.create_callback(func(args: Array):
 		if args.is_empty():

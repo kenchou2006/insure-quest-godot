@@ -12,6 +12,8 @@ const GameHeader := preload("res://scripts/quest/widgets/game_header.gd")
 const BACKGROUND := preload("res://assets/unified/background.webp")
 const SettingsModal := preload("res://scripts/quest/widgets/settings_modal.gd")
 const TimelineChartClass := preload("res://scripts/ui/timeline_chart.gd")
+const AutomationBridge := preload("res://scripts/automation.gd")
+const JudgeGuide := preload("res://scripts/quest/widgets/judge_guide.gd")
 
 var main: Node
 var _built := false
@@ -25,6 +27,7 @@ var _mine: Dictionary = {}
 var _state: Dictionary = {}
 var _settings: Control
 var _legacy: Control
+var _judge_guide: Control = null
 var _revealed := false
 var _finance_timeline_idx := -1
 var _finance_slot: VBoxContainer
@@ -67,6 +70,12 @@ func _ready() -> void:
 	AudioManager.set_music_state("report")
 	TensionManager.set_active(false)
 	GameState.timed_page = false
+
+	if AutomationBridge.is_judge():
+		_judge_guide = JudgeGuide.new()
+		_judge_guide.z_index = 50
+		add_child(_judge_guide)
+		_judge_guide.set_current_step(6)
 
 
 func _exit_tree() -> void:

@@ -5,6 +5,7 @@ extends Control
 
 signal entered
 
+const AutomationBridge := preload("res://scripts/automation.gd")
 const DemoCodeDialog := preload("res://scripts/ui/demo_code_dialog.gd")
 const BACKGROUND := preload("res://assets/startup/loading.png")
 const TITLE := preload("res://assets/startup/title.png")
@@ -251,7 +252,7 @@ func _layout_cover() -> void:
 
 func _play_intro() -> void:
 	_set_button_ready(false)
-	if UI.is_animation_disabled():
+	if UI.is_animation_disabled() or AutomationBridge.is_judge():
 		_set_button_ready(true)
 		return
 	var w := maxf(size.x, _stage.size.x)

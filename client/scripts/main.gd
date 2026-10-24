@@ -124,6 +124,9 @@ func _ready() -> void:
 	_guide = SecretaryGuide.new()
 	add_child(_guide)
 	_guide.dock_changed.connect(_on_guide_dock)
+	if AutomationBridge.is_judge() and AutomationBridge.is_tutorial_disabled():
+		_guide.enabled = false
+		_guide.dismiss()
 	_init_auth()
 	show_startup()
 	add_child(_toasts)
@@ -312,7 +315,7 @@ func _input(event: InputEvent) -> void:
 
 ## Game opening cover; shown at launch and every time the player leaves a game (intro replays each time).
 func show_startup() -> void:
-	if AutomationBridge.is_active():
+	if AutomationBridge.is_active() or AutomationBridge.is_judge():
 		show_menu()
 		return
 	var startup := StartupScreen.new()
@@ -321,8 +324,13 @@ func show_startup() -> void:
 
 
 func show_menu() -> void:
+	if AutomationBridge.is_judge():
+		if PlayerProfile.player_name == "":
+			PlayerProfile.player_name = "評審顧問"
+		if Net.player_name == "" or Net.player_name == "顧問":
+			Net.player_name = "評審顧問"
 	# No advisor profile yet: 報到 comes first (recordings with ?automation=1 go straight on)
-	if not PlayerProfile.player_profile_created and not AutomationBridge.is_active():
+	if not PlayerProfile.player_profile_created and not AutomationBridge.is_active() and not AutomationBridge.is_judge():
 		show_onboarding("flow")
 		return
 	if _screen_kind == "menu" and _screen != null and is_instance_valid(_screen) and not _screen.is_queued_for_deletion():
@@ -462,6 +470,11 @@ func _on_welcomed(_data: Dictionary) -> void:
 			var demo_id := AutomationBridge.get_url_demo()
 			if demo_id != "":
 				settings_dict["demo"] = demo_id
+		elif AutomationBridge.is_judge():
+			settings_dict["rounds"] = 1
+			var demo_id := AutomationBridge.get_judge_demo()
+			if demo_id != "":
+				settings_dict["demo"] = demo_id
 		var full_settings := {"t": "settings"}
 		full_settings.merge(settings_dict)
 		Net.send(full_settings)
@@ -537,6 +550,8 @@ func show_onboarding(mode := "flow") -> void:
 
 ## True once after a secretary was chosen (Aly or Kevin): the hall opens its tutorial without a tap
 func take_hall_greeting() -> bool:
+	if AutomationBridge.is_judge() and AutomationBridge.is_tutorial_disabled():
+		return false
 	var v := _hall_greeting
 	_hall_greeting = false
 	return v

@@ -194,6 +194,36 @@ Compliance issues cite the actual article text. `server/rag/law-chunks.json` hol
 ### Letting judges try the AI
 Set `npx wrangler secret put DEMO_CODES` (comma-separated, ≥ 8 chars each). Judges enter the code on the main menu (「評審體驗碼」) or open `https://<domain>/?code=<CODE>`; each code creates a temporary account (NVIDIA NIM calls are unlimited subject to the 1 call/s per-account limit; only Workers AI fallback calls count against its 30/day quota) (cap `DEMO_MAX_ACCOUNTS`, default 300 per code; 10 failed attempts per IP per hour). Demo accounts and associated shard records are automatically purged after 7 days by the daily Cron Trigger. Non-demo accounts that never finished a game, have no valid session and have not logged in for 90 days (`INACTIVE_NEVER_PLAYED_DAYS`) are deleted by a monthly Cron Trigger (1st of each month, 04:00 UTC); signing in with Google again recreates the account.
 
+### 評審快速體驗（Judge Mode）
+
+專為競賽評審設計的 3–5 分鐘快速體驗模式，提供免登入、免報到、一鍵開局的流暢評測體驗：
+
+- **網址格式**：`https://<domain>/?judge=1&code=<體驗碼>`
+  - 亦可手動至大廳點擊「評審體驗碼」對話框輸入體驗碼。
+  - 體驗碼經後端驗證後會發行 7 天效期的 `iq_session` HttpOnly Cookie，客戶端會自動自網址列移除 `code` 參數防外流。
+- **可選 URL 參數**：
+  - `&demo=<clientId>`：指定本局固定主要客戶（預設為 `1`，即房貸家庭「劉家豪」`jiahao`，具生動場景找線索插畫與代表性需求；亦可代入其他客戶 ID 如 `wanting`、`lin` 等）。
+  - `&tutorial=1`：若評審希望體驗秘書長新手教學引導可附帶此參數；預設在評審模式下會自動停用。
+- **自動略過前置項目**：
+  1. **略過開場封面動畫**：載入完成後直接呈現大廳。
+  2. **略過顧問報到流程**：免選頭像與輸入姓名，自動指派名稱「評審顧問」。
+  3. **略過秘書長新手遮罩**：大廳不跳出強制聚焦新手教學對話框，秘書維持在右下角提供諮詢。
+  4. **大廳快速啟動按鈕**：大廳正中央顯示金黃色「評審快速體驗（約 5 分鐘）」按鈕，點擊後自動以單人對練模式（1 位真人 + 依設定之對練模擬電腦顧問，預設 2 位沈知妍與顧承宇）開局。
+- **1 回合快速體驗流程與評審導覽**：
+  - 評審模式設定局長度為 1 回合，且首擲骰子自動計算步數確保直接抵達客戶格，一次會談走完需求訪談、方案設計、異議處理與簽約，3–5 分鐘內體驗 6 大核心亮點：
+    1. **① 場景找線索**：探索辦公室與生活場景熱點，發掘真實客戶隱藏線索（排除誤導干擾項）。
+    2. **② 需求提問**：三輪開放式與關鍵提問，與具備動態人生變數（如寬限期即將屆滿）的 AI 客戶互動。
+    3. **③ 合規紅燈與法條**：合規雷達即時偵測業務話術，若有違規立刻亮起紅燈並出示具體法條摘錄。
+    4. **④ 保障配置**：利用 10 單位預算配置三大帳戶（緊急預備、風險保障、目標成長），並依工具提示挑選核心保障卡。
+    5. **⑤ 十年時間軸**：會談結算後點擊「生成培訓報告」，在報告中以十年資產淨值折線圖對比有規劃 vs 無規劃的防禦韌性。
+    6. **⑥ 十年後的信**：於培訓報告中閱讀十年後客戶寄來的感謝信（或客訴信），檢視建議對人生的長遠影響。
+  - 右上角常駐「評審導覽」進度條面板，即時呈現上述 6 大階段進度（高亮當前步驟、完成自動打勾），結算時提示前往報告，於培訓報告畫面顯示 6/6 全數完成。
+- **後端環境變數與清理機制**：
+  - `DEMO_CODES`：評審專用體驗碼清單（以逗號分隔，每組需 ≥ 8 字元），透過 `npx wrangler secret put DEMO_CODES` 設定（本機開發於 `server/.dev.vars` 設定）。
+  - `DEMO_AI_LIMIT`：評審體驗帳號每日 AI 額度（預設為 30 次；NVIDIA NIM 不消耗額度但受 1 call/s 防刷頻率限制，Workers AI 作為備援扣額度）。
+  - `DEMO_MAX_ACCOUNTS`：單一體驗碼最多建立之體驗帳號上限（預設 300 組），每 IP 每小時最多容許 10 次錯誤驗證防暴力破解。
+  - **自動清理機制**：每天 03:00 UTC 由 Cloudflare Cron Trigger 自動清理建立超過 7 天的過期體驗帳號及其獨立 DO Shard。
+
 ### Demo video raw footage
 `tools/demo-recorder/` drives the web build with Playwright and records reproducible clips (see its README). `?automation=1&demo=1` makes the first interview deterministic (mortgage family client 劉家豪, fixed life twist, first dice lands on a client tile).
 

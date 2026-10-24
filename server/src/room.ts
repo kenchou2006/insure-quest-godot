@@ -389,19 +389,24 @@ export class Room extends DurableObject<Env> {
       }
       case 'settings': {
         if (!isHost || g.phase !== 'lobby') return this.err(ws, '只有房主可以在大廳調整設定');
-        if (msg.rounds !== undefined) g.settings.rounds = Math.max(2, Math.min(12, Math.round(Number(msg.rounds)) || 6));
-        if (msg.aiClients !== undefined) {
-          const host = g.players.find(p => p.id === g.hostId);
-          g.settings.aiClients = !!msg.aiClients && !!this.raw && !!host?.accountId;
-        }
+        let validDemo: string | null = null;
         if (g.solo && typeof msg.demo === 'string') {
           const target = msg.demo === '1' ? 'jiahao' : msg.demo;
           if (Object.hasOwn(g.clients, target)) {
+            validDemo = target;
             g.demo = target;
             g.demoFirstRoll = true;
             g.demoFirstSession = true;
             this.demoRng = mulberry32(20261106);
           }
+        }
+        if (msg.rounds !== undefined) {
+          const minRounds = (g.solo && validDemo) ? 1 : 2;
+          g.settings.rounds = Math.max(minRounds, Math.min(12, Math.round(Number(msg.rounds)) || 6));
+        }
+        if (msg.aiClients !== undefined) {
+          const host = g.players.find(p => p.id === g.hostId);
+          g.settings.aiClients = !!msg.aiClients && !!this.raw && !!host?.accountId;
         }
         break;
       }

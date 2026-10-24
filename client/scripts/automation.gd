@@ -17,6 +17,13 @@ static func is_active() -> bool:
 	return bool(res)
 
 
+static func is_judge() -> bool:
+	if Engine.is_editor_hint() or not OS.has_feature("web"):
+		return false
+	var res = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('judge') === '1'", true)
+	return bool(res)
+
+
 static func get_url_demo() -> String:
 	if Engine.is_editor_hint() or not OS.has_feature("web"):
 		return ""
@@ -24,8 +31,13 @@ static func get_url_demo() -> String:
 	return str(res).strip_edges() if typeof(res) == TYPE_STRING else ""
 
 
+static func get_judge_demo() -> String:
+	var d := get_url_demo()
+	return d if d != "" else "1"
+
+
 static func is_tutorial_disabled() -> bool:
-	if not is_active():
+	if not is_active() and not is_judge():
 		return false
 	var res = JavaScriptBridge.eval("new URLSearchParams(window.location.search).get('tutorial') === '1'", true)
 	return not bool(res)

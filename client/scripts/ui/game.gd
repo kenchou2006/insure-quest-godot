@@ -105,6 +105,8 @@ const QuestLayer := preload("res://scripts/quest/quest_layer.gd")
 const GameHeader := preload("res://scripts/quest/widgets/game_header.gd")
 const LeaveDialog := preload("res://scripts/quest/widgets/leave_dialog.gd")
 const BackButton := preload("res://scripts/ui/back_button.gd")
+const AutomationBridge := preload("res://scripts/automation.gd")
+const JudgeGuide := preload("res://scripts/quest/widgets/judge_guide.gd")
 ## Pawn walk per station and the camera's arrival focus (seconds)
 const STEP_SECONDS := 0.22
 const FOCUS_SECONDS := 0.6
@@ -196,6 +198,7 @@ var _client_box: VBoxContainer
 var _record_box: VBoxContainer
 var _hud_action: HBoxContainer
 var _quest: Control
+var _judge_guide: Control = null
 var _map_header: Control
 ## 最後一回合玩家已走完、等其他顧問收尾時的常駐提示（報告要等整個回合結束才會產生）
 var _final_wait: PanelContainer
@@ -644,6 +647,12 @@ func _build_ui() -> void:
 	_quest.game = self
 	add_child(_quest)
 
+	if AutomationBridge.is_judge():
+		_judge_guide = JudgeGuide.new()
+		_judge_guide.quest_layer = _quest
+		_judge_guide.z_index = 50
+		add_child(_judge_guide)
+
 	if not Engine.is_editor_hint():
 		Portraits.add_player_avatar_callback(_on_player_avatar_loaded)
 		if Net != null and not Net.avatar_loaded.is_connected(_on_player_avatar_loaded):
@@ -701,6 +710,8 @@ func skip_move_animation() -> void:
 
 ## 流程狀態改變：下一站解鎖時沿路線播放金線，播完回到地圖待機
 func _on_flow_state(_from: String, to: String) -> void:
+	if _judge_guide != null and is_instance_valid(_judge_guide):
+		_judge_guide.on_flow_state(_from, to)
 	if to != QuestFlow.NEXT_STAGE_UNLOCKED:
 		return
 	var dur := 1.2
@@ -1859,6 +1870,8 @@ func _apply_deferred_overlay() -> void:
 		_event.refresh(ev, cur_name)
 	if _quest != null:
 		_quest.route(s)
+	if _judge_guide != null and is_instance_valid(_judge_guide):
+		_judge_guide.on_page_changed(_quest.current)
 
 	_sync_tabs()
 	_update_center_client_strip()
