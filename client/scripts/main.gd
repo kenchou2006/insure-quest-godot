@@ -16,6 +16,7 @@ const SecretarySetup := preload("res://scripts/ui/secretary_setup.gd")
 const PlayerOnboarding := preload("res://scenes/player_onboarding.tscn")
 const AutomationBridge := preload("res://scripts/automation.gd")
 const UiLock := preload("res://scripts/ui_lock.gd")
+const Fullscreen := preload("res://scripts/fullscreen.gd")
 
 signal layout_changed(is_portrait: bool)
 
@@ -127,6 +128,9 @@ func _ready() -> void:
 	if AutomationBridge.is_judge() and AutomationBridge.is_tutorial_disabled():
 		_guide.enabled = false
 		_guide.dismiss()
+	# Installed app (PWA): the first tap of this launch goes fullscreen (not for scripted recordings)
+	if not AutomationBridge.is_active():
+		Fullscreen.auto_enter_in_app()
 	_init_auth()
 	show_startup()
 	add_child(_toasts)

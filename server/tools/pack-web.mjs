@@ -318,6 +318,10 @@ if (existsSync(manifestFile)) {
     manifest.short_name = '人生顧問局';
     manifest.background_color = '#0d231e';
     manifest.theme_color = '#0d231e';
+    // Installed app opens fullscreen where the platform allows it (Android); elsewhere it falls back
+    // to a standalone window, where the game enters fullscreen on the first tap (fullscreen.gd)
+    manifest.display = 'fullscreen';
+    manifest.display_override = ['fullscreen', 'standalone'];
     manifest.icons = [
       { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
       { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },

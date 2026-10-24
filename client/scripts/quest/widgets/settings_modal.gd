@@ -1,11 +1,13 @@
 extends Control
 ## SettingsModal (右上角設定): 背景音樂 / 音效 / 秘書語音 volume, 全部靜音, 字幕, 文字顯示速度,
-## 減少動態效果, 暫停／繼續 and 離開培訓 (in a game: the 繼續 / 儲存並返回 / 放棄 dialog;
+## 減少動態效果, 全螢幕 (where supported), 暫停／繼續 and 離開培訓 (in a game: the 繼續 / 儲存並返回 / 放棄 dialog;
 ## after the game: 返回主畫面). Real controls, saved at once. While it is open (and
 ## while paused) the meeting clock holds. Warnings never depend on sound: muted play keeps icons,
 ## words and colours.
 
 signal leave_requested
+
+const Fullscreen := preload("res://scripts/fullscreen.gd")
 
 ## Label of the leave button: 離開培訓 during a game, 返回主畫面 once it has ended
 var home_label := "離開培訓"
@@ -14,6 +16,7 @@ var _panel: PanelContainer
 var _paused := false
 var _pause_btn: Button
 var _mute: CheckButton
+var _full: CheckButton
 var _sliders: Dictionary = {}
 var _pause_card: PanelContainer
 
@@ -86,6 +89,19 @@ func _ready() -> void:
 	motion.button_pressed = UI.reduce_motion
 	motion.toggled.connect(func(on: bool): UI.set_reduce_motion(on))
 	v.add_child(motion)
+	if Fullscreen.is_supported():
+		_full = CheckButton.new()
+		_full.name = "FullscreenToggle"
+		_full.text = "全螢幕"
+		_full.add_theme_font_size_override("font_size", QuestUI.fs(15))
+		_full.button_pressed = Fullscreen.is_on()
+		_full.toggled.connect(func(on: bool): Fullscreen.set_on(on))
+		v.add_child(_full)
+		# Esc or the browser can leave fullscreen: the switch shows the real state
+		get_viewport().size_changed.connect(func():
+			if is_instance_valid(_full):
+				_full.set_pressed_no_signal(Fullscreen.is_on())
+		)
 	v.add_child(QuestUI.divider())
 	var row := QuestUI.hbox(10)
 	v.add_child(row)
@@ -168,6 +184,8 @@ func open() -> void:
 	_panel.visible = true
 	_pause_card.visible = false
 	_mute.set_pressed_no_signal(MusicManager.muted)
+	if is_instance_valid(_full):
+		_full.set_pressed_no_signal(Fullscreen.is_on())
 	for bus in _sliders:
 		(_sliders[bus] as HSlider).set_value_no_signal(MusicManager.get_slider(bus))
 	GameState.hold("settings", true)

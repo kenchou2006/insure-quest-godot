@@ -107,6 +107,11 @@ func _run() -> void:
 	check(not g.is_open() and not g._overlay.visible, "greeting closes and unlocks")
 	for card in [m._solo_card, m._multi_card]:
 		check(not sec.occupied_rect().intersects(card.get_rect()), "dialog clear of %s" % card.title)
+	# 全螢幕 sits at the right end of the top bar, clear of 玩法
+	var full: Button = m.find_child("FullscreenButton", true, false)
+	check(full != null and full.tooltip_text == "全螢幕", "top bar has the 全螢幕 button")
+	if full != null:
+		check(full.get_global_rect().position.x >= m._howto_btn.get_global_rect().end.x, "全螢幕 to the right of 玩法")
 	# Solo options appear only after picking 單人實戰
 	check(not m._solo_opts.visible, "solo options hidden at first")
 	m._pick_mode("solo")
