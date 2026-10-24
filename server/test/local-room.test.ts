@@ -51,6 +51,21 @@ test('LocalRoom plays a full solo game to the report without any server', async 
   }
 });
 
+test('LocalRoom: a demo run may be one round; without a demo rounds stay at least 2', async () => {
+  const settle = async (msg: object) => {
+    const room = new LocalRoom();
+    room.receive(JSON.stringify({ t: 'hello', name: '訪客' }));
+    room.receive(JSON.stringify(msg));
+    for (let i = 0; i < 5; i++) await flush();
+    return (room as any).game;
+  };
+  const judge = await settle({ t: 'settings', rounds: 1, demo: '1' });
+  assert.equal(judge.settings.rounds, 1);
+  assert.equal(judge.demo, 'jiahao');
+  assert.equal((await settle({ t: 'settings', rounds: 1 })).settings.rounds, 2);
+  assert.equal((await settle({ t: 'settings', rounds: 1, demo: 'nobody' })).settings.rounds, 2);
+});
+
 test('LocalRoom: abandon sends closed; a second hello cannot take a seat', async () => {
   const room = new LocalRoom();
   room.receive(JSON.stringify({ t: 'hello', name: 'A' }));

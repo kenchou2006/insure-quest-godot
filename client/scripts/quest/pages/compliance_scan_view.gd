@@ -8,12 +8,12 @@ extends "res://scripts/quest/pages/page_base.gd"
 ## 合規檢核表 in the briefcase forgives one wrong mark.
 
 const RISKS := [
-	{"type": "不當承諾", "text": "這檔商品過去幾年都沒有虧損，可以保證讓您穩賺不賠，完全不用擔心。", "fix": "「過去績效不代表未來，這類商品可能有虧損，我們一起看清楚風險。」", "why": "保證獲利或不會虧損屬於不當承諾。"},
-	{"type": "不當承諾", "text": "照這樣規劃，您的目標一定沒問題，我可以保證。", "fix": "「這樣規劃能降低風險對目標的影響，但沒有人能保證人生結果。」", "why": "顧問不能承諾人生目標一定達成。"},
-	{"type": "施壓成交", "text": "現在正好有內部名額，這個機會只有一週，錯過就不會再有了，建議您今天就簽。", "fix": "「您可以帶回去和家人討論，不用今天決定。」", "why": "以時間壓力或名額限制促使客戶成交。"},
-	{"type": "施壓成交", "text": "身邊的人都已經買了，您再猶豫就來不及了。", "fix": "「每個家庭的狀況不同，我們依您的需求來看就好。」", "why": "用從眾與後悔感施壓，不是需求教育。"},
-	{"type": "資訊不足", "text": "費用、收取方式和相關風險我之後再用文件補給您，您先不用看那麼多，先把名額保留比較重要。", "fix": "「簽約前，費用、收取方式與風險我們先逐項看過。」", "why": "沒有在客戶決定前說明費用與風險。"},
-	{"type": "資訊不足", "text": "除外條款都是小細節，不太影響理賠，不用特別看。", "fix": "「除外條款會影響理賠範圍，我們一起逐條確認。」", "why": "淡化除外條款，客戶無法完整理解保障範圍。"},
+	{"code": "PROMISE_RETURN", "type": "不當承諾", "text": "這檔商品過去幾年都沒有虧損，可以保證讓您穩賺不賠，完全不用擔心。", "fix": "「過去績效不代表未來，這類商品可能有虧損，我們一起看清楚風險。」", "why": "保證獲利或不會虧損屬於不當承諾。"},
+	{"code": "PROMISE_RETURN", "type": "不當承諾", "text": "照這樣規劃，您的目標一定沒問題，我可以保證。", "fix": "「這樣規劃能降低風險對目標的影響，但沒有人能保證人生結果。」", "why": "顧問不能承諾人生目標一定達成。"},
+	{"code": "EARLY_PRESSURE", "type": "施壓成交", "text": "現在正好有內部名額，這個機會只有一週，錯過就不會再有了，建議您今天就簽。", "fix": "「您可以帶回去和家人討論，不用今天決定。」", "why": "以時間壓力或名額限制促使客戶成交。"},
+	{"code": "EARLY_PRESSURE", "type": "施壓成交", "text": "身邊的人都已經買了，您再猶豫就來不及了。", "fix": "「每個家庭的狀況不同，我們依您的需求來看就好。」", "why": "用從眾與後悔感施壓，不是需求教育。"},
+	{"code": "UNDISCLOSED_RISK", "type": "資訊不足", "text": "費用、收取方式和相關風險我之後再用文件補給您，您先不用看那麼多，先把名額保留比較重要。", "fix": "「簽約前，費用、收取方式與風險我們先逐項看過。」", "why": "沒有在客戶決定前說明費用與風險。"},
+	{"code": "UNDISCLOSED_RISK", "type": "資訊不足", "text": "除外條款都是小細節，不太影響理賠，不用特別看。", "fix": "「除外條款會影響理賠範圍，我們一起逐條確認。」", "why": "淡化除外條款，客戶無法完整理解保障範圍。"},
 ]
 const SAFE := [
 	"這份方案的保障範圍和除外條款，我們一起逐條看過。",
@@ -194,8 +194,9 @@ func _prepare_lines() -> void:
 	var own_type := ""
 	if own_text != "":
 		if own_risk:
-			own_type = "施壓成交" if (own_text.contains("後悔") or own_text.contains("來不及") or own_text.contains("今天")) else "不當承諾"
-			advisor.append({"who": "顧問", "text": own_text, "risk": true, "type": own_type, "why": "這是你剛才的回應：" + str(reply.get("body", "")), "fix": "「我理解您的顧慮，我們一起看這項安排怎麼保住您在乎的目標，您可以慢慢決定。」", "own": true})
+			var own_code := "EARLY_PRESSURE" if (own_text.contains("後悔") or own_text.contains("來不及") or own_text.contains("今天")) else "PROMISE_RETURN"
+			own_type = "施壓成交" if own_code == "EARLY_PRESSURE" else "不當承諾"
+			advisor.append({"who": "顧問", "text": own_text, "risk": true, "code": own_code, "type": own_type, "why": "這是你剛才的回應：" + str(reply.get("body", "")), "fix": "「我理解您的顧慮，我們一起看這項安排怎麼保住您在乎的目標，您可以慢慢決定。」", "own": true, "refs": reply.get("refs", [])})
 		else:
 			advisor.append({"who": "顧問", "text": own_text, "risk": false, "own": true})
 	var need_bank := 2 - (1 if own_risk else 0)
@@ -207,7 +208,7 @@ func _prepare_lines() -> void:
 		if types_used.has(r.type):
 			continue
 		types_used.append(r.type)
-		advisor.append({"who": "顧問", "text": str(r.text), "risk": true, "type": str(r.type), "why": str(r.why), "fix": str(r.fix)})
+		advisor.append({"who": "顧問", "text": str(r.text), "risk": true, "code": str(r.get("code", "")), "type": str(r.type), "why": str(r.why), "fix": str(r.fix)})
 		need_bank -= 1
 	var safe := QuestUI.shuffled(SAFE)
 	advisor.append({"who": "顧問", "text": str(safe[0]), "risk": false})
@@ -318,6 +319,10 @@ func _row(i: int, line: Dictionary) -> Control:
 	note.name = "Note"
 	note.visible = false
 	tv.add_child(note)
+	var ref_box := QuestUI.vbox(2)
+	ref_box.name = "RefBox"
+	ref_box.visible = false
+	tv.add_child(ref_box)
 	h.add_child(tv)
 	h.add_child(_mark_button(i))
 	return p
@@ -444,7 +449,12 @@ func _on_finish() -> void:
 		var row: Control = _rows[i]
 		(row.find_child("Mark", true, false) as Button).disabled = true
 		var note: Label = row.find_child("Note", true, false)
+		var ref_box: Control = row.find_child("RefBox", true, false)
 		if bool(line.get("risk", false)):
+			var code := str(line.get("code", ""))
+			var refs: Array = line.get("refs", [])
+			if refs.is_empty() and code != "":
+				refs = Compliance.get_refs_for_code(code)
 			if _marked.has(i):
 				found += 1
 				note.text = "【%s】%s\n較合適的說法：%s" % [line.get("type", ""), line.get("why", ""), line.get("fix", "")]
@@ -452,9 +462,27 @@ func _on_finish() -> void:
 				missed += 1
 				note.text = "漏選【%s】%s\n較合適的說法：%s" % [line.get("type", ""), line.get("why", ""), line.get("fix", "")]
 				_set_row_border(row, QuestUI.GOLD)
+			if ref_box != null:
+				UI.clear(ref_box)
+				if not refs.is_empty():
+					for r in refs.slice(0, 2):
+						var rd := r as Dictionary
+						var cite := str(rd.get("cite", ""))
+						var txt := str(rd.get("text", "")).replace("\n", " ")
+						if cite != "":
+							var cl := QuestUI.label("依據：" + cite, 13, QuestUI.MUTED, true)
+							cl.name = "RefCite"
+							ref_box.add_child(cl)
+						if txt != "":
+							var tl := QuestUI.label(txt, 12, QuestUI.MUTED, true)
+							tl.name = "RefText"
+							ref_box.add_child(tl)
+					ref_box.visible = true
 			(row.find_child("Underline", true, false) as Control).visible = true
 			note.visible = true
 		elif _wrong_marks.has(i):
+			if ref_box != null:
+				ref_box.visible = false
 			note.text = "這句沒有合規問題：說明清楚、沒有保證或施壓。"
 			note.visible = true
 	var wrong := _wrong_marks.size()

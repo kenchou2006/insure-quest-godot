@@ -19,6 +19,7 @@ if (!buildVer) {
     buildVer = Date.now().toString();
   }
 }
+const cacheVer = buildVer.replace(/[^a-zA-Z0-9._-]/g, '_');
 writeFileSync(join(dir, 'version.json'), JSON.stringify({ version: buildVer }) + '\n');
 console.log(`version.json：已產生（版本號 ${buildVer}）`);
 
@@ -178,8 +179,11 @@ if (existsSync(join(dir, 'local-room.js'))) {
 
 // Inject IQ_BUILD build version into index.html
 page = readFileSync(html, 'utf8');
-if (!page.includes('iq-build-stamp')) {
-  const STAMP = `<script id="iq-build-stamp">window.IQ_BUILD = ${JSON.stringify(buildVer)};</script>`;
+const STAMP = `<script id="iq-build-stamp">window.IQ_BUILD = ${JSON.stringify(buildVer)};</script>`;
+if (page.includes('id="iq-build-stamp"')) {
+  page = page.replace(/<script id="iq-build-stamp">[\s\S]*?<\/script>/, STAMP);
+  writeFileSync(html, page);
+} else if (!page.includes('iq-build-stamp')) {
   if (page.includes('<head>')) {
     page = page.replace('<head>', `<head>\n\t\t${STAMP}`);
   } else {
@@ -189,41 +193,102 @@ if (!page.includes('iq-build-stamp')) {
 }
 console.log(`index.html：已注入 IQ_BUILD 版本號（${buildVer}）`);
 
-// Auto-update on load: if version.json is newer than the running (cached) build, activate the new
+// Auto-update on load: if version.json is newer than the running (cached) build, or if an old
+// service worker still controls the page / lacks the new build cache, activate the new
 // service worker and reload before the game starts, so players never see an "update" prompt.
 // sessionStorage guards against reload loops when the new build cannot be fetched.
+const sw = join(dir, 'index.service.worker.js');
+let cachePrefix = 'INSURE QUEST 人生顧-sw-cache-';
+if (existsSync(sw)) {
+  const prefixMatch = readFileSync(sw, 'utf8').match(/const CACHE_PREFIX = '([^']+)';/);
+  if (prefixMatch) cachePrefix = prefixMatch[1];
+}
+
 page = readFileSync(html, 'utf8');
-if (!page.includes('iq-auto-update')) {
-  const AUTO_UPDATE = `<script id="iq-auto-update">(function () {
+const AUTO_UPDATE = `<script id="iq-auto-update">(function () {
   try {
     var cur = window.IQ_BUILD || '';
-    if (!cur || !window.fetch) return;
-    fetch('version.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-      if (!d || !d.version || d.version === cur) return;
-      if (sessionStorage.getItem('iq-updating') === d.version) return;
-      sessionStorage.setItem('iq-updating', d.version);
-      // Navigate to a version-stamped URL: a plain reload can be answered from the HTTP cache with the old page
-      var reload = function () { var u = new URL(location.href); u.searchParams.set('v', d.version); location.replace(u.toString()); };
-      if (!('serviceWorker' in navigator)) return reload();
-      navigator.serviceWorker.getRegistration().then(function (reg) {
-        if (!reg) return reload();
-        var activate = function (sw) { sw.postMessage('update'); setTimeout(reload, 4000); };
-        if (reg.waiting) return activate(reg.waiting);
+    if (!window.fetch) return;
+    fetch('version.json', { cache: 'no-store' }).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (d) {
+      if (!d || !d.version) return;
+      var targetVer = d.version.replace(/[^a-zA-Z0-9._-]/g, '_');
+      var targetCache = ${JSON.stringify(cachePrefix)} + targetVer;
+      var hasSW = 'serviceWorker' in navigator;
+      var reload = function () {
+        var u = new URL(location.href);
+        u.searchParams.set('v', d.version);
+        location.replace(u.toString());
+      };
+
+      var triggerUpdate = function (reg, targetSW) {
+        if (sessionStorage.getItem('iq-updating') === d.version) return;
+        sessionStorage.setItem('iq-updating', d.version);
+        if (!hasSW || !reg) return reload();
+        var activate = function (sw) {
+          sw.postMessage('update');
+          setTimeout(reload, 4000);
+        };
+        var swToActivate = targetSW || reg.waiting;
+        if (swToActivate) return activate(swToActivate);
         reg.update().then(function () {
           if (reg.waiting) return activate(reg.waiting);
           var sw = reg.installing;
           if (!sw) return reload();
-          sw.addEventListener('statechange', function () { if (sw.state === 'installed') activate(sw); });
+          if (sw.state === 'installed') return activate(sw);
+          sw.addEventListener('statechange', function () {
+            if (sw.state === 'installed') activate(sw);
+          });
           setTimeout(reload, 8000);
         }).catch(reload);
-      }).catch(reload);
+      };
+
+      if (!hasSW) {
+        if (cur !== d.version) triggerUpdate(null);
+        return;
+      }
+
+      var getKeys = (typeof caches !== 'undefined' && caches.keys) ? caches.keys() : Promise.resolve([]);
+      Promise.all([navigator.serviceWorker.getRegistration(), getKeys]).then(function (res) {
+        var reg = res[0];
+        var keys = res[1] || [];
+        var hasController = !!navigator.serviceWorker.controller;
+        var hasTargetCache = keys.indexOf(targetCache) !== -1;
+        var hasWaiting = !!(reg && reg.waiting);
+
+        if (cur !== d.version || (hasController && (!hasTargetCache || hasWaiting))) {
+          return triggerUpdate(reg);
+        }
+
+        if (hasController && reg) {
+          reg.update().then(function () {
+            if (reg.waiting) {
+              triggerUpdate(reg, reg.waiting);
+            } else if (reg.installing) {
+              var sw = reg.installing;
+              if (sw.state === 'installed') {
+                triggerUpdate(reg, sw);
+              } else {
+                sw.addEventListener('statechange', function () {
+                  if (sw.state === 'installed') triggerUpdate(reg, sw);
+                });
+              }
+            }
+          }).catch(function () {});
+        }
+      }).catch(function () {});
     }).catch(function () {});
   } catch (e) {}
 })();</script>`;
+
+if (page.includes('id="iq-auto-update"')) {
+  page = page.replace(/<script id="iq-auto-update">[\s\S]*?<\/script>/, AUTO_UPDATE);
+} else {
   page = page.replace('<script src="index.js"></script>', `${AUTO_UPDATE}\n\t\t<script src="index.js"></script>`);
-  if (!page.includes('iq-auto-update')) { console.error('index.html: cannot inject auto-update'); process.exit(1); }
-  writeFileSync(html, page);
 }
+if (!page.includes('iq-auto-update')) { console.error('index.html: cannot inject auto-update'); process.exit(1); }
+writeFileSync(html, page);
 console.log('index.html: injected auto-update');
 
 // Icons: copy Android and PWA icon files into icons/
@@ -266,19 +331,61 @@ if (existsSync(manifestFile)) {
 }
 
 // PWA: Godot-generated service worker cache manifest lists index.wasm, but browser actually fetches index.wasm.gz
-const sw = join(dir, 'index.service.worker.js');
 if (existsSync(sw)) {
   let code = readFileSync(sw, 'utf8');
-  for (const ext of packed) code = code.split(`"index.${ext}"`).join(`"index.${ext}.gz"`);
-  code = code.replace(/const CACHE_VERSION = '[^']+';/, `const CACHE_VERSION = '${Date.now()}';`);
+
+  for (const ext of packed) {
+    const target = `"index.${ext}"`;
+    const gz = `"index.${ext}.gz"`;
+    if (!code.includes(gz)) {
+      code = code.split(target).join(gz);
+      if (!code.includes(gz)) {
+        console.error(`index.service.worker.js: 無法替換 ${target} 為 ${gz}`);
+        process.exit(1);
+      }
+    }
+  }
+
+  const cacheVerDef = `const CACHE_VERSION = '${cacheVer}';`;
+  if (!code.includes(cacheVerDef)) {
+    code = code.replace(/const CACHE_VERSION = '[^']+';/, cacheVerDef);
+    if (!code.includes(cacheVerDef)) {
+      console.error('index.service.worker.js: 無法更新 CACHE_VERSION');
+      process.exit(1);
+    }
+  }
+
   const newIcons = ['"icons/icon-192.png"', '"icons/icon-512.png"', '"icons/maskable-512.png"'];
   for (const ic of newIcons) {
     if (!code.includes(ic)) {
       code = code.replace('const CACHED_FILES = [', `const CACHED_FILES = [${ic}, `);
+      if (!code.includes(ic)) {
+        console.error(`index.service.worker.js: 無法加入快取圖示 ${ic}`);
+        process.exit(1);
+      }
     }
   }
+
+  const SKIP_WAITING_HOOK = 'cache.addAll(CACHED_FILES).then(() => self.skipWaiting())';
+  if (!code.includes(SKIP_WAITING_HOOK)) {
+    code = code.replace('cache.addAll(CACHED_FILES)', SKIP_WAITING_HOOK);
+    if (!code.includes(SKIP_WAITING_HOOK)) {
+      console.error('index.service.worker.js: 無法注入 self.skipWaiting()');
+      process.exit(1);
+    }
+  }
+
+  const CLAIM_HOOK = '.map((key) => caches.delete(key))).then(() => self.clients.claim());';
+  if (!code.includes(CLAIM_HOOK)) {
+    code = code.replace('.map((key) => caches.delete(key)));', CLAIM_HOOK);
+    if (!code.includes(CLAIM_HOOK)) {
+      console.error('index.service.worker.js: 無法注入 self.clients.claim()');
+      process.exit(1);
+    }
+  }
+
   writeFileSync(sw, code);
-  console.log(`service worker：快取清單更新，版本號重置為 ${Date.now()}`);
+  console.log(`service worker：快取清單更新，版本號重置為 ${cacheVer}`);
 }
 
 // Workers Static Assets custom headers (applies only to static files, /api/* handled by Worker).

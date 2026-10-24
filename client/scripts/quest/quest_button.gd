@@ -171,6 +171,30 @@ func set_label(t: String) -> void:
 		text = t
 
 
+func set_icon(icon_kind: String) -> void:
+	if _icon_kind == icon_kind:
+		return
+	var had_icon := _icon_kind != ""
+	_icon_kind = icon_kind
+	if icon_kind == "":
+		if _icon != null and is_instance_valid(_icon):
+			_icon.queue_free()
+			_icon = null
+		if had_icon:
+			_apply_styles()
+		return
+	if _icon != null and is_instance_valid(_icon):
+		_icon.set("kind", icon_kind)
+		_icon.queue_redraw()
+	else:
+		_icon = QuestUI.icon(icon_kind, 20.0, C_TEXT if kind != "quiet" else C_MUTED)
+		add_child(_icon)
+		alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_place_icon()
+		if not had_icon:
+			_apply_styles()
+
+
 func _ready() -> void:
 	set_process(loading)
 

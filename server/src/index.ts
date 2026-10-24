@@ -167,6 +167,53 @@ export default {
       }
     }
 
+    if (url.pathname === '/api/dev/embed') {
+      const isLocal = env.DEV_LOGIN === '1' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+      if (!isLocal || req.method !== 'POST') {
+        return json({ error: 'not found' }, 404);
+      }
+      if (!env.AI) {
+        return json({ error: 'Workers AI (env.AI) 未設定' }, 502);
+      }
+      let body: { texts?: string[] };
+      try {
+        body = await req.json();
+      } catch {
+        return json({ error: '無效的 JSON body' }, 400);
+      }
+      const texts = body.texts;
+      if (!Array.isArray(texts) || texts.length === 0) {
+        return json({ error: '缺少 texts 陣列' }, 400);
+      }
+      try {
+        const model = '@cf/baai/bge-m3';
+        const runOptions = env.CF_AIG_GATEWAY_ID ? { gateway: { id: env.CF_AIG_GATEWAY_ID } } : undefined;
+        const res: any = runOptions
+          ? await (env.AI as unknown as { run: (m: string, input: unknown, opts?: unknown) => Promise<any> }).run(
+              model,
+              { text: texts },
+              runOptions,
+            )
+          : await (env.AI as unknown as { run: (m: string, input: unknown) => Promise<any> }).run(
+              model,
+              { text: texts },
+            );
+        let vectors: number[][] = [];
+        if (Array.isArray(res?.data)) {
+          vectors = res.data;
+        } else if (Array.isArray(res)) {
+          vectors = res;
+        } else {
+          return json({ error: 'Workers AI 回傳向量格式無效' }, 500);
+        }
+        const dims = vectors[0]?.length ?? 1024;
+        return json({ model, dims, vectors });
+      } catch (err: any) {
+        console.error('Embedding 失敗', err);
+        return json({ error: err?.message || 'Embedding 失敗' }, 500);
+      }
+    }
+
     if (url.pathname.startsWith('/api/auth/')) {
       const r = await handleAuth(req, env, url, base);
       if (r) return r;

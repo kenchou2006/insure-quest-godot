@@ -331,17 +331,37 @@ func _run() -> void:
 	await push(s)
 	# Three investigations are used up: the fourth card cannot be investigated, only set aside
 	var n_obs := actions.size()
+	var stuck_reason := btn("ConfirmClues").tooltip_text
+	check(stuck_reason.contains("調查次數已用完") and stuck_reason.contains("「工作室紙箱」") and stuck_reason.contains("暫時無關"), "the confirm reason names the card left and where it goes (%s)" % stuck_reason)
 	await _click((page().find_child("Clue_2", true, false) as Button).get_global_rect().get_center())
-	await press("PlaceHere_need")
+	check(btn("PlaceHere_need") == null and btn("PlaceHere_risk") == null, "out of investigations: the need boxes do not offer the face-down card")
+	check(btn("PlaceHere_none") != null and btn("PlaceHere_none").text.contains("調查已用完"), "out of investigations: 暫時無關 is the marked way on")
+	page().call("place", 2, "need")
 	check(actions.size() == n_obs and not (gs.call("selected_clues") as Dictionary).has("2"), "a fourth investigation is refused")
+	await _click((page().find_child("Clue_2", true, false) as Button).get_global_rect().get_center())
 	await press("PlaceHere_none")
 	check(str((gs.call("selected_clues") as Dictionary).get("2", "")) == "none", "set aside in 暫時無關 without investigating")
-	check(btn("ConfirmClues").disabled and btn("ConfirmClues").tooltip_text.contains("3 個問題"), "still closed until the interview has 3 questions")
+	var confirm_btn := btn("ConfirmClues")
+	check(confirm_btn != null and not confirm_btn.disabled, "卡片全分類但未 ready 時，ConfirmClues 未 disabled")
+	check(confirm_btn != null and confirm_btn.text.contains("回到會談補問"), "ConfirmClues 文字含「回到會談補問」（got %s）" % (confirm_btn.text if confirm_btn else ""))
+	await press("ConfirmClues")
+	await _settle()
+	check(layer.get("current") == "dialogue", "按下「回到會談補問」切到訪談頁（got %s）" % layer.get("current"))
+	var next_btn := btn("NextStep")
+	check(next_btn != null and next_btn.text.contains("已問 2/3"), "訪談頁 NextStep 文字顯示已問 2/3（got %s）" % (next_btn.text if next_btn else ""))
 	s.session.ready = true
 	s.session.covered = [qid, "premium", "goal"]
 	await push(s)
-	page().call("_sync")
-	check(not btn("ConfirmClues").disabled, "確認需求判斷 opens when all placed and ready")
+	await _frames(2)
+	next_btn = btn("NextStep")
+	check(next_btn != null and next_btn.text.contains("下一步：整理需求線索"), "訪談完成後 NextStep 文字更新（got %s）" % (next_btn.text if next_btn else ""))
+	await press("NextStep")
+	await _settle()
+	check(layer.get("current") == "clues", "下一步 → clue board")
+	_capture()
+	confirm_btn = btn("ConfirmClues")
+	check(confirm_btn != null and not confirm_btn.disabled, "確認需求判斷 opens when all placed and ready")
+	check(confirm_btn != null and confirm_btn.text == "確認需求判斷", "ready=true 時文字是「確認需求判斷」（got %s）" % (confirm_btn.text if confirm_btn else ""))
 	await press("ConfirmClues")
 	await _wait(0.6)
 	check(str(last_action().get("type", "")) == "to_plan", "confirm sends to_plan")
@@ -519,7 +539,7 @@ func _run() -> void:
 		{"kind": "dilemma", "title": "業績與合規", "body": "主管要你本週衝業績。", "lines": [], "dilemma": {"id": "d1", "title": "業績與合規", "prompt": "主管要你本週衝業績。", "choices": [{"id": "A:x", "text": "照客戶需求慢慢來"}, {"id": "B:y", "text": "先賣再說"}], "picked": null, "outcome": null}},
 		{"kind": "review", "title": "王小明｜家中添了新成員", "body": "客戶最近有了第二個孩子。", "lines": [], "review": {"clientId": "c1", "clientName": "王小明", "change": {"title": "家中添了新成員", "body": "客戶最近有了第二個孩子。"}, "current": {"alloc": {"cash": 3, "protect": 4, "growth": 3}, "cards": ["medical"]}, "picked": null, "outcome": null}},
 		{"kind": "life", "title": "理賠服務｜王小明", "body": "手腕受傷，停止接案六週。", "lines": [{"text": "理賠 12 萬已撥付", "tone": "good"}, {"text": "防線承接力 12 / 需求 11 → 承接", "tone": "good"}, {"text": "客戶滿意度 +12，聲望 +3", "tone": "good"}], "claim": {"clientId": "c1", "clientName": "王小明", "event": "手腕受傷", "tag": "收入", "result": "broken", "loss": 180000, "covered": 40000, "outOfPocket": 140000}},
-		{"kind": "market", "title": "全球股市單月下跌 20%", "body": "景氣衰退疑慮升高，風險資產全面修正。這段說明刻意寫長一點，看看事件卡在較長的內容下按鈕是否仍然在畫面內可以按到，不會被擠到畫面外面。", "lines": [{"text": "測試顧問：0 位客戶穩住、1 位受到重創（聲望 -2）", "tone": "bad"}, {"text": "學習重點：有足夠預備金的客戶不必在低點賣出；短期要用的錢不該放在高波動資產。", "tone": "info"}]},
+		{"kind": "market", "title": "全球股市單月下跌 20%", "body": "景氣衰退疑慮升高，風險資產全面修正。這段說明刻意寫長一點，看看事件卡在較長的內容下按鈕是否仍然在畫面內可以按到，不會被擠到畫面外面。", "lines": [{"text": "測試顧問：0 位客戶穩住、0 位勉強撐住、1 位受到重創（聲望 -2）", "tone": "bad"}, {"text": "學習重點：有足夠預備金的客戶不必在低點賣出；短期要用的錢不該放在高波動資產。", "tone": "info"}]},
 		{"kind": "audit", "title": "合規稽核", "body": "稽核人員抽查你的客戶紀錄。", "lines": [{"text": "王小明：紀錄完整、配置適合，聲望 +1", "tone": "good"}]},
 		{"kind": "settlement", "title": "季度結算", "body": "檢視你的客戶簿。", "lines": [{"text": "本季沒有續約或解約。", "tone": "info"}]},
 		{"kind": "seminar", "title": "顧問研討會", "body": "資深顧問針對你的表現給予建議。", "lines": [{"text": "先問收入中斷與人生目標，再談預算。", "tone": "info"}, {"text": "持續學習，聲望 +2", "tone": "good"}]},

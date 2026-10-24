@@ -10,7 +10,8 @@ import { BOARD, CLIENTS, DECOYS, MARKET_EVENTS, QUESTIONS, QUIZ } from './data.t
 import { sanitizePlayerInput, type AIService } from '../ai.ts';
 import { computeAwards, DILEMMAS, DILEMMA_EFFECT, emptyStats, pickLifeChange, reviewOutcome, rollQuests, updateQuests, type ReviewPick } from './extras.ts';
 import { LIFE_TWISTS, applyTwist, type LifeTwist } from './twists.ts';
-import { ruleCompliance, mergeCompliance } from './compliance.ts';
+import { ruleCompliance, mergeCompliance, RULE_BY_CODE } from './compliance.ts';
+import { refsForCode, type LegalRef } from './legal-refs.ts';
 import { determineLetter, generateTemplateLetter, type LetterFacts, type ClientLetter } from './letters.ts';
 import { calculateClaim, formatWan, simulateTimeline } from './finance.ts';
 
@@ -261,6 +262,45 @@ function settlement(s: GameState, p: PlayerState): PendingEvent['lines'] {
 const satDelta = { held: 12, partial: -4, broken: -18 } as const;
 const repDelta = { held: 3, partial: 0, broken: -4 } as const;
 
+export interface MarketCounts {
+  held: number;
+  partial: number;
+  broken: number;
+}
+
+export function marketTone(counts: MarketCounts): 'good' | 'bad' | 'ok' {
+  if (counts.broken > 0 && counts.broken > counts.held) return 'bad';
+  if (counts.held > 0 && counts.partial === 0 && counts.broken === 0) return 'good';
+  return 'ok';
+}
+
+export interface MarketSummaryOptions {
+  heldLabel?: string;
+  repDelta?: number;
+  alwaysShowRep?: boolean;
+}
+
+export function summarizeMarketResult(
+  name: string,
+  counts: MarketCounts,
+  options: MarketSummaryOptions = {},
+): { text: string; tone: 'good' | 'bad' | 'ok' } {
+  const heldLabel = options.heldLabel ?? '安然度過';
+  const tone = marketTone(counts);
+  let repStr = '';
+  if (options.repDelta !== undefined) {
+    if (options.alwaysShowRep || options.repDelta !== 0) {
+      const sign = options.repDelta >= 0 ? '+' : '';
+      repStr = `（聲望 ${sign}${options.repDelta}）`;
+    }
+  }
+  const text = `${name}：${counts.held} 位客戶${heldLabel}、${counts.partial} 位勉強撐住、${counts.broken} 位受到重創${repStr}`;
+  return {
+    text,
+    tone,
+  };
+}
+
 async function resolveTile(s: GameState, p: PlayerState, ctx: Ctx, passLines: PendingEvent['lines']) {
   const tile = BOARD[p.pos];
   const ev = (kind: PendingEvent['kind'], title: string, body: string, lines: PendingEvent['lines']) =>
@@ -413,14 +453,22 @@ async function resolveTile(s: GameState, p: PlayerState, ctx: Ctx, passLines: Pe
       const headline = await ctx.ai.marketNews(me, (part, done) => ctx.onStream?.('market', part, done)).catch(() => null);
       const lines: PendingEvent['lines'] = [];
       for (const pl of s.players) {
-        let held = 0, broken = 0;
+        let held = 0, partial = 0, broken = 0;
         for (const b of pl.book) {
           const r = marketOne(me, b.alloc);
           b.satisfaction = clamp(b.satisfaction + (r === 'held' ? 6 : r === 'partial' ? -2 : -10));
-          if (r === 'held') held++; if (r === 'broken') broken++;
+          if (r === 'held') held++;
+          else if (r === 'partial') partial++;
+          else if (r === 'broken') broken++;
         }
         pl.reputation = clamp(pl.reputation - broken * 2);
-        if (pl.book.length) lines.push({ text: `${pl.name}：${held} 位客戶穩住、${broken} 位受到重創${broken ? `（聲望 -${broken * 2}）` : ''}`, tone: broken ? 'bad' : held ? 'good' : 'ok' });
+        if (pl.book.length) {
+          lines.push(summarizeMarketResult(pl.name, { held, partial, broken }, {
+            heldLabel: '穩住',
+            repDelta: -broken * 2,
+            alwaysShowRep: false,
+          }));
+        }
       }
       if (!lines.length) lines.push({ text: '目前還沒有任何顧問有客戶受到影響。', tone: 'info' });
       lines.push({ text: `學習重點：${me.lesson}`, tone: 'info' });
@@ -673,24 +721,30 @@ function buildSessionLog(s: GameState, c: ClientProfile, sess: SessionState, pe:
 }
 
 /** Endgame major event: at start of final round, all advisors' clients face market crash simultaneously */
-const FINALE: MarketEvent = {
+export const FINALE: MarketEvent = {
   id: 'finale', tag: '終局', title: '終局大事件：全球金融海嘯', body: '全球股市單季重挫三成、企業裁員潮蔓延。所有顧問的客戶同時面臨考驗——當初的配置撐得住嗎？',
   absorb: { cash: 1.6, growth: -0.8 }, need: 3.5, lesson: '真正的壓力測試不會只來一次；預備金與分散，是讓客戶不必在最壞時刻賣出的關鍵。',
 };
 
-function finale(s: GameState, ctx: Ctx) {
+export function finale(s: GameState, ctx: Ctx) {
   const lines: Announcement['lines'] = [];
   for (const pl of s.players) {
     if (!pl.book.length) continue;
-    let held = 0, broken = 0;
+    let held = 0, partial = 0, broken = 0;
     for (const b of pl.book) {
       const r = marketOne(FINALE, b.alloc);
       b.satisfaction = clamp(b.satisfaction + (r === 'held' ? 8 : r === 'partial' ? -4 : -15));
       if (r === 'held') held++;
-      if (r === 'broken') broken++;
+      else if (r === 'partial') partial++;
+      else if (r === 'broken') broken++;
     }
-    pl.reputation = clamp(pl.reputation + held * 2 - broken * 3);
-    lines.push({ text: `${pl.name}：${held} 位客戶安然度過、${broken} 位受到重創（聲望 ${held * 2 - broken * 3 >= 0 ? '+' : ''}${held * 2 - broken * 3}）`, tone: broken > held ? 'bad' : held ? 'good' : 'ok' });
+    const repDelta = held * 2 - broken * 3;
+    pl.reputation = clamp(pl.reputation + repDelta);
+    lines.push(summarizeMarketResult(pl.name, { held, partial, broken }, {
+      heldLabel: '安然度過',
+      repDelta,
+      alwaysShowRep: true,
+    }));
   }
   if (!lines.length) lines.push({ text: '目前沒有任何顧問有客戶，這次風暴沒有波及任何人。', tone: 'info' });
   lines.push({ text: `學習重點：${FINALE.lesson}`, tone: 'info' });
@@ -903,6 +957,19 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       // 3. Merge compliance results (taking more severe level and larger penalty)
       const mergedComp = mergeCompliance(ruleComp, dialogue.compliance);
 
+      // 3.5 Strengthen refs with RAG if lawRefs is available
+      if (ctx.ai.lawRefs && mergedComp.issues.length > 0) {
+        for (const issue of mergedComp.issues) {
+          if (issue.code === 'INJECTION_ATTEMPT') continue;
+          const q = `${issue.quote} ${RULE_BY_CODE[issue.code] || issue.rule}`;
+          try {
+            issue.refs = await ctx.ai.lawRefs(q, issue.code);
+          } catch {
+            issue.refs = refsForCode(issue.code);
+          }
+        }
+      }
+
       // 4. Clamp metrics
       const trustDelta = Math.max(-15, Math.min(12, dialogue.trustDelta));
       const insightDelta = Math.max(0, Math.min(15, dialogue.insightDelta));
@@ -942,6 +1009,7 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
         emotion: dialogue.emotion,
         coachTip: dialogue.coachTip,
         source: ctx.ai.enabled ? 'ai' : 'rule',
+        issues: mergedComp.issues,
       });
 
       // 8. Log decision
@@ -1004,7 +1072,12 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       const opt = c.objection.options[sess.objectionOrder[a.index]];
       sess.objectionMode = 'choice';
       apply(sess.m, opt.changes);
-      sess.objectionReply = { text: opt.text, title: opt.title, body: opt.body, quality: opt.quality };
+      let objectionRefs: LegalRef[] | undefined;
+      const optComp = ruleCompliance(opt.text);
+      if (optComp.issues.length > 0) {
+        objectionRefs = optComp.issues[0].refs;
+      }
+      sess.objectionReply = { text: opt.text, title: opt.title, body: opt.body, quality: opt.quality, refs: objectionRefs };
       if (opt.changes.compliance !== undefined && opt.changes.compliance <= -15) {
         sess.objViolation = true;
         sess.violationQuote = quoteOf(opt.text);
@@ -1021,7 +1094,20 @@ async function applyActionInner(s: GameState, playerId: string, a: Action, ctx: 
       const g = await ctx.ai.gradeObjection(c, text, (part, done) => ctx.onStream?.('objection', part, done));
       sess.aiBusy = false;
       apply(sess.m, { trust: g.trust, fit: g.fit, risk: g.risk, compliance: g.compliance });
-      sess.objectionReply = { text, title: g.title, body: g.body, quality: g.quality };
+      let freeObjRefs: LegalRef[] | undefined;
+      const freeComp = ruleCompliance(text);
+      if (freeComp.issues.length > 0) {
+        if (ctx.ai.lawRefs) {
+          try {
+            freeObjRefs = await ctx.ai.lawRefs(`${freeComp.issues[0].quote} ${RULE_BY_CODE[freeComp.issues[0].code]}`, freeComp.issues[0].code);
+          } catch {
+            freeObjRefs = freeComp.issues[0].refs;
+          }
+        } else {
+          freeObjRefs = freeComp.issues[0].refs;
+        }
+      }
+      sess.objectionReply = { text, title: g.title, body: g.body, quality: g.quality, refs: freeObjRefs };
       sess.objectionMode = 'free';
       if (g.compliance <= -15) {
         sess.objViolation = true;

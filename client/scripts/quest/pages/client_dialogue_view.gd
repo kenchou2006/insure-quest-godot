@@ -197,7 +197,11 @@ func build() -> void:
 	_hint_box.visible = false
 	_bag_btn = QuestUI.button("公事包（%d）" % BriefcaseDrawer.packed().size(), _open_briefcase, "secondary", "briefcase")
 	_bag_btn.name = "BriefcaseButton"
-	_next = QuestUI.button("下一步：整理需求線索", func(): go.emit("clues", {}), "primary", "next")
+	var sess0 := GameState.my_session()
+	var init_covered: Array = sess0.get("covered", [])
+	var init_ready := bool(sess0.get("ready", false))
+	var next_txt := "下一步：整理需求線索" if init_ready else ("整理需求線索（已問 %d/3）" % mini(init_covered.size(), 3))
+	_next = QuestUI.button(next_txt, func(): go.emit("clues", {}), "primary", "next")
 	_next.name = "NextStep"
 	var back: Button = QuestUI.button("上一步：任務簡報", _back_to_brief, "quiet", "back")
 	back.name = "BackButton"
@@ -490,10 +494,16 @@ func _build_options(sess: Dictionary) -> void:
 			std_count += 1
 	var ready := bool(sess.get("ready", false))
 	var busy := bool(sess.get("aiBusy", false)) or _pending or _typing_label != null
+	var n_covered := mini(covered.size(), 3)
+	if is_instance_valid(_next):
+		if ready:
+			_next.call("set_label", "下一步：整理需求線索")
+		else:
+			_next.call("set_label", "整理需求線索（已問 %d/3）" % n_covered)
 	if ready:
-		_task.text = "訪談問題已完成（%d/3）。可以整理需求線索了，也可以再用自己的話多聊一句。" % mini(covered.size(), 3)
+		_task.text = "訪談問題已完成（%d/3）。可以整理需求線索了，也可以再用自己的話多聊一句。" % n_covered
 	else:
-		_task.text = "目前要做什麼：挑一句話問客戶，找出他真正在意的事（已問 %d/3）" % mini(covered.size(), 3)
+		_task.text = "目前要做什麼：挑一句話問客戶，找出他真正在意的事（已問 %d/3）" % n_covered
 	if not ready:
 		var remaining: Array = []
 		for q in Net.static_data.get("questions", []):
@@ -656,6 +666,36 @@ func _react(a: Dictionary, before: Dictionary, after: Dictionary) -> void:
 	var impact := QuestUI.label(_impact(quality, comp, key != null and str(key) != ""), 13, QuestUI.MUTED, true)
 	impact.name = "ReactionImpact"
 	rv.add_child(impact)
+	# Legal references (max 2)
+	var issues: Array = a.get("issues", [])
+	if issues.is_empty() and (comp == "violation" or comp == "warning" or dc < 0):
+		var chk := Compliance.check(str(a.get("question", "")))
+		issues = chk.get("issues", [])
+	var all_refs: Array = []
+	for iss in issues:
+		var iss_d := iss as Dictionary
+		var r_list: Array = iss_d.get("refs", [])
+		if r_list.is_empty():
+			r_list = Compliance.get_refs_for_code(str(iss_d.get("code", "")))
+		for r in r_list:
+			if all_refs.size() < 2:
+				all_refs.append(r)
+	if not all_refs.is_empty():
+		var ref_box := QuestUI.vbox(2)
+		ref_box.name = "ReactionRefs"
+		for r in all_refs:
+			var rd := r as Dictionary
+			var cite := str(rd.get("cite", ""))
+			var txt := str(rd.get("text", "")).replace("\n", " ")
+			if cite != "":
+				var cl := QuestUI.label("依據：" + cite, 13, QuestUI.MUTED, true)
+				cl.name = "ReactionRefCite"
+				ref_box.add_child(cl)
+			if txt != "":
+				var tl := QuestUI.label(txt, 12, QuestUI.MUTED, true)
+				tl.name = "ReactionRefText"
+				ref_box.add_child(tl)
+		rv.add_child(ref_box)
 	_reaction.visible = true
 	QuestUI.fade_in(_reaction, 0.0, 0.25, 0.0)
 	# 回饋一定要看得到：捲到回饋的位置

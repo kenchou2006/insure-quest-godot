@@ -20,6 +20,11 @@ func set_color(c: Color) -> void:
 	queue_redraw()
 
 
+func set_kind(k: String) -> void:
+	kind = k
+	queue_redraw()
+
+
 func _l(a: Vector2, b: Vector2) -> void:
 	draw_line(a, b, color, width, true)
 

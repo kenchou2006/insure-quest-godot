@@ -28,6 +28,27 @@ static var _re_fear: RegEx = null
 static var _re_neg_fear: RegEx = null
 static var _re_comparison: RegEx = null
 static var _re_pressure: RegEx = null
+static var _law_refs: Dictionary = {}
+
+
+static func _load_law_refs() -> void:
+	if not _law_refs.is_empty():
+		return
+	if not FileAccess.file_exists("res://data/law_refs.json"):
+		return
+	var file := FileAccess.open("res://data/law_refs.json", FileAccess.READ)
+	if file == null:
+		return
+	var json_str := file.get_as_text()
+	var parsed: Variant = JSON.parse_string(json_str)
+	if parsed is Dictionary:
+		_law_refs = parsed
+
+
+static func get_refs_for_code(code: String) -> Array:
+	_load_law_refs()
+	var by_code: Dictionary = _law_refs.get("byCode", {})
+	return by_code.get(code, [])
 
 
 static func _init_regexes() -> void:
@@ -61,6 +82,7 @@ static func check(text: String) -> Dictionary:
 				"quote": m_inj.get_string().substr(0, 15),
 				"rule": RULE_BY_CODE["INJECTION_ATTEMPT"],
 				"suggestion": SUGGESTIONS["INJECTION_ATTEMPT"],
+				"refs": get_refs_for_code("INJECTION_ATTEMPT"),
 			})
 			worst_level = "violation"
 			min_penalty = mini(min_penalty, -25)
@@ -79,6 +101,7 @@ static func check(text: String) -> Dictionary:
 				"quote": m.get_string().substr(0, 15),
 				"rule": RULE_BY_CODE["PROMISE_RETURN"],
 				"suggestion": SUGGESTIONS["PROMISE_RETURN"],
+				"refs": get_refs_for_code("PROMISE_RETURN"),
 			})
 			worst_level = "violation"
 			min_penalty = mini(min_penalty, -20)
@@ -97,6 +120,7 @@ static func check(text: String) -> Dictionary:
 				"quote": m.get_string().substr(0, 15),
 				"rule": RULE_BY_CODE["FEAR_MONGERING"],
 				"suggestion": SUGGESTIONS["FEAR_MONGERING"],
+				"refs": get_refs_for_code("FEAR_MONGERING"),
 			})
 			worst_level = "violation"
 			min_penalty = mini(min_penalty, -20)
@@ -111,6 +135,7 @@ static func check(text: String) -> Dictionary:
 				"quote": m_comp.get_string().substr(0, 15),
 				"rule": RULE_BY_CODE["MISLEADING_COMPARISON"],
 				"suggestion": SUGGESTIONS["MISLEADING_COMPARISON"],
+				"refs": get_refs_for_code("MISLEADING_COMPARISON"),
 			})
 			worst_level = "violation"
 			min_penalty = mini(min_penalty, -15)
@@ -124,6 +149,7 @@ static func check(text: String) -> Dictionary:
 				"quote": m_press.get_string().substr(0, 15),
 				"rule": RULE_BY_CODE["EARLY_PRESSURE"],
 				"suggestion": SUGGESTIONS["EARLY_PRESSURE"],
+				"refs": get_refs_for_code("EARLY_PRESSURE"),
 			})
 			if worst_level != "violation":
 				worst_level = "warning"

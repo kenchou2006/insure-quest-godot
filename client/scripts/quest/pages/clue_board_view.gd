@@ -23,10 +23,11 @@ var _selected := -1
 var _observing: Dictionary = {}
 var _prev_observed: Dictionary = {}
 var _submitted := false
+var _need_more_questions := false
 
 
 func guide_lines() -> Array:
-	return ["這是線索板。把每張線索放進「必要需求」、「潛在風險」或「暫時無關」。", "放進需求區會調查並翻開線索，最多 3 張；判斷錯了會花掉會談時間。全部分類後再確認需求判斷。"]
+	return ["這是線索板。把每張線索放進「必要需求」、「潛在風險」或「暫時無關」。", "放進需求區會調查並翻開線索，最多 3 張；判斷錯了會花掉會談時間。全部分類後再確認需求判斷；若訪談還不到 3 題，按鈕會帶你回會談補問。"]
 
 
 func help_lines() -> Array:
@@ -187,8 +188,11 @@ func select(i: int) -> void:
 	AudioManager.play("clue_scan")
 	for k in _cards:
 		(_cards[k] as ClueCard).set_selected(k == i)
-	for b in _bins.values():
-		b.call("set_armed", i >= 0)
+	# Out of investigations: a face-down card can only go to 暫時無關, so only that box takes it
+	var locked := i >= 0 and _cards.has(i) and _no_scans_left(i)
+	for k in _bins:
+		_bins[k].call("set_armed", i >= 0 and (k == "none" or not locked))
+		_bins[k].call("set_recommended", locked and k == "none")
 	_show_detail(i)
 
 
@@ -204,8 +208,9 @@ func place(i: int, bin: String) -> void:
 		return
 	if bin in ["need", "risk"] and not observed:
 		if _observed_count() + _observing.size() >= 3:
-			layer.call("show_toast", "最多調查 3 張線索：先把一張需求區的線索移回，或改放「暫時無關」", "warning")
+			layer.call("show_toast", "調查次數已用完（3/3）：這張線索只能放進「暫時無關」", "warning")
 			QuestUI.shake(_bins[bin])
+			_bins["none"].call("flash")
 			return
 		if bool(GameState.my_session().get("aiBusy", false)):
 			layer.call("show_toast", "客戶還在回應，稍等一下再調查", "warning")
@@ -290,6 +295,24 @@ func _observed_count() -> int:
 	return n
 
 
+## True when card i is still face down and all 3 investigations are spent
+func _no_scans_left(i: int) -> bool:
+	return not bool((_cards[i] as ClueCard).data.get("observed", false)) and _observed_count() + _observing.size() >= 3
+
+
+## Titles of the cards still on the shelf, when every one of them can only go to 暫時無關
+func _stuck_titles() -> Array:
+	var placed := GameState.selected_clues()
+	var out: Array = []
+	for k in _cards:
+		if placed.has(str(k)):
+			continue
+		if not _no_scans_left(k):
+			return []
+		out.append("「%s」" % str((_cards[k] as ClueCard).data.get("title", "")))
+	return out
+
+
 func _bin_name(b: String) -> String:
 	for spec in BINS:
 		if spec[0] == b:
@@ -303,17 +326,38 @@ func _sync() -> void:
 	_count.text = "已分類 %d / %d" % [placed, total]
 	var sess := GameState.my_session()
 	var covered: Array = sess.get("covered", [])
+	var n_covered := mini(covered.size(), 3)
+	var need_return := false
 	var reason := ""
 	if not _observing.is_empty():
 		reason = "線索調查中，請稍候"
 	elif placed < total:
-		reason = "還有 %d 張線索沒有分類" % (total - placed)
-	elif not bool(sess.get("ready", false)):
-		reason = "請先回到會談完成 3 個問題（目前 %d/3）" % mini(covered.size(), 3)
+		var stuck := _stuck_titles()
+		if stuck.is_empty():
+			reason = "還有 %d 張線索沒有分類" % (total - placed)
+		else:
+			reason = "調查次數已用完（3/3）：把%s放進「暫時無關」就能確認" % "、".join(stuck)
 	elif bool(sess.get("aiBusy", false)):
 		reason = "客戶還在回應中"
+	elif not bool(sess.get("ready", false)):
+		need_return = true
 	if not _submitted:
-		_confirm.call("set_reason", reason)
+		if need_return:
+			_need_more_questions = true
+			_confirm.call("set_label", "回到會談補問（%d/3）" % n_covered)
+			_confirm.call("set_icon", "back")
+			_confirm.call("set_reason", "")
+			_confirm.disabled = false
+			var missing := 3 - n_covered
+			var tip := "需求判斷要根據至少 3 個不同主題的訪談。還差 %d 題，回會談再問一題吧。" % missing
+			_reason.text = tip
+			_reason.visible = true
+			_confirm.tooltip_text = tip
+		else:
+			_need_more_questions = false
+			_confirm.call("set_label", "確認需求判斷")
+			_confirm.call("set_icon", "check")
+			_confirm.call("set_reason", reason)
 	elif is_instance_valid(_clear):
 		_clear.disabled = true
 
@@ -334,7 +378,7 @@ func _show_detail(i: int) -> void:
 	_detail.add_child(QuestUI.title(str(cl.get("title", "")), 19))
 	if not bool(cl.get("observed", false)):
 		if _observed_count() + _observing.size() >= 3:
-			_detail.add_child(QuestUI.label("調查次數已用完（3/3）。這張線索請放進「暫時無關」，或先把需求區的一張線索移回。", 14, QuestUI.MUTED, true))
+			_detail.add_child(QuestUI.label("調查次數已用完（3/3），翻開過的線索不會退回次數。這張線索請放進「暫時無關」，再按「確認需求判斷」。", 14, QuestUI.GOLD, true))
 		else:
 			_detail.add_child(QuestUI.label("尚未調查。放進「必要需求」或「潛在風險」就會調查並翻開（最多 3 張）；確定和財務無關就放「暫時無關」。", 14, QuestUI.MUTED, true))
 		return
@@ -353,6 +397,9 @@ func _show_detail(i: int) -> void:
 # --- Confirm ----------------------------------------------------------------------------------
 
 func _on_confirm() -> void:
+	if _need_more_questions:
+		go.emit("dialogue", {})
+		return
 	if _submitted:
 		return
 	_submitted = true
@@ -604,6 +651,7 @@ class Bin extends PanelContainer:
 	var _hint: Control
 	var _hover := false
 	var _armed := false
+	var _recommended := false
 	var _pick: Button
 
 	func _init(k: String, title_text: String, sub: String, owner_view: Control) -> void:
@@ -659,6 +707,16 @@ class Bin extends PanelContainer:
 		_pick.visible = on
 		queue_redraw()
 
+	## The only box the selected card can go to: bright frame, a pulse and a clearer button
+	func set_recommended(on: bool) -> void:
+		if on == _recommended:
+			return
+		_recommended = on
+		_pick.text = "放到這裡（調查已用完）" if on else "放到這裡"
+		if on:
+			flash()
+		queue_redraw()
+
 	func flash() -> void:
 		QuestUI.pulse_once(self, 1.02)
 
@@ -686,8 +744,8 @@ class Bin extends PanelContainer:
 	func _draw() -> void:
 		# Dashed inner frame; gold and brighter while a card hovers over this box
 		var r := Rect2(Vector2(8, 8), size - Vector2(16, 16))
-		var col := Color(QuestUI.GOLD, 0.95) if _hover else (Color(QuestUI.GOLD, 0.5) if _armed else Color(1, 1, 1, 0.22))
-		if _hover:
+		var col := Color(QuestUI.GOLD, 0.95) if _hover or _recommended else (Color(QuestUI.GOLD, 0.5) if _armed else Color(1, 1, 1, 0.22))
+		if _hover or _recommended:
 			draw_rect(r, Color(QuestUI.GOLD, 0.08))
 		var dash := 8.0
 		var gap := 6.0

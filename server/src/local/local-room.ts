@@ -175,8 +175,8 @@ export class LocalRoom {
       }
       case 'settings': {
         if (!isHost || g.phase !== 'lobby') return this.err('只有房主可以在大廳調整設定');
-        if (msg.rounds !== undefined) g.settings.rounds = Math.max(2, Math.min(12, Math.round(Number(msg.rounds)) || 6));
         g.settings.aiClients = false;
+        let validDemo = false;
         if (typeof msg.demo === 'string') {
           const target = msg.demo === '1' ? 'jiahao' : msg.demo;
           if (g.clients[target]) {
@@ -184,8 +184,11 @@ export class LocalRoom {
             g.demoFirstRoll = true;
             g.demoFirstSession = true;
             this.demoRng = mulberry32(20261106);
+            validDemo = true;
           }
         }
+        // Judge mode (a demo run) may be a single round, as in Room
+        if (msg.rounds !== undefined) g.settings.rounds = Math.max(validDemo ? 1 : 2, Math.min(12, Math.round(Number(msg.rounds)) || 6));
         break;
       }
       case 'start': {

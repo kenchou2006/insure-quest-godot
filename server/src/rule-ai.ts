@@ -7,7 +7,8 @@ import { QUESTIONS } from './game/data.ts';
 import type { LifeTwist } from './game/twists.ts';
 import type { LetterFacts } from './game/letters.ts';
 import { generateTemplateLetter } from './game/letters.ts';
-import { ruleCompliance } from './game/compliance.ts';
+import { ruleCompliance, type ComplianceCode } from './game/compliance.ts';
+import { type LegalRef, refsForCode } from './game/legal-refs.ts';
 
 
 export const CODE_LABEL: Record<string, string> = {
@@ -65,6 +66,7 @@ export interface AIService {
   hint(c: ClientProfile, sess: SessionState, onStream?: (text: string, done?: boolean) => void): Promise<string>;
   debrief(p: PlayerState, row: Omit<FinalRow, 'coach'> & { coach?: string }, onStream?: (text: string, done?: boolean) => void): Promise<string | null>;
   generateClient(seed: number): Promise<ClientProfile | null>;
+  lawRefs?(query: string, code: ComplianceCode): Promise<LegalRef[]>;
 }
 
 /* ───────── Rule-based version ───────── */
@@ -175,4 +177,5 @@ export class RuleAI implements AIService {
   async hint(c: ClientProfile, sess: SessionState, _onStream?: (text: string, done?: boolean) => void) { return ruleHint(c, sess); }
   async debrief(_p: PlayerState, _row: Omit<FinalRow, 'coach'> & { coach?: string }, _onStream?: (text: string, done?: boolean) => void) { return null; }
   async generateClient(_seed: number) { return null; }
+  async lawRefs(_query: string, code: ComplianceCode) { return refsForCode(code); }
 }
